@@ -65,7 +65,7 @@ function cn(...inputs: ClassValue[]) {
 }
 
 type ApiMode = 'manual' | 'relay';
-const RELAY_SOCKET_BASE = 'wss://relay2026.vercel.app/=';
+const RELAY_SOCKET_BASE = 'wss://relay2026.vercel.app/code=';
 
 interface ApiRuntimeConfig {
   mode: ApiMode;
@@ -136,6 +136,8 @@ function parseRelayCodeFromText(input: string): string {
   if (!value) return '';
   const c0 = value.match(/\/=(\d{4,8})(?:\D|$)/i);
   if (c0?.[1]) return c0[1];
+  const c00 = value.match(/\/code=(\d{4,8})(?:\D|$)/i);
+  if (c00?.[1]) return c00[1];
   const c1 = value.match(/[?&]code=(\d{4,8})/i);
   if (c1?.[1]) return c1[1];
   const c2 = value.match(/\/code=(\d{4,8})/i);
@@ -974,7 +976,7 @@ const ToolsManager = ({
     }
 
     if (updates === 0) {
-      setQuickImportResult('Không phát hiện được key/mã hợp lệ. Gợi ý: dán AIza..., sk-..., sk-ant-..., hoặc link relay dạng wss://relay2026.vercel.app/=1234.');
+      setQuickImportResult('Không phát hiện được key/mã hợp lệ. Gợi ý: dán AIza..., sk-..., sk-ant-..., hoặc link relay dạng wss://relay2026.vercel.app/code=1234.');
     } else {
       setQuickImportResult(`Đã nhận ${updates} nguồn cấu hình.`);
       setQuickImportText('');
@@ -985,7 +987,7 @@ const ToolsManager = ({
     const inferredCode = parseRelayCodeFromText(relayUrl);
     if (!/^\d{4,8}$/.test(inferredCode)) {
       setRelayStatus('error');
-      setRelayStatusText('Base URL phải đúng dạng wss://relay2026.vercel.app/=1234 (code 4-8 số).');
+      setRelayStatusText('Base URL phải đúng dạng wss://relay2026.vercel.app/code=1234 (code 4-8 số).');
       return;
     }
     const wsTarget = buildRelaySocketUrl(inferredCode);
@@ -1486,7 +1488,7 @@ const ToolsManager = ({
         ) : (
         <div className="space-y-3">
             <p className="text-xs text-slate-500">
-              Dùng đúng định dạng relay socket: <b>wss://relay2026.vercel.app/=1234</b> (code 4-8 số). Hệ thống sẽ tự đọc code và chờ token từ proxy app.
+              Dùng đúng định dạng relay socket: <b>wss://relay2026.vercel.app/code=1234</b> (code 4-8 số). Hệ thống sẽ tự đọc code và chờ token từ proxy app.
             </p>
             <div className="grid grid-cols-1 gap-3">
               <input
@@ -1498,10 +1500,10 @@ const ToolsManager = ({
                   persistRuntimeConfig({ relayUrl: e.target.value, identityHint: e.target.value });
                 }}
                 className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
-                placeholder="wss://relay2026.vercel.app/=18101412"
+                placeholder="wss://relay2026.vercel.app/code=18101412"
               />
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_auto] gap-3">
               <button
                 onClick={relayStatus === 'connected' ? handleDisconnectRelay : handleConnectRelay}
                 className={`px-6 py-3 rounded-2xl text-white font-bold ${relayStatus === 'connected' ? 'bg-slate-700 hover:bg-slate-800' : 'bg-indigo-600 hover:bg-indigo-700'}`}
@@ -1512,6 +1514,14 @@ const ToolsManager = ({
                   <span className="inline-flex items-center gap-2"><Wifi className="w-4 h-4" /> Kết nối Relay</span>
                 )}
               </button>
+              <a
+                href="https://relay2026.vercel.app/"
+                target="_blank"
+                rel="noreferrer"
+                className="px-6 py-3 rounded-2xl bg-fuchsia-600 text-white font-bold hover:bg-fuchsia-700 text-center"
+              >
+                Mở Relay Web
+              </a>
             </div>
             <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4 text-xs text-slate-600 space-y-1">
               <p><Link2 className="inline w-3 h-3 mr-1" /> code từ URL: <b>{parseRelayCodeFromText(relayUrl) || 'chưa có'}</b></p>
@@ -1528,7 +1538,7 @@ const ToolsManager = ({
             value={quickImportText}
             onChange={(e) => setQuickImportText(e.target.value)}
             className="w-full min-h-24 px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-emerald-500"
-            placeholder="Dán chuỗi bất kỳ: AIza..., sk-..., sk-ant-..., hoặc relay wss://relay2026.vercel.app/=1234"
+            placeholder="Dán chuỗi bất kỳ: AIza..., sk-..., sk-ant-..., hoặc relay wss://relay2026.vercel.app/code=1234"
           />
           <div className="flex flex-wrap gap-2">
             <button
@@ -5060,7 +5070,7 @@ const AppContent = () => {
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
                   <div className="rounded-2xl border border-slate-200 p-4 bg-slate-50">
                     <p className="font-bold text-slate-800 mb-1">1. Thiết lập API</p>
-                    <p className="text-slate-600">Vào <b>Công cụ</b>, nhập key hoặc Relay URL dạng <code>wss://relay2026.vercel.app/=1234</code>.</p>
+                    <p className="text-slate-600">Vào <b>Công cụ</b>, nhập key hoặc Relay URL dạng <code>wss://relay2026.vercel.app/code=1234</code>.</p>
                   </div>
                   <div className="rounded-2xl border border-slate-200 p-4 bg-slate-50">
                     <p className="font-bold text-slate-800 mb-1">2. Chọn workflow AI</p>

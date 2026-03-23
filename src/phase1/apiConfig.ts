@@ -30,7 +30,7 @@ const DEFAULT_CONFIG: Phase1ApiConfig = {
   anthropicKey: '',
   geminiKey: '',
   providerOrder: ['openai', 'anthropic', 'gemini'],
-  relayBaseUrl: 'wss://relay2026.vercel.app/=',
+  relayBaseUrl: 'wss://relay2026.vercel.app/code=',
   parallelMode: true,
   keyProfiles: [],
 };

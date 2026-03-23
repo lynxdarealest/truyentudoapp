@@ -606,9 +606,19 @@ export default function Phase1App() {
                   className="phase1-input"
                   value={apiConfig.relayBaseUrl}
                   onChange={(e) => setApiConfig((prev) => ({ ...prev, relayBaseUrl: e.target.value }))}
-                  placeholder="wss://relay2026.vercel.app/=1234"
+                  placeholder="wss://relay2026.vercel.app/code=1234"
                 />
-                <p className="text-xs text-slate-500">Định dạng chuẩn: <code>wss://relay2026.vercel.app/=CODE</code> (CODE từ 4 đến 8 số).</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-xs text-slate-500">Định dạng chuẩn: <code>wss://relay2026.vercel.app/code=CODE</code> (CODE từ 4 đến 8 số).</p>
+                  <a
+                    href="https://relay2026.vercel.app/"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="rounded-lg bg-fuchsia-600 px-3 py-1 text-xs font-semibold text-white hover:bg-fuchsia-700"
+                  >
+                    Mở Relay Web
+                  </a>
+                </div>
                 <div className="flex items-center gap-2">
                   <button className="phase1-primary-btn" onClick={onTestConnection} disabled={connectionStatus.state === 'testing'}>
                     {connectionStatus.state === 'testing' ? 'Testing...' : 'Test Connection'}

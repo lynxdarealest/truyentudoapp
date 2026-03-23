@@ -12,7 +12,7 @@ export function HelpModal({ isOpen, onClose }: HelpModalProps) {
   const features = [
     {
       title: 'Relay Base URL 1 ô duy nhất',
-      desc: 'Nhập đúng dạng wss://relay2026.vercel.app/=18101412 (code 4-8 số). Web chỉ nhận dạng socket proxy theo format này.',
+      desc: 'Nhập đúng dạng wss://relay2026.vercel.app/code=18101412 (code 4-8 số). Web relay sẽ đọc mã code này để cấp token.',
       icon: <Link2 className="w-5 h-5 text-indigo-600" />,
     },
     {
