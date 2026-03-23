@@ -54,6 +54,26 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+function getConfiguredGeminiApiKey(): string {
+  try {
+    const keys = storage.getApiKeys() as Array<{ key?: string; isActive?: boolean }>;
+    const activeKey = keys.find((k) => k?.isActive && k?.key?.trim())?.key?.trim();
+    const firstKey = keys.find((k) => k?.key?.trim())?.key?.trim();
+    const envKey = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_GEMINI_API_KEY?.trim();
+    return activeKey || firstKey || envKey || '';
+  } catch {
+    return '';
+  }
+}
+
+function createGeminiClient(): GoogleGenAI {
+  const apiKey = getConfiguredGeminiApiKey();
+  if (!apiKey) {
+    throw new Error('Chưa cấu hình Gemini API key. Vào Công cụ > Cấu hình API để thêm key.');
+  }
+  return new GoogleGenAI({ apiKey });
+}
+
 // --- Types ---
 interface Chapter {
   id: string;
@@ -668,6 +688,40 @@ const ToolsManager = ({ onBack }: { onBack: () => void }) => {
   const { user } = useAuth();
   const [isExporting, setIsExporting] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const [geminiKeyInput, setGeminiKeyInput] = useState('');
+  const [maskedGeminiKey, setMaskedGeminiKey] = useState('');
+
+  useEffect(() => {
+    const keys = storage.getApiKeys() as Array<{ key?: string; isActive?: boolean }>;
+    const active = keys.find((k) => k?.isActive && k?.key?.trim())?.key?.trim();
+    const fallback = keys.find((k) => k?.key?.trim())?.key?.trim();
+    const current = active || fallback || '';
+    if (current.length > 10) {
+      setMaskedGeminiKey(`${current.slice(0, 6)}...${current.slice(-4)}`);
+    } else {
+      setMaskedGeminiKey(current ? 'Đã cấu hình' : 'Chưa cấu hình');
+    }
+  }, []);
+
+  const handleSaveGeminiKey = () => {
+    const key = geminiKeyInput.trim();
+    if (!key) return;
+    const existing = storage.getApiKeys() as Array<{ id?: string; key?: string; name?: string; isActive?: boolean }>;
+    const updated = [
+      {
+        id: `api-${Date.now()}`,
+        key,
+        name: 'Gemini Primary',
+        isActive: true,
+        usage: { requests: 0, tokens: 0, limit: 1500 },
+      },
+      ...existing.map((k) => ({ ...k, isActive: false })),
+    ];
+    storage.saveApiKeys(updated);
+    setMaskedGeminiKey(`${key.slice(0, 6)}...${key.slice(-4)}`);
+    setGeminiKeyInput('');
+    alert('Đã lưu Gemini API key.');
+  };
 
   const handleExportJSON = async () => {
     if (!user) return;
@@ -848,6 +902,35 @@ const ToolsManager = ({ onBack }: { onBack: () => void }) => {
       <div className="flex items-center gap-4 mb-8">
         <button onClick={onBack} className="p-2 rounded-full hover:bg-slate-100 transition-colors"><ChevronLeft /></button>
         <h2 className="text-3xl font-serif font-bold">Công cụ & Thiết lập</h2>
+      </div>
+
+      <div className="mb-8 bg-white p-8 rounded-3xl border border-slate-200 shadow-sm">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="p-3 bg-emerald-50 rounded-2xl">
+            <Zap className="w-6 h-6 text-emerald-600" />
+          </div>
+          <div>
+            <h3 className="text-xl font-serif font-bold">Cấu hình API</h3>
+            <p className="text-sm text-slate-500">Thiết lập Gemini API key để dùng các tính năng AI.</p>
+          </div>
+        </div>
+        <p className="text-xs text-slate-500 mb-3">Key hiện tại: <b>{maskedGeminiKey || 'Chưa cấu hình'}</b></p>
+        <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3">
+          <input
+            type="password"
+            value={geminiKeyInput}
+            onChange={(e) => setGeminiKeyInput(e.target.value)}
+            className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-emerald-500"
+            placeholder="Nhập Gemini API key (AIza...)"
+          />
+          <button
+            onClick={handleSaveGeminiKey}
+            disabled={!geminiKeyInput.trim()}
+            className="px-6 py-3 rounded-2xl bg-emerald-600 text-white font-bold hover:bg-emerald-700 disabled:opacity-50"
+          >
+            Lưu API Key
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
@@ -1251,7 +1334,7 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
 
     setIsSuggesting(true);
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+      const ai = createGeminiClient();
       const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
         contents: `Dựa trên các thông tin sau:
@@ -2845,7 +2928,7 @@ const AIGenerationModal = ({
     }
     setIsGeneratingScript(true);
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+      const ai = createGeminiClient();
       const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
         contents: `Dựa trên dàn ý sau, hãy xây dựng một kịch bản chi tiết cho chương này. 
@@ -2876,7 +2959,7 @@ const AIGenerationModal = ({
   const handleSuggestOutline = async () => {
     setIsSuggestingOutline(true);
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+      const ai = createGeminiClient();
       const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
         contents: `Dựa trên nội dung chương trước, hãy gợi ý một dàn ý ngắn gọn cho chương tiếp theo.
@@ -3426,7 +3509,7 @@ const AppContent = () => {
     setAILoadingMessage("Đang chuẩn bị dịch thuật...");
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+      const ai = createGeminiClient();
       
       let dictionaryContext = "";
       if (options.useDictionary) {
@@ -3597,7 +3680,7 @@ const AppContent = () => {
         }
       }
 
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+      const ai = createGeminiClient();
       
       // 1. Analyze the story
       const analysisPrompt = `
@@ -3809,7 +3892,7 @@ const AppContent = () => {
         ).join('\n\n');
       }
 
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+      const ai = createGeminiClient();
       const adultContentInstruction = isAdult 
         ? "CHẾ ĐỘ 18+ KHÔNG GIỚI HẠN: Bạn là một nhà văn viết truyện người lớn chuyên nghiệp. Bạn ĐƯỢC PHÉP và NÊN viết các nội dung nhạy cảm, bạo lực, tình dục, ngôn ngữ thô tục hoặc các chủ đề cấm kỵ một cách CHI TIẾT và TRẦN TRỤI nếu cốt truyện yêu cầu. Tuyệt đối không được né tránh, không được tóm tắt, không được dùng các từ ngữ ẩn dụ quá mức làm mất đi tính chân thực của cảnh quay. Hãy viết một cách tự do nhất có thể."
         : "CHẾ ĐỘ BÌNH THƯỜNG: Tuyệt đối không viết nội dung khiêu dâm, tình dục hoặc bạo lực cực đoan.";
@@ -4022,7 +4105,7 @@ const AppContent = () => {
       }
 
       // Initialize Gemini
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+      const ai = createGeminiClient();
       const adultContentInstruction = isAdult 
         ? "CHẾ ĐỘ 18+ KHÔNG GIỚI HẠN: Bạn là một nhà văn viết truyện người lớn chuyên nghiệp. Bạn ĐƯỢC PHÉP và NÊN viết các nội dung nhạy cảm, bạo lực, tình dục, ngôn ngữ thô tục hoặc các chủ đề cấm kỵ một cách CHI TIẾT và TRẦN TRỤI. Tuyệt đối không được né tránh, không được tóm tắt, không được dùng các từ ngữ ẩn dụ quá mức làm mất đi tính chân thực của cảnh quay. Hãy viết một cách tự do nhất có thể."
         : "CHẾ ĐỘ BÌNH THƯỜNG: Tuyệt đối không viết nội dung khiêu dâm, tình dục hoặc bạo lực cực đoan.";
