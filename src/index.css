@@ -476,10 +476,10 @@
 }
 
 body {
-  background: radial-gradient(circle at 15% 15%, rgba(93, 228, 199, 0.12), transparent 28%),
-              radial-gradient(circle at 80% 10%, rgba(138, 180, 255, 0.12), transparent 30%),
-              linear-gradient(135deg, #0b1224 0%, #0f1b32 50%, #0b1224 100%);
-  color: #e2e8f0;
+  background: radial-gradient(circle at 12% 18%, rgba(74, 222, 255, 0.12), transparent 30%),
+              radial-gradient(circle at 75% 12%, rgba(138, 180, 255, 0.14), transparent 32%),
+              linear-gradient(135deg, #0d1324 0%, #111a2f 50%, #0b1220 100%);
+  color: #e5edf7;
   font-family: 'Space Grotesk', 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
 }
 
@@ -502,10 +502,9 @@ body {
 }
 
 .neo-card {
-  background: rgba(15, 27, 50, 0.65);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 0 10px 35px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.04);
-  backdrop-filter: blur(12px);
+  background: #111a2f;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.04);
 }
 
 /* Override common button colors with gradients */
@@ -529,9 +528,9 @@ body {
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.4);
 }
 .bg-white {
-  background: rgba(255, 255, 255, 0.05) !important;
-  backdrop-filter: blur(10px);
-  color: #e2e8f0;
+  background: #0f172a !important;
+  color: #e2e8f0 !important;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.25);
 }
 .border-slate-200 {
   border-color: rgba(255, 255, 255, 0.08) !important;
