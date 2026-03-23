@@ -26,11 +26,11 @@ export interface ApiModelOption {
 }
 
 export const PROVIDER_LABELS: Record<ApiProvider, string> = {
-  gemini: 'Gemini',
-  gcli: 'GCLI',
+  gemini: 'Gemini trực tiếp',
+  gcli: 'Gemini trực tiếp (GCLI token)',
   openai: 'OpenAI',
   anthropic: 'Anthropic',
-  custom: 'Custom endpoint',
+  custom: 'Endpoint riêng (không phải Relay)',
   unknown: 'Không rõ',
 };
 

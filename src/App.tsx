@@ -1201,6 +1201,7 @@ const ToolsManager = ({
 
   const detectedDraftProvider = detectApiProviderFromValue(apiEntryText.trim());
   const effectiveDraftProvider = detectedDraftProvider !== 'unknown' ? detectedDraftProvider : apiEntryProvider;
+  const displayedDraftProvider = effectiveDraftProvider === 'gcli' ? 'gemini' : effectiveDraftProvider;
   const availableDraftModels = effectiveDraftProvider === 'unknown' ? [] : PROVIDER_MODEL_OPTIONS[effectiveDraftProvider];
   const currentApiEntry = apiVault.find((item) => item.id === activeApiKeyId) || getActiveApiKeyRecord(apiVault);
 
@@ -1424,7 +1425,7 @@ const ToolsManager = ({
     }
 
     if (updates === 0) {
-      setQuickImportResult(`Chưa nhận diện được thông tin phù hợp. Hãy dán API key hoặc đường dẫn relay dạng ${RELAY_SOCKET_BASE}1234.`);
+      setQuickImportResult(`Chưa nhận diện được thông tin phù hợp. Hãy dán API key, token GCLI, endpoint riêng hoặc URL relay dạng ${RELAY_SOCKET_BASE}1234.`);
     } else {
       setQuickImportResult(`Đã nhận diện và lưu ${updates} mục thông tin.`);
       setQuickImportText('');
@@ -2081,8 +2082,8 @@ const ToolsManager = ({
               <Zap className="w-6 h-6 text-emerald-600" />
             </div>
             <div>
-              <h3 className="text-xl font-serif font-bold">Trung tâm API</h3>
-              <p className="text-sm text-slate-500">Tự nhận diện key, lưu vào kho, và đổi model theo từng nhà cung cấp.</p>
+              <h3 className="text-xl font-serif font-bold">Kết nối AI</h3>
+              <p className="text-sm text-slate-500">Quản lý kết nối trực tiếp, token GCLI, endpoint riêng và relay mà không trộn lẫn.</p>
             </div>
           </div>
 
@@ -2094,7 +2095,7 @@ const ToolsManager = ({
               }}
               className={`px-4 py-2 rounded-xl text-sm font-bold ${apiMode === 'manual' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}
             >
-              Kho API thủ công
+              Kết nối trực tiếp
             </button>
             <button
               onClick={() => {
@@ -2103,8 +2104,18 @@ const ToolsManager = ({
               }}
               className={`px-4 py-2 rounded-xl text-sm font-bold ${apiMode === 'relay' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}
             >
-              Relay / Proxy mode
+              Qua Relay của bạn
             </button>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-slate-600">
+              <p className="font-bold text-slate-900 mb-1">Kết nối trực tiếp</p>
+              <p>Dùng API key Gemini/OpenAI/Anthropic, token GCLI `ya29...`, hoặc endpoint riêng do bạn nhập. Không đi qua relay.</p>
+            </div>
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-amber-900">
+              <p className="font-bold mb-1">Qua Relay của bạn</p>
+              <p>App chỉ kết nối tới relay `relay2026...`; relay của bạn giữ hoặc cấp token rồi gọi AI thay app.</p>
+            </div>
           </div>
 
           {apiMode === 'manual' ? (
@@ -2124,12 +2135,13 @@ const ToolsManager = ({
                   value={apiEntryText}
                   onChange={(e) => setApiEntryText(e.target.value)}
                   className="w-full min-h-28 px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-emerald-500"
-                  placeholder="Dán API key, bearer token GCLI (ya29...), hoặc để trống nếu custom endpoint của bạn không cần key."
+                  placeholder="Dán API key hoặc token GCLI `ya29...`. Nếu dùng endpoint riêng không cần auth thì có thể để trống."
                 />
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
                     <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Nhận diện</p>
                     <p className="mt-1 font-bold text-slate-900">{PROVIDER_LABELS[effectiveDraftProvider]}</p>
+                    {effectiveDraftProvider === 'gcli' ? <p className="text-[11px] text-slate-500 mt-1">Tự nhận diện đây là token GCLI, nhưng vẫn thuộc nhánh Gemini trực tiếp.</p> : null}
                   </div>
                   <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
                     <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Mode mặc định</p>
@@ -2138,15 +2150,14 @@ const ToolsManager = ({
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <select
-                    value={effectiveDraftProvider}
+                    value={displayedDraftProvider}
                     onChange={(e) => setApiEntryProvider(e.target.value as ApiProvider)}
                     className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
                   >
-                    <option value="gemini">Gemini</option>
-                    <option value="gcli">GCLI / Bearer Gemini</option>
+                    <option value="gemini">Gemini trực tiếp</option>
                     <option value="openai">OpenAI</option>
                     <option value="anthropic">Anthropic</option>
-                    <option value="custom">Custom endpoint</option>
+                    <option value="custom">Endpoint riêng</option>
                   </select>
                   {effectiveDraftProvider === 'custom' ? (
                     <input
@@ -2171,7 +2182,7 @@ const ToolsManager = ({
                   value={apiEntryBaseUrl}
                   onChange={(e) => setApiEntryBaseUrl(e.target.value)}
                   className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
-                  placeholder={effectiveDraftProvider === 'custom' ? 'Endpoint hoặc base URL, ví dụ: http://127.0.0.1:11434/v1/chat/completions' : 'Base URL tùy chỉnh (để trống nếu dùng mặc định)'}
+                  placeholder={effectiveDraftProvider === 'custom' ? 'Endpoint riêng, ví dụ: http://127.0.0.1:11434/v1/chat/completions' : 'Base URL tùy chỉnh (để trống nếu dùng mặc định)'}
                 />
                 <button
                   onClick={handleSaveApiEntry}
@@ -2181,7 +2192,7 @@ const ToolsManager = ({
                   Thêm vào kho API
                 </button>
                 <p className="text-xs text-slate-500">
-                  GCLI nhận token `ya29...` hoặc `Bearer ...`. Custom endpoint có thể dùng endpoint tương thích OpenAI và không bắt buộc key nếu gateway nội bộ của bạn không cần auth.
+                  GCLI được gộp vào nhánh Gemini trực tiếp: chỉ cần dán token `ya29...` hoặc `Bearer ...`. Endpoint riêng là URL bạn tự nhập, không phải relay.
                 </p>
               </div>
 
@@ -2321,7 +2332,7 @@ const ToolsManager = ({
               </div>
 
               <details className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
-                <summary className="cursor-pointer text-sm font-semibold text-amber-900">Không kết nối được relay? Dán khóa Gemini thủ công</summary>
+                <summary className="cursor-pointer text-sm font-semibold text-amber-900">Không kết nối được relay? Dùng Gemini trực tiếp tạm thời</summary>
                 <div className="mt-3 space-y-3">
                   <div className="text-xs text-amber-900 leading-relaxed space-y-1">
                     <p>1. Lấy API key tại <a className="text-indigo-600 underline" href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer">Google AI Studio</a>.</p>
