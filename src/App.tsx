@@ -53,6 +53,10 @@ import * as pdfjsLib from 'pdfjs-dist';
 import ePub from 'epubjs';
 import { Navbar } from './components/Navbar';
 import { HelpModal } from './components/HelpModal';
+import { ApiSectionPanel } from './components/tools/ApiSectionPanel';
+import { ProfileSettingsPanel } from './components/tools/ProfileSettingsPanel';
+import { AiConfigSummaryPanel } from './components/tools/AiConfigSummaryPanel';
+import { DataManagementPanels } from './components/tools/DataManagementPanels';
 
 // Setup PDF worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
@@ -1114,11 +1118,13 @@ const parseEPUB = async (file: File): Promise<string> => {
 
 const ToolsManager = ({
   onBack,
+  onOpenApi,
   profile,
   onSaveProfile,
   section = 'tools',
 }: {
   onBack: () => void;
+  onOpenApi?: () => void;
   profile: UiProfile;
   onSaveProfile: (next: UiProfile) => void;
   section?: 'tools' | 'api';
@@ -2044,378 +2050,76 @@ const ToolsManager = ({
 
   if (isApiSection) {
     return (
-      <motion.div
-        initial={{ opacity: 0, x: 20 }}
-        animate={{ opacity: 1, x: 0 }}
-        className="max-w-6xl mx-auto pt-24 pb-12 px-6 space-y-8"
-      >
-        <div className="flex items-center gap-4">
-          <button onClick={onBack} className="p-2 rounded-full hover:bg-slate-100 transition-colors"><ChevronLeft /></button>
-          <div>
-            <h2 className="text-3xl font-serif font-bold">Thiết lập AI</h2>
-              <p className="text-sm text-slate-500">Lưu kết nối AI, chọn model đang dùng và đổi cách kết nối tại một nơi.</p>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="phase1-stat">
-            <p>Nhà cung cấp</p>
-            <strong>{apiMode === 'relay' ? 'Trạm trung chuyển' : PROVIDER_LABELS[currentApiEntry?.provider || selectedProvider || 'gemini']}</strong>
-          </div>
-          <div className="phase1-stat">
-            <p>Model hiện tại</p>
-            <strong>{apiMode === 'relay' ? (selectedModel || getProfileModel('quality', 'gemini')) : (currentApiEntry?.model || selectedModel || 'Chưa chọn')}</strong>
-          </div>
-          <div className="phase1-stat">
-            <p>Đã lưu</p>
-            <strong>{apiVault.length.toLocaleString('vi-VN')} kết nối</strong>
-          </div>
-          <div className="phase1-stat">
-            <p>Trạng thái</p>
-            <strong>{apiMode === 'relay' ? relayStatusText : (currentApiEntry ? currentApiEntry.name : 'Chưa cấu hình')}</strong>
-          </div>
-        </div>
-
-        <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm space-y-6">
-          <div className="flex items-center gap-3">
-            <div className="p-3 bg-emerald-50 rounded-2xl">
-              <Zap className="w-6 h-6 text-emerald-600" />
-            </div>
-            <div>
-              <h3 className="text-xl font-serif font-bold">Kết nối AI</h3>
-              <p className="text-sm text-slate-500">Tách rõ khóa API, mã đăng nhập Google, máy chủ AI riêng và trạm trung chuyển để không bị lẫn cách dùng.</p>
-            </div>
-          </div>
-
-          <div className="inline-flex rounded-2xl bg-slate-100 p-1">
-            <button
-              onClick={() => {
-                setApiMode('manual');
-                persistRuntimeConfig({ mode: 'manual' });
-              }}
-              className={`px-4 py-2 rounded-xl text-sm font-bold ${apiMode === 'manual' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}
-            >
-              Gọi trực tiếp
-            </button>
-            <button
-              onClick={() => {
-                setApiMode('relay');
-                persistRuntimeConfig({ mode: 'relay', selectedProvider: 'gemini' });
-              }}
-              className={`px-4 py-2 rounded-xl text-sm font-bold ${apiMode === 'relay' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}
-            >
-              Qua trung chuyển
-            </button>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-slate-600">
-              <p className="font-bold text-slate-900 mb-1">Gọi trực tiếp</p>
-              <p>Dùng API key Gemini/OpenAI/Anthropic, mã truy cập Google <code>ya29...</code>, hoặc địa chỉ máy chủ AI riêng do bạn nhập. Ứng dụng gọi thẳng, không qua trung chuyển.</p>
-            </div>
-            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-amber-900">
-              <p className="font-bold mb-1">Qua trung chuyển</p>
-              <p>Ứng dụng chỉ nối vào máy chủ trung chuyển <code>relay2026...</code>; phía trung chuyển giữ khóa hoặc tự gọi AI thay cho trình duyệt.</p>
-            </div>
-          </div>
-
-          {apiMode === 'manual' ? (
-            <div className="grid grid-cols-1 xl:grid-cols-[1.05fr_1.35fr] gap-6">
-              <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5 space-y-4">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Thêm kết nối mới</p>
-                  <h4 className="text-lg font-bold text-slate-900 mt-1">Một biểu mẫu cho mọi kiểu gọi trực tiếp</h4>
-                </div>
-                <input
-                  value={apiEntryName}
-                  onChange={(e) => setApiEntryName(e.target.value)}
-                  className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-emerald-500"
-                  placeholder="Tên gợi nhớ, ví dụ: Gemini chính"
-                />
-                <textarea
-                  value={apiEntryText}
-                  onChange={(e) => setApiEntryText(e.target.value)}
-                  className="w-full min-h-28 px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-emerald-500"
-                  placeholder="Dán API key hoặc mã truy cập Google `ya29...`. Nếu dùng máy chủ AI riêng không cần xác thực thì có thể để trống."
-                />
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Nhận diện</p>
-                    <p className="mt-1 font-bold text-slate-900">{PROVIDER_LABELS[effectiveDraftProvider]}</p>
-                    {effectiveDraftProvider === 'gcli' ? <p className="text-[11px] text-slate-500 mt-1">Mã <code>ya29...</code> được hiểu là đăng nhập Google trực tiếp cho Gemini.</p> : null}
-                  </div>
-                  <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Mode mặc định</p>
-                    <p className="mt-1 font-bold text-slate-900">{aiProfile === 'economy' ? 'Nhanh' : aiProfile === 'quality' ? 'Chất lượng cao' : 'Cân bằng'}</p>
-                  </div>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <select
-                    value={displayedDraftProvider}
-                    onChange={(e) => setApiEntryProvider(e.target.value as ApiProvider)}
-                    className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
-                  >
-                    <option value="gemini">Gemini (API key)</option>
-                    <option value="openai">OpenAI</option>
-                    <option value="anthropic">Anthropic</option>
-                    <option value="custom">Máy chủ AI riêng</option>
-                  </select>
-                  {effectiveDraftProvider === 'custom' ? (
-                    <input
-                      value={apiEntryModel}
-                      onChange={(e) => setApiEntryModel(e.target.value)}
-                      className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
-                      placeholder="Tên model custom, ví dụ: llama-3.1-70b"
-                    />
-                  ) : (
-                    <select
-                      value={apiEntryModel}
-                      onChange={(e) => setApiEntryModel(e.target.value)}
-                      className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
-                    >
-                      {availableDraftModels.map((item) => (
-                        <option key={item.value} value={item.value}>{item.label}</option>
-                      ))}
-                    </select>
-                  )}
-                </div>
-                <input
-                  value={apiEntryBaseUrl}
-                  onChange={(e) => setApiEntryBaseUrl(e.target.value)}
-                  className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
-                  placeholder={effectiveDraftProvider === 'custom' ? 'Địa chỉ máy chủ AI riêng, ví dụ: http://127.0.0.1:11434/v1/chat/completions' : 'Base URL tùy chỉnh (để trống nếu dùng mặc định)'}
-                />
-                <button
-                  onClick={handleSaveApiEntry}
-                  disabled={!apiEntryText.trim() && !(effectiveDraftProvider === 'custom' && apiEntryBaseUrl.trim())}
-                  className="w-full px-6 py-3 rounded-2xl bg-emerald-600 text-white font-bold hover:bg-emerald-700 disabled:opacity-50"
-                >
-                  Lưu vào kho kết nối
-                </button>
-                <p className="text-xs text-slate-500">
-                  Mã <code>ya29...</code> hoặc <code>Bearer ...</code> được xếp vào nhóm Gemini gọi trực tiếp. Máy chủ AI riêng là URL bạn tự nhập, không phải trạm trung chuyển.
-                </p>
-              </div>
-
-              <div className="space-y-4">
-                <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5 space-y-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Kho kết nối</p>
-                      <h4 className="text-lg font-bold text-slate-900 mt-1">Các kết nối đã lưu</h4>
-                    </div>
-                    <span className="text-xs px-3 py-1 rounded-full bg-white border border-slate-200 text-slate-600 font-semibold">
-                      Hiện tại: {currentApiEntry?.name || 'Chưa có'}
-                    </span>
-                  </div>
-                  <div className="space-y-3 max-h-[30rem] overflow-y-auto pr-1">
-                    {apiVault.length === 0 ? (
-                      <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">
-                        Chưa có kết nối nào trong kho. Dán khóa hoặc địa chỉ máy chủ ở form bên trái để bắt đầu.
-                      </div>
-                    ) : apiVault.map((entry) => (
-                      <div key={entry.id} className={cn(
-                        "rounded-2xl border p-4 bg-white space-y-3 transition-all",
-                        entry.isActive ? "border-emerald-300 shadow-lg shadow-emerald-100" : "border-slate-200"
-                      )}>
-                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-                          <div>
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <p className="font-bold text-slate-900">{entry.name}</p>
-                              <span className="text-[11px] px-2 py-1 rounded-full bg-slate-100 text-slate-600 font-semibold">
-                                {PROVIDER_LABELS[entry.provider]}
-                              </span>
-                              {entry.status === 'valid' ? <span className="text-[11px] px-2 py-1 rounded-full bg-emerald-100 text-emerald-700 font-semibold">OK</span> : null}
-                              {entry.status === 'invalid' ? <span className="text-[11px] px-2 py-1 rounded-full bg-rose-100 text-rose-700 font-semibold">Lỗi</span> : null}
-                              {entry.isActive ? <span className="text-[11px] px-2 py-1 rounded-full bg-indigo-100 text-indigo-700 font-semibold">Hiện tại</span> : null}
-                            </div>
-                            <p className="text-xs text-slate-500 font-mono mt-1">{maskSensitive(entry.key, 6, 4)}</p>
-                          </div>
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <button
-                              onClick={() => handleTestApiEntry(entry.id)}
-                              className="px-3 py-2 rounded-xl border border-slate-200 text-slate-700 text-xs font-bold hover:border-emerald-300 hover:text-emerald-700"
-                            >
-                              {testingApiId === entry.id ? 'Đang thử...' : 'Kiểm tra'}
-                            </button>
-                            <button
-                              onClick={() => handleActivateApiEntry(entry.id)}
-                              className={cn(
-                                "px-3 py-2 rounded-xl text-xs font-bold",
-                                entry.isActive ? "bg-slate-900 text-white" : "bg-emerald-600 text-white hover:bg-emerald-700"
-                              )}
-                            >
-                              {entry.isActive ? 'Đang chọn' : 'Dùng kết nối này'}
-                            </button>
-                            <button
-                              onClick={() => handleDeleteApiEntry(entry.id)}
-                              className="p-2 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </div>
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr] gap-3">
-                          {entry.provider === 'custom' ? (
-                            <input
-                              value={entry.model}
-                              onChange={(e) => handleApiModelChange(entry.id, e.target.value)}
-                              className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
-                              placeholder="Tên model tự nhập"
-                            />
-                          ) : (
-                            <select
-                              value={entry.model}
-                              onChange={(e) => handleApiModelChange(entry.id, e.target.value)}
-                              className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
-                            >
-                              {PROVIDER_MODEL_OPTIONS[(entry.provider === 'unknown' ? 'gemini' : entry.provider) as 'gemini' | 'gcli' | 'openai' | 'anthropic' | 'custom'].map((item) => (
-                                <option key={item.value} value={item.value}>{item.label}</option>
-                              ))}
-                            </select>
-                          )}
-                          <input
-                            value={entry.baseUrl}
-                            onChange={(e) => handleApiBaseUrlChange(entry.id, e.target.value)}
-                            className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
-                            placeholder="Base URL hoặc địa chỉ máy chủ"
-                          />
-                        </div>
-                        <p className="text-xs text-slate-500">
-                          {PROVIDER_MODEL_OPTIONS[(entry.provider === 'unknown' ? 'gemini' : entry.provider) as 'gemini' | 'gcli' | 'openai' | 'anthropic' | 'custom'].find((item) => item.value === entry.model)?.description || 'Model hoặc địa chỉ tùy chỉnh.'}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 space-y-3">
-                <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
-                  <button
-                    onClick={relayStatus === 'connected' ? handleDisconnectRelay : handleConnectRelay}
-                    className={`px-6 py-3 rounded-2xl text-white font-bold ${relayStatus === 'connected' ? 'bg-slate-700 hover:bg-slate-800' : 'bg-indigo-600 hover:bg-indigo-700'}`}
-                  >
-                    {relayStatus === 'connected' ? (
-                      <span className="inline-flex items-center gap-2"><WifiOff className="w-4 h-4" /> Tạm ngắt kết nối</span>
-                    ) : (
-                      <span className="inline-flex items-center gap-2"><Wifi className="w-4 h-4" /> Kết nối trung chuyển</span>
-                    )}
-                  </button>
-                  <a
-                    href={RELAY_WEB_BASE}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="px-4 py-3 rounded-2xl bg-fuchsia-600 text-white font-bold hover:bg-fuchsia-700 text-center"
-                  >
-                    Mở trang trung chuyển
-                  </a>
-                </div>
-                <input
-                  type="text"
-                  value={relayUrl}
-                  onChange={(e) => {
-                    setRelayUrl(e.target.value);
-                    setRelayIdentityHint(e.target.value);
-                    persistRuntimeConfig({ relayUrl: e.target.value, identityHint: e.target.value, selectedProvider: 'gemini' });
-                  }}
-                  className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
-                  placeholder={`${RELAY_SOCKET_BASE}18101412`}
-                />
-                <div className="rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-600 space-y-1">
-                  <p><Link2 className="inline w-3 h-3 mr-1" /> Mã kết nối: <b>{parseRelayCodeFromText(relayUrl) || 'chưa có'}</b></p>
-                  <p><Zap className="inline w-3 h-3 mr-1" /> Mã đã nhận diện: <b>{relayMatchedLong || 'chưa có'}</b></p>
-                  <p><Shield className="inline w-3 h-3 mr-1" /> Khóa hiện tại: <b>{relayMaskedToken}</b></p>
-                  <p>Tiến trình: <b>{relayStatusText}</b></p>
-                </div>
-              </div>
-
-              <details className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
-                <summary className="cursor-pointer text-sm font-semibold text-amber-900">Không vào được trung chuyển? Tạm dùng Gemini trực tiếp</summary>
-                <div className="mt-3 space-y-3">
-                  <div className="text-xs text-amber-900 leading-relaxed space-y-1">
-                    <p>1. Lấy API key tại <a className="text-indigo-600 underline" href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer">Google AI Studio</a>.</p>
-                    <p>2. Nếu dùng đăng nhập Google qua trung chuyển: bật <a className="text-indigo-600 underline" href="https://console.cloud.google.com/apis/library/generativelanguage.googleapis.com" target="_blank" rel="noreferrer">Generative Language API</a>.</p>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
-                    <input
-                      type="text"
-                      value={manualRelayTokenInput}
-                      onChange={(e) => setManualRelayTokenInput(e.target.value)}
-                      className="w-full px-4 py-3 rounded-2xl border border-amber-300 focus:ring-2 focus:ring-amber-500"
-                      placeholder="Dán khóa AIza... hoặc đoạn văn bản có chứa key"
-                    />
-                    <button
-                      onClick={handleSaveManualRelayToken}
-                      className="px-5 py-3 rounded-2xl bg-amber-600 text-white font-bold hover:bg-amber-700"
-                    >
-                      Lưu khóa tạm
-                    </button>
-                  </div>
-                </div>
-              </details>
-            </div>
-          )}
-
-          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Kiểm tra AI & Mức sử dụng</p>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={handleCheckAiHealth}
-                  disabled={isCheckingAi}
-                  className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-bold hover:bg-emerald-700 disabled:opacity-60"
-                >
-                  {isCheckingAi ? 'Đang kiểm tra...' : 'Kiểm tra AI'}
-                </button>
-                <button
-                  onClick={handleResetAiUsage}
-                  className="px-4 py-2 rounded-xl bg-white border border-emerald-300 text-emerald-700 text-sm font-bold hover:bg-emerald-100"
-                >
-                  Đặt lại thống kê
-                </button>
-              </div>
-            </div>
-            <p className="text-sm text-emerald-800">
-              Trạng thái: <b>{aiCheckStatus}</b>
-            </p>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-emerald-900">
-              <p>Số lượt gọi trong phiên: <b>{aiUsageStats.requests.toLocaleString('vi-VN')}</b></p>
-              <p>Token ước tính đã dùng: <b>{aiUsageStats.estTokens.toLocaleString('vi-VN')}</b></p>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-[1.1fr_auto] gap-3 pt-2">
-              <textarea
-                value={quickImportText}
-                onChange={(e) => setQuickImportText(e.target.value)}
-                className="w-full min-h-24 px-4 py-3 rounded-2xl border border-emerald-200 focus:ring-2 focus:ring-emerald-500"
-                placeholder={`Dán hàng loạt key hoặc URL relay, ví dụ ${RELAY_SOCKET_BASE}1234`}
-              />
-              <div className="flex flex-col gap-2">
-                <button
-                  onClick={handleQuickImportKeys}
-                  className="px-4 py-3 rounded-xl bg-slate-900 text-white text-sm font-bold hover:bg-slate-800"
-                >
-                  Tự nhận diện & lưu
-                </button>
-                <select
-                  value={aiProfile}
-                  onChange={(e) => {
-                    const next = e.target.value as AiProfileMode;
-                    setAiProfile(next);
-                    persistRuntimeConfig({ aiProfile: next });
-                  }}
-                  className="px-4 py-3 rounded-xl border border-emerald-200 text-sm font-medium"
-                >
-                  <option value="economy">Mode nhanh</option>
-                  <option value="balanced">Mode cân bằng</option>
-                  <option value="quality">Mode chất lượng</option>
-                </select>
-              </div>
-            </div>
-            {quickImportResult ? <p className="text-xs text-emerald-700">{quickImportResult}</p> : null}
-          </div>
-        </div>
+      <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }}>
+        <ApiSectionPanel
+          onBack={onBack}
+          apiMode={apiMode}
+          currentProviderLabel={apiMode === 'relay' ? 'Trạm trung chuyển' : PROVIDER_LABELS[currentApiEntry?.provider || selectedProvider || 'gemini']}
+          currentModelLabel={apiMode === 'relay' ? (selectedModel || getProfileModel('quality', 'gemini')) : (currentApiEntry?.model || selectedModel || 'Chưa chọn')}
+          vaultCount={apiVault.length}
+          currentStatusLabel={apiMode === 'relay' ? relayStatusText : (currentApiEntry ? currentApiEntry.name : 'Chưa cấu hình')}
+          onSwitchToDirect={() => {
+            setApiMode('manual');
+            persistRuntimeConfig({ mode: 'manual' });
+          }}
+          onSwitchToRelay={() => {
+            setApiMode('relay');
+            persistRuntimeConfig({ mode: 'relay', selectedProvider: 'gemini' });
+          }}
+          apiEntryName={apiEntryName}
+          apiEntryText={apiEntryText}
+          displayedDraftProvider={displayedDraftProvider}
+          effectiveDraftProvider={effectiveDraftProvider}
+          availableDraftModels={availableDraftModels}
+          apiEntryModel={apiEntryModel}
+          apiEntryBaseUrl={apiEntryBaseUrl}
+          aiProfile={aiProfile}
+          apiVault={apiVault}
+          currentApiEntry={currentApiEntry}
+          testingApiId={testingApiId}
+          relayStatus={relayStatus}
+          relayStatusText={relayStatusText}
+          relayUrl={relayUrl}
+          relayMatchedLong={relayMatchedLong}
+          relayMaskedToken={relayMaskedToken}
+          relayWebBase={RELAY_WEB_BASE}
+          relaySocketBase={RELAY_SOCKET_BASE}
+          manualRelayTokenInput={manualRelayTokenInput}
+          isCheckingAi={isCheckingAi}
+          aiCheckStatus={aiCheckStatus}
+          aiUsageRequests={aiUsageStats.requests}
+          aiUsageTokens={aiUsageStats.estTokens}
+          quickImportText={quickImportText}
+          quickImportResult={quickImportResult}
+          onApiEntryNameChange={setApiEntryName}
+          onApiEntryTextChange={setApiEntryText}
+          onApiEntryProviderChange={setApiEntryProvider}
+          onApiEntryModelChange={setApiEntryModel}
+          onApiEntryBaseUrlChange={setApiEntryBaseUrl}
+          onSaveApiEntry={handleSaveApiEntry}
+          onTestApiEntry={handleTestApiEntry}
+          onActivateApiEntry={handleActivateApiEntry}
+          onDeleteApiEntry={handleDeleteApiEntry}
+          onStoredApiModelChange={handleApiModelChange}
+          onStoredApiBaseUrlChange={handleApiBaseUrlChange}
+          onConnectRelay={handleConnectRelay}
+          onDisconnectRelay={handleDisconnectRelay}
+          onRelayUrlChange={(value) => {
+            setRelayUrl(value);
+            setRelayIdentityHint(value);
+            persistRuntimeConfig({ relayUrl: value, identityHint: value, selectedProvider: 'gemini' });
+          }}
+          onManualRelayTokenInputChange={setManualRelayTokenInput}
+          onSaveManualRelayToken={handleSaveManualRelayToken}
+          onCheckAiHealth={handleCheckAiHealth}
+          onResetAiUsage={handleResetAiUsage}
+          onQuickImportTextChange={setQuickImportText}
+          onQuickImportKeys={handleQuickImportKeys}
+          onAiProfileChange={(next) => {
+            setAiProfile(next);
+            persistRuntimeConfig({ aiProfile: next });
+          }}
+        />
       </motion.div>
     );
   }
@@ -2431,116 +2135,31 @@ const ToolsManager = ({
         <h2 className="text-3xl font-serif font-bold">Công cụ & Thiết lập</h2>
       </div>
 
-      <div className="mb-8 bg-white p-8 rounded-3xl border border-slate-200 shadow-sm">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="p-3 bg-violet-50 rounded-2xl">
-            <ImagePlus className="w-6 h-6 text-violet-600" />
-          </div>
-          <div>
-            <h3 className="text-xl font-serif font-bold">Hồ sơ hiển thị</h3>
-            <p className="text-sm text-slate-500">Đổi tên và ảnh đại diện hiển thị trên thanh điều hướng.</p>
-          </div>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-3">
-          <input
-            value={profileName}
-            onChange={(e) => setProfileName(e.target.value)}
-            className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-violet-500"
-            placeholder="Tên hiển thị"
-          />
-          <input
-            value={profileAvatar}
-            onChange={(e) => setProfileAvatar(e.target.value)}
-            className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-violet-500"
-            placeholder="Link ảnh đại diện (https://...)"
-          />
-          <button
-            onClick={handleSaveProfileInfo}
-            className="px-6 py-3 rounded-2xl bg-violet-600 text-white font-bold hover:bg-violet-700"
-          >
-            Lưu hồ sơ
-          </button>
-        </div>
-        <div className="mt-3 flex flex-wrap items-center gap-3">
-          <input
-            ref={avatarUploadInputRef}
-            type="file"
-            accept="image/*"
-            onChange={handleAvatarFileChange}
-            className="hidden"
-          />
-          <button
-            type="button"
-            onClick={handlePickAvatarFile}
-            className="px-4 py-2 rounded-xl border border-violet-200 text-violet-700 bg-violet-50 hover:bg-violet-100 text-sm font-semibold"
-          >
-            Tải ảnh từ thiết bị
-          </button>
-          <p className="text-xs text-slate-500">
-            Có thể dán URL hoặc tải ảnh từ máy (khuyến nghị dưới 2MB).
-          </p>
-        </div>
-      </div>
+      <ProfileSettingsPanel
+        profileName={profileName}
+        profileAvatar={profileAvatar}
+        onProfileNameChange={setProfileName}
+        onProfileAvatarChange={setProfileAvatar}
+        onSave={handleSaveProfileInfo}
+        onPickAvatarFile={handlePickAvatarFile}
+        onAvatarFileChange={handleAvatarFileChange}
+        avatarInputRef={avatarUploadInputRef}
+      />
 
-      <div className="mb-8 bg-white p-8 rounded-3xl border border-slate-200 shadow-sm">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="p-3 bg-emerald-50 rounded-2xl">
-            <Zap className="w-6 h-6 text-emerald-600" />
-          </div>
-          <div>
-            <h3 className="text-xl font-serif font-bold">Cấu hình AI</h3>
-            <p className="text-sm text-slate-500">Thiết lập kết nối AI và model trong mục API.</p>
-          </div>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-4 items-center">
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-            <p>Kết nối hiện tại: <b>{currentApiEntry?.name || (apiMode === 'relay' ? 'Trạm trung chuyển' : 'Chưa cấu hình')}</b></p>
-            <p className="mt-1">Model hiện tại: <b>{currentApiEntry?.model || selectedModel || 'Chưa chọn'}</b></p>
-          </div>
-          <p className="px-5 py-3 rounded-2xl bg-emerald-600 text-white font-bold text-center">Mở mục API</p>
-        </div>
-      </div>
+      <AiConfigSummaryPanel
+        currentConnectionName={currentApiEntry?.name || (apiMode === 'relay' ? 'Trạm trung chuyển' : 'Chưa cấu hình')}
+        currentModel={currentApiEntry?.model || selectedModel || 'Chưa chọn'}
+        onOpenApi={() => onOpenApi?.()}
+      />
 
       <QualityCenter onRun={handleRunQa} />
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-        {/* Import Section */}
-        <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="p-3 bg-indigo-50 rounded-2xl">
-              <Upload className="w-6 h-6 text-indigo-600" />
-            </div>
-            <h3 className="text-xl font-serif font-bold">Nhập dữ liệu</h3>
-          </div>
-          <p className="text-slate-500 text-sm mb-8 leading-relaxed">
-            Nhập truyện từ tệp <b>.docx</b>, <b>.txt</b> hoặc khôi phục từ tệp sao lưu.
-          </p>
-          <label className="block w-full py-4 px-6 bg-slate-900 text-white text-center rounded-2xl font-bold cursor-pointer hover:bg-slate-800 transition-all shadow-lg shadow-slate-900/20">
-            {isImporting ? 'Đang xử lý...' : 'Chọn file để nhập'}
-            <input type="file" accept=".docx,.txt,.json" onChange={handleImportFile} className="hidden" disabled={isImporting} />
-          </label>
-        </div>
-
-        {/* Export Section */}
-        <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="p-3 bg-blue-50 rounded-2xl">
-              <Download className="w-6 h-6 text-blue-600" />
-            </div>
-            <h3 className="text-xl font-serif font-bold">Xuất dữ liệu</h3>
-          </div>
-          <p className="text-slate-500 text-sm mb-8 leading-relaxed">
-            Lưu toàn bộ truyện và nhân vật về máy để sao lưu hoặc chuyển sang thiết bị khác.
-          </p>
-          <button 
-            onClick={handleExportJSON}
-            disabled={isExporting}
-            className="w-full py-4 px-6 bg-slate-100 text-slate-900 text-center rounded-2xl font-bold hover:bg-slate-200 transition-all"
-          >
-            {isExporting ? 'Đang chuẩn bị...' : 'Tải xuống bản sao lưu'}
-          </button>
-        </div>
-      </div>
+      <DataManagementPanels
+        isImporting={isImporting}
+        isExporting={isExporting}
+        onImportFile={handleImportFile}
+        onExportJson={handleExportJSON}
+      />
 
       <div className="mt-12">
         <TranslationNameDictionary />
@@ -5883,6 +5502,7 @@ const AppContent = () => {
             key="api"
             section="api"
             onBack={() => setView('stories')}
+            onOpenApi={() => setView('api')}
             profile={profile}
             onSaveProfile={setProfile}
           />
@@ -5891,6 +5511,7 @@ const AppContent = () => {
             key="tools"
             section="tools"
             onBack={() => setView('stories')}
+            onOpenApi={() => setView('api')}
             profile={profile}
             onSaveProfile={setProfile}
           />
