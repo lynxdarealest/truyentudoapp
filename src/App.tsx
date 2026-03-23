@@ -40,6 +40,10 @@ import {
   Wifi,
   WifiOff,
   Link2,
+  Sun,
+  Moon,
+  ImagePlus,
+  Database,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import ReactMarkdown from 'react-markdown';
@@ -63,7 +67,6 @@ type ApiMode = 'manual' | 'relay';
 interface ApiRuntimeConfig {
   mode: ApiMode;
   relayUrl: string;
-  relayCode: string;
   identityHint: string;
   relayMatchedLong: string;
   relayToken: string;
@@ -75,6 +78,44 @@ interface ApiRuntimeConfig {
 const API_RUNTIME_CONFIG_KEY = 'api_runtime_config_v1';
 const RELAY_TOKEN_CACHE_KEY = 'relay_token_cache_v1';
 const GEMINI_RESPONSE_CACHE_KEY = 'gemini_response_cache_v1';
+const UI_PROFILE_KEY = 'ui_profile_v1';
+const UI_THEME_KEY = 'ui_theme_v1';
+
+type ThemeMode = 'light' | 'dark';
+
+interface UiProfile {
+  displayName: string;
+  avatarUrl: string;
+}
+
+function loadUiProfile(defaultName?: string, defaultAvatar?: string): UiProfile {
+  try {
+    const raw = localStorage.getItem(UI_PROFILE_KEY);
+    const parsed = raw ? (JSON.parse(raw) as Partial<UiProfile>) : {};
+    return {
+      displayName: parsed.displayName || defaultName || 'Người dùng',
+      avatarUrl: parsed.avatarUrl || defaultAvatar || 'https://api.dicebear.com/9.x/initials/svg?seed=User',
+    };
+  } catch {
+    return {
+      displayName: defaultName || 'Người dùng',
+      avatarUrl: defaultAvatar || 'https://api.dicebear.com/9.x/initials/svg?seed=User',
+    };
+  }
+}
+
+function saveUiProfile(profile: UiProfile): void {
+  localStorage.setItem(UI_PROFILE_KEY, JSON.stringify(profile));
+}
+
+function loadThemeMode(): ThemeMode {
+  const raw = localStorage.getItem(UI_THEME_KEY);
+  return raw === 'dark' ? 'dark' : 'light';
+}
+
+function saveThemeMode(mode: ThemeMode): void {
+  localStorage.setItem(UI_THEME_KEY, mode);
+}
 
 function parseLongIdFromText(input: string): string {
   const value = String(input || '').trim();
@@ -114,20 +155,6 @@ function toWsUrl(url: string): string {
   return `wss://${u.replace(/^\/+/, '')}`;
 }
 
-function buildRelayWsUrl(baseUrl: string, code: string): string {
-  const base = toWsUrl(baseUrl);
-  const cleanCode = code.trim();
-  if (!/^\d{4,8}$/.test(cleanCode)) return base;
-
-  if (base.includes('/code=')) {
-    return base.replace(/\/code=\d*$/i, '/code=').concat(cleanCode);
-  }
-
-  const urlObj = new URL(base);
-  urlObj.searchParams.set('code', cleanCode);
-  return urlObj.toString();
-}
-
 function getApiRuntimeConfig(): ApiRuntimeConfig {
   try {
     const raw = localStorage.getItem(API_RUNTIME_CONFIG_KEY);
@@ -135,7 +162,6 @@ function getApiRuntimeConfig(): ApiRuntimeConfig {
     return {
       mode: parsed.mode === 'relay' ? 'relay' : 'manual',
       relayUrl: parsed.relayUrl || 'wss://relay2026.vercel.app/',
-      relayCode: parsed.relayCode || '',
       identityHint: parsed.identityHint || '',
       relayMatchedLong: parsed.relayMatchedLong || '',
       relayToken: parsed.relayToken || '',
@@ -147,7 +173,6 @@ function getApiRuntimeConfig(): ApiRuntimeConfig {
     return {
       mode: 'manual',
       relayUrl: 'wss://relay2026.vercel.app/',
-      relayCode: '',
       identityHint: '',
       relayMatchedLong: '',
       relayToken: '',
@@ -418,14 +443,20 @@ const Navbar = ({
   currentView, 
   setView, 
   onShowHelp,
-  onHome
+  onHome,
+  themeMode,
+  onToggleTheme,
+  profile,
 }: { 
   currentView: string, 
   setView: (view: 'stories' | 'characters' | 'tools') => void,
   onShowHelp: () => void,
-  onHome: () => void
+  onHome: () => void,
+  themeMode: ThemeMode,
+  onToggleTheme: () => void,
+  profile: UiProfile,
 }) => {
-  const { user } = useAuth();
+  const [showDataMenu, setShowDataMenu] = useState(false);
   
   const handleExport = () => {
     storage.exportData();
@@ -501,22 +532,41 @@ const Navbar = ({
       </div>
       
       <div className="flex items-center gap-4">
-        <div className="flex items-center gap-2">
-          <button 
-            onClick={handleExport}
+        <div className="relative">
+          <button
+            onClick={() => setShowDataMenu((v) => !v)}
             className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-100 transition-all"
-            title="Sao lưu dữ liệu"
+            title="Dữ liệu"
           >
-            <Download className="w-4 h-4" /> <span className="hidden md:inline">Sao lưu</span>
+            <Database className="w-4 h-4" /> <span className="hidden md:inline">Dữ liệu</span>
           </button>
-          <button 
-            onClick={handleImport}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-100 transition-all"
-            title="Khôi phục dữ liệu"
-          >
-            <Upload className="w-4 h-4" /> <span className="hidden md:inline">Khôi phục</span>
-          </button>
+          {showDataMenu ? (
+            <div className="absolute right-0 mt-2 w-48 rounded-xl border border-slate-200 bg-white shadow-xl z-50 p-1">
+              <button
+                onClick={() => { setShowDataMenu(false); handleExport(); }}
+                className="w-full text-left px-3 py-2 rounded-lg text-sm font-semibold text-slate-700 hover:bg-slate-100"
+              >
+                <Download className="w-4 h-4 inline mr-2" />
+                Sao lưu JSON
+              </button>
+              <button
+                onClick={() => { setShowDataMenu(false); handleImport(); }}
+                className="w-full text-left px-3 py-2 rounded-lg text-sm font-semibold text-slate-700 hover:bg-slate-100"
+              >
+                <Upload className="w-4 h-4 inline mr-2" />
+                Khôi phục JSON
+              </button>
+            </div>
+          ) : null}
         </div>
+        <div className="h-8 w-[1px] bg-slate-200 mx-2" />
+        <button
+          onClick={onToggleTheme}
+          className="w-10 h-10 rounded-full border border-slate-200 flex items-center justify-center text-slate-500 hover:text-indigo-600 hover:border-indigo-200 transition-all"
+          title={themeMode === 'dark' ? 'Đổi sang giao diện sáng' : 'Đổi sang giao diện tối'}
+        >
+          {themeMode === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+        </button>
         <div className="h-8 w-[1px] bg-slate-200 mx-2" />
         <button 
           onClick={onShowHelp}
@@ -528,11 +578,11 @@ const Navbar = ({
         <div className="h-8 w-[1px] bg-slate-200 mx-2" />
         <div className="flex items-center gap-3">
           <div className="text-right hidden sm:block">
-            <p className="text-sm font-bold leading-none">{user?.displayName}</p>
+            <p className="text-sm font-bold leading-none">{profile.displayName}</p>
             <p className="text-[10px] text-slate-400 uppercase tracking-widest mt-1">Local Storage</p>
           </div>
           <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center overflow-hidden border border-slate-200">
-            <img src={user?.photoURL} alt="Avatar" className="w-full h-full object-cover" />
+            <img src={profile.avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
           </div>
         </div>
       </div>
@@ -904,15 +954,24 @@ const parseEPUB = async (file: File): Promise<string> => {
   return text;
 };
 
-const ToolsManager = ({ onBack }: { onBack: () => void }) => {
+const ToolsManager = ({
+  onBack,
+  profile,
+  onSaveProfile,
+}: {
+  onBack: () => void;
+  profile: UiProfile;
+  onSaveProfile: (next: UiProfile) => void;
+}) => {
   const { user } = useAuth();
   const [isExporting, setIsExporting] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const [profileName, setProfileName] = useState(profile.displayName);
+  const [profileAvatar, setProfileAvatar] = useState(profile.avatarUrl);
   const [geminiKeyInput, setGeminiKeyInput] = useState('');
   const [maskedGeminiKey, setMaskedGeminiKey] = useState('');
   const [apiMode, setApiMode] = useState<ApiMode>('manual');
   const [relayUrl, setRelayUrl] = useState('wss://relay2026.vercel.app/');
-  const [relayCode, setRelayCode] = useState('');
   const [relayIdentityHint, setRelayIdentityHint] = useState('');
   const [relayMatchedLong, setRelayMatchedLong] = useState('');
   const [relayMaskedToken, setRelayMaskedToken] = useState('Chưa nhận token');
@@ -928,6 +987,11 @@ const ToolsManager = ({ onBack }: { onBack: () => void }) => {
   const relayShouldReconnectRef = useRef(false);
 
   useEffect(() => {
+    setProfileName(profile.displayName);
+    setProfileAvatar(profile.avatarUrl);
+  }, [profile.displayName, profile.avatarUrl]);
+
+  useEffect(() => {
     const keys = storage.getApiKeys() as Array<{ key?: string; isActive?: boolean }>;
     const active = keys.find((k) => k?.isActive && k?.key?.trim())?.key?.trim();
     const fallback = keys.find((k) => k?.key?.trim())?.key?.trim();
@@ -941,7 +1005,6 @@ const ToolsManager = ({ onBack }: { onBack: () => void }) => {
     const runtime = getApiRuntimeConfig();
     setApiMode(runtime.mode);
     setRelayUrl(runtime.relayUrl);
-    setRelayCode(runtime.relayCode);
     setRelayIdentityHint(runtime.identityHint);
     setRelayMatchedLong(runtime.relayMatchedLong);
     setAiProfile(runtime.aiProfile);
@@ -1039,10 +1102,14 @@ const ToolsManager = ({ onBack }: { onBack: () => void }) => {
 
     if (relayDetectedCode || relayDetectedLong) {
       const nextCode = relayDetectedCode || relayDetectedLong;
-      setRelayCode(nextCode);
+      const relayBase = toWsUrl(relayUrl);
+      const nextRelayUrl = relayBase.includes('/code=')
+        ? relayBase.replace(/\/code=\d*$/i, `/code=${nextCode}`)
+        : `${relayBase.replace(/\/+$/, '')}/code=${nextCode}`;
+      setRelayUrl(nextRelayUrl);
       setRelayIdentityHint(text);
       persistRuntimeConfig({
-        relayCode: nextCode,
+        relayUrl: nextRelayUrl,
         identityHint: text,
       });
       updates += 1;
@@ -1057,14 +1124,14 @@ const ToolsManager = ({ onBack }: { onBack: () => void }) => {
   };
 
   const handleConnectRelay = () => {
-    const inferredCode = relayCode.trim() || parseRelayCodeFromText(relayIdentityHint);
+    const inferredCode = parseRelayCodeFromText(relayUrl);
     if (!/^\d{4,8}$/.test(inferredCode)) {
       setRelayStatus('error');
-      setRelayStatusText('Relay code không hợp lệ. Mã phải gồm 4-8 chữ số.');
+      setRelayStatusText('Base URL phải chứa code=xxxx (4-8 chữ số).');
       return;
     }
-    const wsTarget = buildRelayWsUrl(relayUrl, inferredCode);
-    const longFromInput = parseLongIdFromText(relayIdentityHint);
+    const wsTarget = toWsUrl(relayUrl);
+    const longFromInput = parseLongIdFromText(relayUrl);
     relayShouldReconnectRef.current = true;
 
     try {
@@ -1088,12 +1155,10 @@ const ToolsManager = ({ onBack }: { onBack: () => void }) => {
         persistRuntimeConfig({
           mode: 'relay',
           relayUrl: wsTarget,
-          relayCode: inferredCode,
-          identityHint: relayIdentityHint,
+          identityHint: relayUrl,
           aiProfile,
           enableCache: enablePromptCache,
         });
-        setRelayCode(inferredCode);
         if (longFromInput) {
           ws.send(JSON.stringify({ type: 'subscribe', long: longFromInput }));
         }
@@ -1107,7 +1172,7 @@ const ToolsManager = ({ onBack }: { onBack: () => void }) => {
 
       ws.onmessage = (event) => {
         const payload = extractRelayPayload(String(event.data || ''));
-        const expectedLong = parseLongIdFromText(relayIdentityHint);
+        const expectedLong = parseLongIdFromText(relayUrl);
         const isMatch = expectedLong ? payload.longId === expectedLong : Boolean(payload.longId);
 
         if (payload.token && (isMatch || !expectedLong)) {
@@ -1120,8 +1185,7 @@ const ToolsManager = ({ onBack }: { onBack: () => void }) => {
           persistRuntimeConfig({
             mode: 'relay',
             relayUrl: wsTarget,
-            relayCode: inferredCode,
-            identityHint: relayIdentityHint,
+            identityHint: relayUrl,
             relayMatchedLong: payload.longId || expectedLong,
             relayToken: token,
             relayUpdatedAt: new Date().toISOString(),
@@ -1323,6 +1387,16 @@ const ToolsManager = ({ onBack }: { onBack: () => void }) => {
     }
   };
 
+  const handleSaveProfileInfo = () => {
+    const cleanedName = profileName.trim() || 'Người dùng';
+    const cleanedAvatar = profileAvatar.trim() || `https://api.dicebear.com/9.x/initials/svg?seed=${encodeURIComponent(cleanedName)}`;
+    onSaveProfile({
+      displayName: cleanedName,
+      avatarUrl: cleanedAvatar,
+    });
+    alert('Đã cập nhật hồ sơ hiển thị.');
+  };
+
   if (!user) {
     return (
       <motion.div 
@@ -1333,6 +1407,37 @@ const ToolsManager = ({ onBack }: { onBack: () => void }) => {
         <div className="flex items-center gap-4 mb-8">
           <button onClick={onBack} className="p-2 rounded-full hover:bg-slate-100 transition-colors"><ChevronLeft /></button>
           <h2 className="text-3xl font-serif font-bold">Công cụ & Thiết lập</h2>
+        </div>
+        <div className="mb-8 bg-white p-8 rounded-3xl border border-slate-200 shadow-sm">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-3 bg-violet-50 rounded-2xl">
+              <ImagePlus className="w-6 h-6 text-violet-600" />
+            </div>
+            <div>
+              <h3 className="text-xl font-serif font-bold">Hồ sơ hiển thị</h3>
+              <p className="text-sm text-slate-500">Bạn vẫn có thể đổi tên và avatar kể cả khi chưa đăng nhập.</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-3">
+            <input
+              value={profileName}
+              onChange={(e) => setProfileName(e.target.value)}
+              className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-violet-500"
+              placeholder="Tên hiển thị"
+            />
+            <input
+              value={profileAvatar}
+              onChange={(e) => setProfileAvatar(e.target.value)}
+              className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-violet-500"
+              placeholder="Link ảnh đại diện (https://...)"
+            />
+            <button
+              onClick={handleSaveProfileInfo}
+              className="px-6 py-3 rounded-2xl bg-violet-600 text-white font-bold hover:bg-violet-700"
+            >
+              Lưu hồ sơ
+            </button>
+          </div>
         </div>
         <div className="bg-white p-12 rounded-[32px] border border-slate-200 text-center">
           <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-6">
@@ -1360,6 +1465,38 @@ const ToolsManager = ({ onBack }: { onBack: () => void }) => {
       <div className="flex items-center gap-4 mb-8">
         <button onClick={onBack} className="p-2 rounded-full hover:bg-slate-100 transition-colors"><ChevronLeft /></button>
         <h2 className="text-3xl font-serif font-bold">Công cụ & Thiết lập</h2>
+      </div>
+
+      <div className="mb-8 bg-white p-8 rounded-3xl border border-slate-200 shadow-sm">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="p-3 bg-violet-50 rounded-2xl">
+            <ImagePlus className="w-6 h-6 text-violet-600" />
+          </div>
+          <div>
+            <h3 className="text-xl font-serif font-bold">Hồ sơ hiển thị</h3>
+            <p className="text-sm text-slate-500">Đổi tên và ảnh đại diện hiển thị trên thanh điều hướng.</p>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-3">
+          <input
+            value={profileName}
+            onChange={(e) => setProfileName(e.target.value)}
+            className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-violet-500"
+            placeholder="Tên hiển thị"
+          />
+          <input
+            value={profileAvatar}
+            onChange={(e) => setProfileAvatar(e.target.value)}
+            className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-violet-500"
+            placeholder="Link ảnh đại diện (https://...)"
+          />
+          <button
+            onClick={handleSaveProfileInfo}
+            className="px-6 py-3 rounded-2xl bg-violet-600 text-white font-bold hover:bg-violet-700"
+          >
+            Lưu hồ sơ
+          </button>
+        </div>
       </div>
 
       <div className="mb-8 bg-white p-8 rounded-3xl border border-slate-200 shadow-sm">
@@ -1415,30 +1552,21 @@ const ToolsManager = ({ onBack }: { onBack: () => void }) => {
             </div>
           </>
         ) : (
-          <div className="space-y-3">
+        <div className="space-y-3">
             <p className="text-xs text-slate-500">
               Dán mã nhận dạng (ví dụ: <b>abcxyz.com/long=123</b>). Khi relay gửi token có <b>long=123</b> trùng, hệ thống sẽ tự nhận token.
             </p>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3">
               <input
                 type="text"
                 value={relayUrl}
                 onChange={(e) => {
                   setRelayUrl(e.target.value);
-                  persistRuntimeConfig({ relayUrl: e.target.value });
+                  setRelayIdentityHint(e.target.value);
+                  persistRuntimeConfig({ relayUrl: e.target.value, identityHint: e.target.value });
                 }}
                 className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
-                placeholder="wss://relay2026.vercel.app/"
-              />
-              <input
-                type="text"
-                value={relayCode}
-                onChange={(e) => {
-                  setRelayCode(e.target.value.replace(/\D/g, '').slice(0, 8));
-                  persistRuntimeConfig({ relayCode: e.target.value.replace(/\D/g, '').slice(0, 8) });
-                }}
-                className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
-                placeholder="Relay code (4-8 số)"
+                placeholder="wss://relay2026.vercel.app/code=18101412"
               />
             </div>
             <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3">
@@ -1453,21 +1581,11 @@ const ToolsManager = ({ onBack }: { onBack: () => void }) => {
                 )}
               </button>
             </div>
-            <input
-              type="text"
-              value={relayIdentityHint}
-              onChange={(e) => {
-                setRelayIdentityHint(e.target.value);
-                persistRuntimeConfig({ identityHint: e.target.value });
-              }}
-              className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
-              placeholder="Mã/web nhận dạng, ví dụ abcxyz.com/long=123"
-            />
             <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4 text-xs text-slate-600 space-y-1">
-              <p><Link2 className="inline w-3 h-3 mr-1" /> long từ mã local: <b>{parseLongIdFromText(relayIdentityHint) || 'chưa có'}</b></p>
+              <p><Link2 className="inline w-3 h-3 mr-1" /> long từ URL: <b>{parseLongIdFromText(relayUrl) || 'chưa có'}</b></p>
               <p><Zap className="inline w-3 h-3 mr-1" /> long đã match: <b>{relayMatchedLong || 'chưa match'}</b></p>
               <p><Shield className="inline w-3 h-3 mr-1" /> token relay: <b>{relayMaskedToken}</b></p>
-              <p>Relay code: <b>{relayCode || parseRelayCodeFromText(relayIdentityHint) || 'chưa có'}</b></p>
+              <p>Relay code từ URL: <b>{parseRelayCodeFromText(relayUrl) || 'chưa có'}</b></p>
               <p>Trạng thái: <b>{relayStatus}</b> - {relayStatusText}</p>
             </div>
           </div>
@@ -2711,10 +2829,10 @@ const HelpModal = ({ isOpen, onClose }: { isOpen: boolean, onClose: () => void }
   if (!isOpen) return null;
 
   const features = [
-    { title: 'Viết truyện', desc: 'Sáng tạo và lưu trữ các bản thảo truyện không giới hạn.', icon: <BookOpen className="w-5 h-5 text-indigo-600" /> },
-    { title: 'Nhân vật', desc: 'Xây dựng hồ sơ nhân vật chi tiết với ngoại hình và tính cách.', icon: <Users className="w-5 h-5 text-blue-600" /> },
-    { title: 'Nhập file', desc: 'Hỗ trợ nhập nội dung từ file .docx và .txt.', icon: <Upload className="w-5 h-5 text-amber-600" /> },
-    { title: 'Sao lưu JSON', desc: 'Xuất và nhập toàn bộ tiến trình để không bao giờ mất dữ liệu.', icon: <Save className="w-5 h-5 text-purple-600" /> },
+    { title: 'Relay Base URL 1 ô duy nhất', desc: 'Nhập trực tiếp URL dạng wss://.../code=18101412 và tự sửa code ở cuối URL để kết nối.', icon: <Link2 className="w-5 h-5 text-indigo-600" /> },
+    { title: 'AI từ file (gộp)', desc: 'Một luồng nhập file dùng chung, sau đó chọn Dịch truyện hoặc Viết tiếp.', icon: <Upload className="w-5 h-5 text-amber-600" /> },
+    { title: 'Hồ sơ cá nhân', desc: 'Bạn có thể đổi tên hiển thị và ảnh đại diện ngay trong mục Công cụ.', icon: <ImagePlus className="w-5 h-5 text-emerald-600" /> },
+    { title: 'Theme ngày/đêm', desc: 'Dùng nút Mặt trăng/Mặt trời ở thanh trên để chuyển giao diện.', icon: <Moon className="w-5 h-5 text-purple-600" /> },
   ];
 
   return (
@@ -4070,6 +4188,8 @@ const AIGenerationModal = ({
 
 const AppContent = () => {
   const { user, loading } = useAuth();
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => loadThemeMode());
+  const [profile, setProfile] = useState<UiProfile>(() => loadUiProfile(user?.displayName || undefined, user?.photoURL || undefined));
 
   const [editingStory, setEditingStory] = useState<Story | null>(null);
   const [selectedStory, setSelectedStory] = useState<Story | null>(null);
@@ -4102,6 +4222,68 @@ const AppContent = () => {
   const [continueFileName, setContinueFileName] = useState('');
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+  const readImportedStoryFile = async (file: File): Promise<string> => {
+    if (file.name.endsWith('.pdf')) return parsePDF(file);
+    if (file.name.endsWith('.epub')) return parseEPUB(file);
+    if (file.name.endsWith('.docx')) {
+      const arrayBuffer = await file.arrayBuffer();
+      const result = await mammoth.extractRawText({ arrayBuffer });
+      return result.value;
+    }
+    return file.text();
+  };
+
+  const handleUnifiedAiFileFlow = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.docx,.txt,.pdf,.epub';
+    input.onchange = async (e: any) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      setIsProcessingAI(true);
+      setAILoadingMessage("Đang đọc file...");
+      try {
+        const content = await readImportedStoryFile(file);
+        const shouldTranslate = window.confirm('Nhấn OK để DỊCH truyện, hoặc Cancel để VIẾT TIẾP truyện.');
+        if (shouldTranslate) {
+          setTranslateFileContent(content);
+          setTranslateFileName(file.name);
+          setShowTranslateModal(true);
+        } else {
+          setContinueFileContent(content);
+          setContinueFileName(file.name);
+          setShowAIContinueModal(true);
+        }
+      } catch (err) {
+        alert("Lỗi khi đọc file: " + err);
+      } finally {
+        setIsProcessingAI(false);
+        setAILoadingMessage('');
+      }
+    };
+    input.click();
+  };
+
+  useEffect(() => {
+    setProfile((prev) => {
+      const next = loadUiProfile(user?.displayName || undefined, user?.photoURL || undefined);
+      return prev.displayName === next.displayName && prev.avatarUrl === next.avatarUrl ? prev : next;
+    });
+  }, [user?.displayName, user?.photoURL]);
+
+  useEffect(() => {
+    saveUiProfile(profile);
+  }, [profile]);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', themeMode);
+    saveThemeMode(themeMode);
+  }, [themeMode]);
+
+  const handleToggleTheme = () => {
+    setThemeMode((prev) => (prev === 'dark' ? 'light' : 'dark'));
+  };
 
   const handleTranslateStory = async (options: {
     isAdult: boolean,
@@ -4817,7 +4999,7 @@ const AppContent = () => {
   if (loading) return <div className="min-h-screen flex items-center justify-center font-serif">Đang khởi động...</div>;
 
   return (
-    <div className="min-h-screen bg-[#F8FAFC]">
+    <div className={cn("min-h-screen", themeMode === 'dark' ? "bg-slate-950 text-slate-100" : "bg-[#F8FAFC]")}>
       <HelpModal isOpen={showHelp} onClose={() => setShowHelp(false)} />
       <AIGenerationModal 
         isOpen={showAIGen} 
@@ -4869,6 +5051,9 @@ const AppContent = () => {
           setEditingStory(null);
           setIsCreating(false);
         }}
+        themeMode={themeMode}
+        onToggleTheme={handleToggleTheme}
+        profile={profile}
       />
       
       <AnimatePresence mode="wait">
@@ -4886,7 +5071,12 @@ const AppContent = () => {
         ) : view === 'characters' ? (
           <CharacterManager key="characters" onBack={() => setView('stories')} />
         ) : view === 'tools' ? (
-          <ToolsManager key="tools" onBack={() => setView('stories')} />
+          <ToolsManager
+            key="tools"
+            onBack={() => setView('stories')}
+            profile={profile}
+            onSaveProfile={setProfile}
+          />
         ) : (isCreating || editingStory) ? (
           <StoryEditor 
             key="editor"
@@ -4955,86 +5145,11 @@ const AppContent = () => {
                     Tạo từ dàn ý (AI)
                   </button>
                   <button 
-                    onClick={() => {
-                      const input = document.createElement('input');
-                      input.type = 'file';
-                      input.accept = '.docx,.txt,.pdf,.epub';
-                      input.onchange = async (e: any) => {
-                        const file = e.target.files?.[0];
-                        if (file) {
-                          setIsProcessingAI(true);
-                          setAILoadingMessage("Đang đọc file...");
-                          try {
-                            let content = '';
-                            if (file.name.endsWith('.pdf')) {
-                              content = await parsePDF(file);
-                            } else if (file.name.endsWith('.epub')) {
-                              content = await parseEPUB(file);
-                            } else if (file.name.endsWith('.docx')) {
-                              const arrayBuffer = await file.arrayBuffer();
-                              const result = await mammoth.extractRawText({ arrayBuffer });
-                              content = result.value;
-                            } else {
-                              content = await file.text();
-                            }
-                            setContinueFileContent(content);
-                            setContinueFileName(file.name);
-                            setShowAIContinueModal(true);
-                          } catch (err) {
-                            alert("Lỗi khi đọc file: " + err);
-                          } finally {
-                            setIsProcessingAI(false);
-                            setAILoadingMessage('');
-                          }
-                        }
-                      };
-                      input.click();
-                    }}
+                    onClick={handleUnifiedAiFileFlow}
                     className="flex items-center justify-center gap-3 px-8 py-4 rounded-2xl bg-amber-600 hover:bg-amber-700 text-white transition-all shadow-xl shadow-amber-900/20 font-bold text-lg group"
                   >
-                    <Sparkles className="w-6 h-6" />
-                    Viết tiếp truyện
-                  </button>
-                  <button 
-                    onClick={() => {
-                      const input = document.createElement('input');
-                      input.type = 'file';
-                      input.accept = '.docx,.txt,.pdf,.epub';
-                      input.onchange = async (e: any) => {
-                        const file = e.target.files?.[0];
-                        if (file) {
-                          setIsProcessingAI(true);
-                          setAILoadingMessage("Đang đọc file...");
-                          try {
-                            let content = '';
-                            if (file.name.endsWith('.pdf')) {
-                              content = await parsePDF(file);
-                            } else if (file.name.endsWith('.epub')) {
-                              content = await parseEPUB(file);
-                            } else if (file.name.endsWith('.docx')) {
-                              const arrayBuffer = await file.arrayBuffer();
-                              const result = await mammoth.extractRawText({ arrayBuffer });
-                              content = result.value;
-                            } else {
-                              content = await file.text();
-                            }
-                            setTranslateFileContent(content);
-                            setTranslateFileName(file.name);
-                            setShowTranslateModal(true);
-                          } catch (err) {
-                            alert("Lỗi khi đọc file: " + err);
-                          } finally {
-                            setIsProcessingAI(false);
-                            setAILoadingMessage('');
-                          }
-                        }
-                      };
-                      input.click();
-                    }}
-                    className="flex items-center justify-center gap-3 px-8 py-4 rounded-2xl bg-teal-600 hover:bg-teal-700 text-white transition-all shadow-xl shadow-teal-900/20 font-bold text-lg group"
-                  >
                     <Languages className="w-6 h-6" />
-                    Dịch truyện
+                    AI từ file (Dịch / Viết tiếp)
                   </button>
                   <input 
                     type="file" 
@@ -5053,7 +5168,30 @@ const AppContent = () => {
                 </div>
               </div>
             </div>
-            
+
+            <div className="max-w-7xl mx-auto px-6 mb-10">
+              <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                  <h3 className="text-xl font-serif font-bold text-slate-900">Bắt đầu nhanh</h3>
+                  <span className="text-xs px-3 py-1 rounded-full bg-indigo-50 text-indigo-700 font-semibold">Phiên bản Relay Base URL</span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+                  <div className="rounded-2xl border border-slate-200 p-4 bg-slate-50">
+                    <p className="font-bold text-slate-800 mb-1">1. Thiết lập API</p>
+                    <p className="text-slate-600">Vào <b>Công cụ</b>, nhập key hoặc Base URL relay có <code>code=xxxx</code>.</p>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 p-4 bg-slate-50">
+                    <p className="font-bold text-slate-800 mb-1">2. Chọn workflow AI</p>
+                    <p className="text-slate-600">Dùng nút <b>AI từ file</b> để chọn nhanh Dịch truyện hoặc Viết tiếp.</p>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 p-4 bg-slate-50">
+                    <p className="font-bold text-slate-800 mb-1">3. Cá nhân hóa UI</p>
+                    <p className="text-slate-600">Đổi tên, avatar và chuyển ngày/đêm để dùng thoải mái hơn.</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+             
             <StoryList onView={setSelectedStory} />
           </motion.div>
         )}
