@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth, AuthProvider } from './AuthContext';
 import { storage } from './storage';
 import { db, auth, googleProvider, signInWithPopup } from './firebase';
@@ -36,6 +36,9 @@ import {
   Zap,
   Clock,
   Target,
+  Wifi,
+  WifiOff,
+  Link2,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import ReactMarkdown from 'react-markdown';
@@ -54,8 +57,110 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+type ApiMode = 'manual' | 'relay';
+
+interface ApiRuntimeConfig {
+  mode: ApiMode;
+  relayUrl: string;
+  identityHint: string;
+  relayMatchedLong: string;
+  relayToken: string;
+  relayUpdatedAt: string;
+}
+
+const API_RUNTIME_CONFIG_KEY = 'api_runtime_config_v1';
+const RELAY_TOKEN_CACHE_KEY = 'relay_token_cache_v1';
+
+function parseLongIdFromText(input: string): string {
+  const value = String(input || '').trim();
+  if (!value) return '';
+  const m1 = value.match(/[?&]long=(\d+)/i);
+  if (m1?.[1]) return m1[1];
+  const m2 = value.match(/long\s*[=:]\s*(\d+)/i);
+  if (m2?.[1]) return m2[1];
+  const m3 = value.match(/=(\d+)(?:\D|$)/);
+  return m3?.[1] || '';
+}
+
+function toWsUrl(url: string): string {
+  const u = url.trim();
+  if (u.startsWith('wss://') || u.startsWith('ws://')) return u;
+  if (u.startsWith('https://')) return `wss://${u.slice('https://'.length)}`;
+  if (u.startsWith('http://')) return `ws://${u.slice('http://'.length)}`;
+  return `wss://${u.replace(/^\/+/, '')}`;
+}
+
+function getApiRuntimeConfig(): ApiRuntimeConfig {
+  try {
+    const raw = localStorage.getItem(API_RUNTIME_CONFIG_KEY);
+    const parsed = raw ? (JSON.parse(raw) as Partial<ApiRuntimeConfig>) : {};
+    return {
+      mode: parsed.mode === 'relay' ? 'relay' : 'manual',
+      relayUrl: parsed.relayUrl || 'wss://relay2026.vercel.app/',
+      identityHint: parsed.identityHint || '',
+      relayMatchedLong: parsed.relayMatchedLong || '',
+      relayToken: parsed.relayToken || '',
+      relayUpdatedAt: parsed.relayUpdatedAt || '',
+    };
+  } catch {
+    return {
+      mode: 'manual',
+      relayUrl: 'wss://relay2026.vercel.app/',
+      identityHint: '',
+      relayMatchedLong: '',
+      relayToken: '',
+      relayUpdatedAt: '',
+    };
+  }
+}
+
+function saveApiRuntimeConfig(config: ApiRuntimeConfig): void {
+  localStorage.setItem(API_RUNTIME_CONFIG_KEY, JSON.stringify(config));
+}
+
+function extractRelayPayload(rawMessage: string): { longId: string; token: string } {
+  const text = String(rawMessage || '').trim();
+  let longId = parseLongIdFromText(text);
+  let token = '';
+
+  const possibleToken = text.match(/AIza[0-9A-Za-z\-_]{20,}/);
+  if (possibleToken?.[0]) {
+    token = possibleToken[0];
+  }
+
+  try {
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    const candidates = [parsed.long, parsed.longId, parsed.id, parsed.session, parsed.code, parsed.url];
+    for (const c of candidates) {
+      const extracted = parseLongIdFromText(String(c || ''));
+      if (extracted) {
+        longId = extracted;
+        break;
+      }
+    }
+    const tokenCandidates = [parsed.token, parsed.apiKey, parsed.geminiKey, parsed.accessToken];
+    for (const t of tokenCandidates) {
+      const value = String(t || '').trim();
+      if (value) {
+        token = value;
+        break;
+      }
+    }
+  } catch {
+    // Non-JSON payload is allowed.
+  }
+
+  return { longId, token };
+}
+
 function getConfiguredGeminiApiKey(): string {
   try {
+    const runtime = getApiRuntimeConfig();
+    if (runtime.mode === 'relay') {
+      const relayToken = localStorage.getItem(RELAY_TOKEN_CACHE_KEY)?.trim() || runtime.relayToken?.trim() || '';
+      if (relayToken) return relayToken;
+    }
+
     const keys = storage.getApiKeys() as Array<{ key?: string; isActive?: boolean }>;
     const activeKey = keys.find((k) => k?.isActive && k?.key?.trim())?.key?.trim();
     const firstKey = keys.find((k) => k?.key?.trim())?.key?.trim();
@@ -69,6 +174,10 @@ function getConfiguredGeminiApiKey(): string {
 function createGeminiClient(): GoogleGenAI {
   const apiKey = getConfiguredGeminiApiKey();
   if (!apiKey) {
+    const mode = getApiRuntimeConfig().mode;
+    if (mode === 'relay') {
+      throw new Error('Chưa nhận được token từ Relay. Vào Công cụ > Cấu hình API > Relay để kết nối websocket.');
+    }
     throw new Error('Chưa cấu hình Gemini API key. Vào Công cụ > Cấu hình API để thêm key.');
   }
   return new GoogleGenAI({ apiKey });
@@ -690,6 +799,14 @@ const ToolsManager = ({ onBack }: { onBack: () => void }) => {
   const [isImporting, setIsImporting] = useState(false);
   const [geminiKeyInput, setGeminiKeyInput] = useState('');
   const [maskedGeminiKey, setMaskedGeminiKey] = useState('');
+  const [apiMode, setApiMode] = useState<ApiMode>('manual');
+  const [relayUrl, setRelayUrl] = useState('wss://relay2026.vercel.app/');
+  const [relayIdentityHint, setRelayIdentityHint] = useState('');
+  const [relayMatchedLong, setRelayMatchedLong] = useState('');
+  const [relayMaskedToken, setRelayMaskedToken] = useState('Chưa nhận token');
+  const [relayStatus, setRelayStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected');
+  const [relayStatusText, setRelayStatusText] = useState('Chưa kết nối');
+  const relaySocketRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
     const keys = storage.getApiKeys() as Array<{ key?: string; isActive?: boolean }>;
@@ -701,7 +818,33 @@ const ToolsManager = ({ onBack }: { onBack: () => void }) => {
     } else {
       setMaskedGeminiKey(current ? 'Đã cấu hình' : 'Chưa cấu hình');
     }
+
+    const runtime = getApiRuntimeConfig();
+    setApiMode(runtime.mode);
+    setRelayUrl(runtime.relayUrl);
+    setRelayIdentityHint(runtime.identityHint);
+    setRelayMatchedLong(runtime.relayMatchedLong);
+    const token = (localStorage.getItem(RELAY_TOKEN_CACHE_KEY) || runtime.relayToken || '').trim();
+    setRelayMaskedToken(token ? `${token.slice(0, 8)}...${token.slice(-6)}` : 'Chưa nhận token');
   }, []);
+
+  useEffect(() => {
+    return () => {
+      if (relaySocketRef.current) {
+        relaySocketRef.current.close();
+        relaySocketRef.current = null;
+      }
+    };
+  }, []);
+
+  const persistRuntimeConfig = (next: Partial<ApiRuntimeConfig>) => {
+    const current = getApiRuntimeConfig();
+    const merged: ApiRuntimeConfig = {
+      ...current,
+      ...next,
+    };
+    saveApiRuntimeConfig(merged);
+  };
 
   const handleSaveGeminiKey = () => {
     const key = geminiKeyInput.trim();
@@ -720,7 +863,89 @@ const ToolsManager = ({ onBack }: { onBack: () => void }) => {
     storage.saveApiKeys(updated);
     setMaskedGeminiKey(`${key.slice(0, 6)}...${key.slice(-4)}`);
     setGeminiKeyInput('');
+    setApiMode('manual');
+    persistRuntimeConfig({ mode: 'manual' });
     alert('Đã lưu Gemini API key.');
+  };
+
+  const handleConnectRelay = () => {
+    const wsTarget = toWsUrl(relayUrl);
+    const longFromInput = parseLongIdFromText(relayIdentityHint);
+
+    try {
+      if (relaySocketRef.current) {
+        relaySocketRef.current.close();
+        relaySocketRef.current = null;
+      }
+      setRelayStatus('connecting');
+      setRelayStatusText('Đang kết nối websocket...');
+
+      const ws = new WebSocket(wsTarget);
+      relaySocketRef.current = ws;
+
+      ws.onopen = () => {
+        setRelayStatus('connected');
+        setRelayStatusText('Đã kết nối, đang chờ token...');
+        persistRuntimeConfig({
+          mode: 'relay',
+          relayUrl: wsTarget,
+          identityHint: relayIdentityHint,
+        });
+        if (longFromInput) {
+          ws.send(JSON.stringify({ type: 'subscribe', long: longFromInput }));
+        }
+      };
+
+      ws.onmessage = (event) => {
+        const payload = extractRelayPayload(String(event.data || ''));
+        const expectedLong = parseLongIdFromText(relayIdentityHint);
+        const isMatch = expectedLong ? payload.longId === expectedLong : Boolean(payload.longId);
+
+        if (payload.token && (isMatch || !expectedLong)) {
+          const token = payload.token.trim();
+          if (!token) return;
+          localStorage.setItem(RELAY_TOKEN_CACHE_KEY, token);
+          setRelayMatchedLong(payload.longId || expectedLong);
+          setRelayMaskedToken(`${token.slice(0, 8)}...${token.slice(-6)}`);
+          setRelayStatusText(`Nhận token thành công (long=${payload.longId || expectedLong || 'n/a'})`);
+          persistRuntimeConfig({
+            mode: 'relay',
+            relayUrl: wsTarget,
+            identityHint: relayIdentityHint,
+            relayMatchedLong: payload.longId || expectedLong,
+            relayToken: token,
+            relayUpdatedAt: new Date().toISOString(),
+          });
+          return;
+        }
+
+        if (expectedLong && payload.longId && payload.longId !== expectedLong) {
+          setRelayStatusText(`Đã nhận long=${payload.longId} nhưng không khớp long=${expectedLong}`);
+        }
+      };
+
+      ws.onerror = () => {
+        setRelayStatus('error');
+        setRelayStatusText('Lỗi websocket relay');
+      };
+
+      ws.onclose = () => {
+        setRelayStatus('disconnected');
+        setRelayStatusText('Đã ngắt kết nối');
+      };
+    } catch (error) {
+      setRelayStatus('error');
+      setRelayStatusText(`Không thể kết nối relay: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
+  const handleDisconnectRelay = () => {
+    if (relaySocketRef.current) {
+      relaySocketRef.current.close();
+      relaySocketRef.current = null;
+    }
+    setRelayStatus('disconnected');
+    setRelayStatusText('Đã ngắt kết nối');
   };
 
   const handleExportJSON = async () => {
@@ -914,23 +1139,93 @@ const ToolsManager = ({ onBack }: { onBack: () => void }) => {
             <p className="text-sm text-slate-500">Thiết lập Gemini API key để dùng các tính năng AI.</p>
           </div>
         </div>
-        <p className="text-xs text-slate-500 mb-3">Key hiện tại: <b>{maskedGeminiKey || 'Chưa cấu hình'}</b></p>
-        <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3">
-          <input
-            type="password"
-            value={geminiKeyInput}
-            onChange={(e) => setGeminiKeyInput(e.target.value)}
-            className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-emerald-500"
-            placeholder="Nhập Gemini API key (AIza...)"
-          />
+
+        <div className="mb-4 inline-flex rounded-2xl bg-slate-100 p-1">
           <button
-            onClick={handleSaveGeminiKey}
-            disabled={!geminiKeyInput.trim()}
-            className="px-6 py-3 rounded-2xl bg-emerald-600 text-white font-bold hover:bg-emerald-700 disabled:opacity-50"
+            onClick={() => {
+              setApiMode('manual');
+              persistRuntimeConfig({ mode: 'manual' });
+            }}
+            className={`px-4 py-2 rounded-xl text-sm font-bold ${apiMode === 'manual' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}
           >
-            Lưu API Key
+            Tự nhập API
+          </button>
+          <button
+            onClick={() => {
+              setApiMode('relay');
+              persistRuntimeConfig({ mode: 'relay' });
+            }}
+            className={`px-4 py-2 rounded-xl text-sm font-bold ${apiMode === 'relay' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}
+          >
+            Relay WebSocket
           </button>
         </div>
+
+        {apiMode === 'manual' ? (
+          <>
+            <p className="text-xs text-slate-500 mb-3">Key hiện tại: <b>{maskedGeminiKey || 'Chưa cấu hình'}</b></p>
+            <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3">
+              <input
+                type="password"
+                value={geminiKeyInput}
+                onChange={(e) => setGeminiKeyInput(e.target.value)}
+                className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-emerald-500"
+                placeholder="Nhập Gemini API key (AIza...)"
+              />
+              <button
+                onClick={handleSaveGeminiKey}
+                disabled={!geminiKeyInput.trim()}
+                className="px-6 py-3 rounded-2xl bg-emerald-600 text-white font-bold hover:bg-emerald-700 disabled:opacity-50"
+              >
+                Lưu API Key
+              </button>
+            </div>
+          </>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-xs text-slate-500">
+              Dán mã nhận dạng (ví dụ: <b>abcxyz.com/long=123</b>). Khi relay gửi token có <b>long=123</b> trùng, hệ thống sẽ tự nhận token.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3">
+              <input
+                type="text"
+                value={relayUrl}
+                onChange={(e) => {
+                  setRelayUrl(e.target.value);
+                  persistRuntimeConfig({ relayUrl: e.target.value });
+                }}
+                className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
+                placeholder="wss://relay2026.vercel.app/"
+              />
+              <button
+                onClick={relayStatus === 'connected' ? handleDisconnectRelay : handleConnectRelay}
+                className={`px-6 py-3 rounded-2xl text-white font-bold ${relayStatus === 'connected' ? 'bg-slate-700 hover:bg-slate-800' : 'bg-indigo-600 hover:bg-indigo-700'}`}
+              >
+                {relayStatus === 'connected' ? (
+                  <span className="inline-flex items-center gap-2"><WifiOff className="w-4 h-4" /> Ngắt kết nối</span>
+                ) : (
+                  <span className="inline-flex items-center gap-2"><Wifi className="w-4 h-4" /> Kết nối Relay</span>
+                )}
+              </button>
+            </div>
+            <input
+              type="text"
+              value={relayIdentityHint}
+              onChange={(e) => {
+                setRelayIdentityHint(e.target.value);
+                persistRuntimeConfig({ identityHint: e.target.value });
+              }}
+              className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
+              placeholder="Mã/web nhận dạng, ví dụ abcxyz.com/long=123"
+            />
+            <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4 text-xs text-slate-600 space-y-1">
+              <p><Link2 className="inline w-3 h-3 mr-1" /> long từ mã local: <b>{parseLongIdFromText(relayIdentityHint) || 'chưa có'}</b></p>
+              <p><Zap className="inline w-3 h-3 mr-1" /> long đã match: <b>{relayMatchedLong || 'chưa match'}</b></p>
+              <p><Shield className="inline w-3 h-3 mr-1" /> token relay: <b>{relayMaskedToken}</b></p>
+              <p>Trạng thái: <b>{relayStatus}</b> - {relayStatusText}</p>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
