@@ -169,6 +169,14 @@ function buildRelayConnectUrl(rawInput: string, code: string): string {
   }
 }
 
+<<<<<<< HEAD
+=======
+function extractGeminiKeyFromText(input: string): string {
+  const found = String(input || '').match(/AIza[0-9A-Za-z\-_]{20,}/);
+  return found?.[0] || '';
+}
+
+>>>>>>> 21849d53 (fix: add manual relay token fallback when websocket handshake fails)
 function maskSensitive(value: string, head = 8, tail = 6): string {
   const v = String(value || '').trim();
   if (!v) return '';
@@ -865,6 +873,7 @@ const ToolsManager = ({
   const [relayMaskedToken, setRelayMaskedToken] = useState('Chưa nhận token');
   const [relayStatus, setRelayStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected');
   const [relayStatusText, setRelayStatusText] = useState('Chưa kết nối');
+  const [manualRelayTokenInput, setManualRelayTokenInput] = useState('');
   const [quickImportText, setQuickImportText] = useState('');
   const [quickImportResult, setQuickImportResult] = useState('');
   const [aiProfile, setAiProfile] = useState<'economy' | 'balanced' | 'quality'>('balanced');
@@ -1195,6 +1204,31 @@ const ToolsManager = ({
     }
     setRelayStatus('disconnected');
     setRelayStatusText('Đã ngắt kết nối');
+  };
+
+  const handleSaveManualRelayToken = () => {
+    const token = extractGeminiKeyFromText(manualRelayTokenInput.trim()) || manualRelayTokenInput.trim();
+    if (!token) {
+      setRelayStatusText('Token trống. Hãy dán API key bắt đầu bằng AIza...');
+      return;
+    }
+    if (!/^AIza[0-9A-Za-z\-_]{20,}$/.test(token)) {
+      setRelayStatusText('Token không đúng định dạng Gemini (AIza...).');
+      return;
+    }
+    localStorage.setItem(RELAY_TOKEN_CACHE_KEY, token);
+    setRelayMaskedToken(maskSensitive(token));
+    setManualRelayTokenInput('');
+    setRelayStatus('connected');
+    setRelayStatusText('Đã lưu token thủ công. Có thể dùng AI ngay cả khi WS relay lỗi.');
+    persistRuntimeConfig({
+      mode: 'relay',
+      relayUrl,
+      relayToken: token,
+      relayUpdatedAt: new Date().toISOString(),
+      aiProfile,
+      enableCache: enablePromptCache,
+    });
   };
 
   const handleExportJSON = async () => {
@@ -1616,6 +1650,26 @@ const ToolsManager = ({
               >
                 Mở Relay Web
               </a>
+            </div>
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 space-y-2">
+              <p className="text-xs font-semibold text-amber-800">
+                Dự phòng khi WebSocket relay lỗi: dán token Gemini (AIza...) lấy từ relay web.
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
+                <input
+                  type="text"
+                  value={manualRelayTokenInput}
+                  onChange={(e) => setManualRelayTokenInput(e.target.value)}
+                  className="w-full px-4 py-3 rounded-2xl border border-amber-300 focus:ring-2 focus:ring-amber-500"
+                  placeholder="Dán token hoặc đoạn text có chứa AIza..."
+                />
+                <button
+                  onClick={handleSaveManualRelayToken}
+                  className="px-5 py-3 rounded-2xl bg-amber-600 text-white font-bold hover:bg-amber-700"
+                >
+                  Lưu token thủ công
+                </button>
+              </div>
             </div>
             <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4 text-xs text-slate-600 space-y-1">
               <p><Link2 className="inline w-3 h-3 mr-1" /> code từ URL: <b>{parseRelayCodeFromText(relayUrl) || 'chưa có'}</b></p>
