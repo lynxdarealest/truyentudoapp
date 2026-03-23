@@ -1,43 +1,54 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# Truyện Tự Do (Web)
 
-# Run and deploy your AI Studio app
+Ứng dụng viết/dịch truyện có 2 chế độ AI:
 
-This contains everything you need to run your app locally.
+- `Tự nhập API`: nhập key trực tiếp trong web.
+- `Relay WebSocket`: dùng relay backend để nhận token và gọi AI.
 
-View your app in AI Studio: https://ai.studio/apps/9e613df0-6bf5-4998-83d9-3a939cf7475d
+## 1) Chạy local
 
-## Run Locally
+```bash
+npm install
+npm run dev
+```
 
-**Prerequisites:**  Node.js
+Mở: `http://localhost:3000`
 
+## 2) Kiến trúc relay (quan trọng)
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+Hệ thống dùng 2 endpoint khác nhau:
 
-## Phase 0 Demo (Roadmap trial)
+1. Relay WebSocket backend (Railway):
+   - `wss://relay2026.up.railway.app/?code=1234`
+   - Dùng để kết nối realtime giữa app Truyện và proxy app.
 
-- Open the demo workspace at: `http://localhost:3000/?phase0=1`
-- Optional environment keys (for provider routing):
-  - `VITE_OPENAI_API_KEY`
-  - `VITE_ANTHROPIC_API_KEY`
-  - `VITE_GEMINI_API_KEY`
-- If no key is configured, the app falls back to a mock provider so the UI flow still runs.
+2. Relay web UI (Vercel):
+   - `https://relay2026.vercel.app/`
+   - Dùng để đăng nhập Google và lấy token.
 
-## Phase 1 MVP Trial
+Lưu ý: Railway không xử lý OAuth Google.
 
-- Open the phase 1 workspace at: `http://localhost:3000/?phase1=1`
-- Included in this trial:
-  - API key input directly in UI for OpenAI / Anthropic / Gemini
-  - Configurable provider fallback order (multi-source AI routing)
-  - Split-screen translator workspace with segment statuses (`pending/translated/reviewed`)
-  - Glossary CRUD with glossary version bump
-  - AI translation with 3 alternatives + apply flow
-  - Glossary hard-lock validation (invalid options are blocked)
-  - Translation Memory save and match (exact + fuzzy)
-  - Bulk translate whole chapter
-  - Export translated chapter to `.txt`
+## 3) Biến môi trường (Vercel)
+
+Thêm 2 biến cho project Truyện:
+
+- `VITE_RELAY_WS_BASE=wss://relay2026.up.railway.app/?code=`
+- `VITE_RELAY_WEB_BASE=https://relay2026.vercel.app/`
+
+Sau khi thêm biến, redeploy Vercel.
+
+## 4) Cách nhập URL trong app
+
+Trong tab `Relay WebSocket`, nhập URL dạng:
+
+- `wss://relay2026.up.railway.app/?code=1810`
+
+`code` phải là 4-8 chữ số.
+
+## 5) Kiểm tra relay backend
+
+Mở:
+
+- `https://relay2026.up.railway.app/health`
+
+Nếu trả về `{ "ok": true }` là relay backend đang chạy.

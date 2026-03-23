@@ -65,19 +65,10 @@ function cn(...inputs: ClassValue[]) {
 }
 
 type ApiMode = 'manual' | 'relay';
-const DEFAULT_RELAY_WS_BASE = 'wss://relay2026.vercel.app/?code=';
+const DEFAULT_RELAY_WS_BASE = 'wss://relay2026.up.railway.app/?code=';
+const DEFAULT_RELAY_WEB_BASE = 'https://relay2026.vercel.app/';
 const RELAY_SOCKET_BASE = normalizeRelaySocketBase(import.meta.env.VITE_RELAY_WS_BASE || DEFAULT_RELAY_WS_BASE);
-const RELAY_WEB_BASE = (() => {
-  const fromEnv = (import.meta.env.VITE_RELAY_WEB_BASE || '').trim();
-  if (fromEnv) return fromEnv.replace(/\/+$/, '') + '/';
-  try {
-    const ws = new URL(RELAY_SOCKET_BASE);
-    const protocol = ws.protocol === 'wss:' ? 'https:' : 'http:';
-    return `${protocol}//${ws.host}/`;
-  } catch {
-    return 'https://relay2026.vercel.app/';
-  }
-})();
+const RELAY_WEB_BASE = ((import.meta.env.VITE_RELAY_WEB_BASE || DEFAULT_RELAY_WEB_BASE).trim().replace(/\/+$/, '') + '/');
 
 interface ApiRuntimeConfig {
   mode: ApiMode;
@@ -1638,10 +1629,10 @@ const ToolsManager = ({
         ) : (
         <div className="space-y-3">
             <p className="text-xs text-slate-500">
-              Dùng đúng định dạng relay socket: <b>{RELAY_SOCKET_BASE}1234</b> (code 4-8 số). Hệ thống sẽ tự đọc code và chờ token từ proxy app.
+              Dùng đúng định dạng WebSocket relay: <b>{RELAY_SOCKET_BASE}1234</b> (code 4-8 số). Đây là kênh kết nối realtime.
             </p>
             <p className="text-[11px] text-amber-600">
-              Mẹo: nếu relay của bạn không hỗ trợ WebSocket ở domain này, hãy thay bằng domain backend WS thật (Railway/Render/Fly).
+              Đăng nhập Google/lấy token thực hiện trên web relay: <b>{RELAY_WEB_BASE}</b>. Railway chỉ làm nhiệm vụ chuyển tiếp WebSocket.
             </p>
             <div className="grid grid-cols-1 gap-3">
               <input

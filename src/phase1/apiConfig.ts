@@ -24,7 +24,7 @@ export interface Phase1ApiConfig {
 }
 
 const STORAGE_KEY = 'phase1_ai_config_v1';
-const DEFAULT_RELAY_BASE = import.meta.env.VITE_RELAY_WS_BASE || 'wss://relay2026.vercel.app/?code=';
+const DEFAULT_RELAY_BASE = import.meta.env.VITE_RELAY_WS_BASE || 'wss://relay2026.up.railway.app/?code=';
 
 const DEFAULT_CONFIG: Phase1ApiConfig = {
   openaiKey: '',
