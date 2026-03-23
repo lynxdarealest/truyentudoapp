@@ -228,9 +228,11 @@ function makeMockAlternatives(input: TranslateRequest): string[] {
 export async function translateSegment(input: TranslateRequest): Promise<TranslateResponse> {
   const runtime = loadRuntimeApiConfig();
   const localKey = pickActiveStoredKey();
-  const geminiKey = runtime.geminiKey || (import.meta.env.VITE_GEMINI_API_KEY as string | undefined) || localKey;
-  const openaiKey = runtime.openaiKey || (import.meta.env.VITE_OPENAI_API_KEY as string | undefined);
-  const anthropicKey = runtime.anthropicKey || (import.meta.env.VITE_ANTHROPIC_API_KEY as string | undefined);
+  const metaEnv: Record<string, string | undefined> =
+    (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env ?? {};
+  const geminiKey = runtime.geminiKey || metaEnv['VITE_GEMINI_API_KEY'] || localKey;
+  const openaiKey = runtime.openaiKey || metaEnv['VITE_OPENAI_API_KEY'];
+  const anthropicKey = runtime.anthropicKey || metaEnv['VITE_ANTHROPIC_API_KEY'];
 
   const providerOrder = normalizeProviderOrder(runtime.providerOrder);
 
