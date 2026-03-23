@@ -58,6 +58,7 @@ import { HelpModal } from './components/HelpModal';
 // Setup PDF worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
+import { handleRelayMessage, relayGenerateContent, setRelaySender, notifyRelayDisconnected } from './relayBridge';
 
 // Utility for tailwind classes
 function cn(...inputs: ClassValue[]) {
@@ -371,7 +372,21 @@ async function generateGeminiText(
   }
 
   let text = '';
-  if (auth.isApiKey && auth.client) {
+
+  // If in relay mode, send request through relay WebSocket; no token exposed to browser.
+  if (runtime.mode === 'relay') {
+    const body = {
+      contents,
+      generationConfig: config || {},
+    };
+    const raw = await relayGenerateContent(model, body, 25000);
+    try {
+      const parsed = JSON.parse(raw);
+      text = parsed?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    } catch (_) {
+      text = raw || '';
+    }
+  } else if (auth.isApiKey && auth.client) {
     const response = await auth.client.models.generateContent({
       model,
       contents,
@@ -433,7 +448,8 @@ function createGeminiClient(): GeminiAuth {
   if (!apiKey) {
     const mode = getApiRuntimeConfig().mode;
     if (mode === 'relay') {
-      throw new Error('Chưa có khóa truy cập từ Relay. Vào Công cụ > Thiết lập AI để kết nối.');
+      // Trong proxy mode, browser không cần API key; relay sẽ gọi thay.
+      return { apiKey: '', isApiKey: false };
     }
     throw new Error('Bạn chưa thiết lập khóa truy cập. Vào Công cụ > Thiết lập AI để bắt đầu.');
   }
@@ -964,6 +980,7 @@ const ToolsManager = ({
   const relayPingRef = useRef<number | null>(null);
   const relayReconnectRef = useRef<number | null>(null);
   const relayShouldReconnectRef = useRef(false);
+  const relayRequestReadyRef = useRef(false);
   const avatarUploadInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -1015,6 +1032,9 @@ const ToolsManager = ({
         window.clearTimeout(relayReconnectRef.current);
         relayReconnectRef.current = null;
       }
+      relayRequestReadyRef.current = false;
+      setRelaySender(null);
+      notifyRelayDisconnected('Component unmounted');
     };
   }, []);
 
@@ -1201,6 +1221,14 @@ const ToolsManager = ({
       relaySocketRef.current = ws;
       setRelayStatus('connected');
       setRelayStatusText(`Đã kết nối thành công (${connectedUrl}), đang chờ khóa truy cập...`);
+      relayRequestReadyRef.current = true;
+      setRelaySender((payload) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify(payload));
+          return true;
+        }
+        return false;
+      });
       persistRuntimeConfig({
         mode: 'relay',
         relayUrl: buildRelaySocketUrl(inferredCode),
@@ -1218,6 +1246,11 @@ const ToolsManager = ({
       }, 15000);
 
       ws.onmessage = (event) => {
+        try {
+          const parsed = JSON.parse(String(event.data || '{}'));
+          handleRelayMessage(parsed);
+        } catch (_) {}
+
         const payload = extractRelayPayload(String(event.data || ''));
         const expectedLong = parseLongIdFromText(relayUrl);
         const expectedCode = parseRelayCodeFromText(relayUrl);
@@ -1262,6 +1295,7 @@ const ToolsManager = ({
       ws.onerror = () => {
         setRelayStatus('error');
         setRelayStatusText('Kết nối tạm thời gián đoạn. Vui lòng thử lại.');
+        setRelaySender(null);
       };
 
       ws.onclose = () => {
@@ -1269,6 +1303,9 @@ const ToolsManager = ({
           window.clearInterval(relayPingRef.current);
           relayPingRef.current = null;
         }
+        relayRequestReadyRef.current = false;
+        setRelaySender(null);
+        notifyRelayDisconnected('Relay socket closed');
         setRelayStatus('disconnected');
         setRelayStatusText('Đã ngắt kết nối');
         if (relayShouldReconnectRef.current) {
@@ -1300,6 +1337,9 @@ const ToolsManager = ({
       relaySocketRef.current.close();
       relaySocketRef.current = null;
     }
+    relayRequestReadyRef.current = false;
+    setRelaySender(null);
+    notifyRelayDisconnected('Người dùng ngắt kết nối relay');
     setRelayStatus('disconnected');
     setRelayStatusText('Đã ngắt kết nối');
   };
