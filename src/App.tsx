@@ -5475,23 +5475,23 @@ const AppContent = () => {
                 <div className="flex flex-wrap gap-4">
                   <button 
                     onClick={() => setIsCreating(true)}
-                    className="flex items-center justify-center gap-3 px-8 py-4 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white transition-all shadow-xl shadow-indigo-900/20 font-bold text-lg group"
+                    className="hero-action hero-action-primary glow-dot flex items-center justify-center gap-3 px-8 py-4 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white transition-all shadow-xl shadow-indigo-900/20 font-bold text-lg group"
                   >
-                    <Plus className="w-6 h-6 group-hover:rotate-90 transition-transform" />
+                    <Plus className="w-6 h-6 transition-transform duration-300 group-hover:rotate-90 group-hover:scale-110" />
                     Viết truyện mới
                   </button>
                   <button 
                     onClick={() => fileInputRef.current?.click()}
-                    className="flex items-center justify-center gap-3 px-8 py-4 rounded-2xl bg-white border-2 border-indigo-600 text-indigo-600 hover:bg-indigo-50 transition-all shadow-xl shadow-indigo-900/10 font-bold text-lg group"
+                    className="hero-action hero-action-outline glow-dot flex items-center justify-center gap-3 px-8 py-4 rounded-2xl text-white transition-all shadow-xl font-bold text-lg group"
                   >
-                    <Sparkles className="w-6 h-6" />
+                    <Sparkles className="w-6 h-6 transition-transform duration-300 group-hover:-translate-y-0.5 group-hover:scale-110 group-hover:rotate-12" />
                     Tạo từ dàn ý (AI)
                   </button>
                   <button 
                     onClick={handleUnifiedAiFileFlow}
-                    className="flex items-center justify-center gap-3 px-8 py-4 rounded-2xl bg-amber-600 hover:bg-amber-700 text-white transition-all shadow-xl shadow-amber-900/20 font-bold text-lg group"
+                    className="hero-action hero-action-warm glow-dot flex items-center justify-center gap-3 px-8 py-4 rounded-2xl bg-amber-600 hover:bg-amber-700 text-white transition-all shadow-xl shadow-amber-900/20 font-bold text-lg group"
                   >
-                    <Languages className="w-6 h-6" />
+                    <Languages className="w-6 h-6 transition-transform duration-300 group-hover:scale-110 group-hover:-translate-y-0.5" />
                     AI từ file (Dịch / Viết tiếp)
                   </button>
                   <input 
