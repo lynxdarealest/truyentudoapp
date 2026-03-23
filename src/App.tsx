@@ -985,16 +985,6 @@ const ToolsManager = ({
   const [quickImportResult, setQuickImportResult] = useState('');
   const [aiProfile, setAiProfile] = useState<'economy' | 'balanced' | 'quality'>('balanced');
   const [enablePromptCache, setEnablePromptCache] = useState(true);
-  const [keyStatus, setKeyStatus] = useState<{ state: 'idle' | 'checking' | 'ok' | 'warn' | 'error'; message: string; elapsedMs: number }>({
-    state: 'idle',
-    message: 'Chưa kiểm tra',
-    elapsedMs: 0,
-  });
-  const [healthSteps, setHealthSteps] = useState<Array<{ id: string; label: string; status: 'pending' | 'doing' | 'done' | 'error' }>>([
-    { id: 'key', label: 'Kiểm tra khóa', status: 'pending' },
-    { id: 'relay', label: 'Kết nối relay', status: 'pending' },
-    { id: 'sample', label: 'Gọi mẫu', status: 'pending' },
-  ]);
   const relaySocketRef = useRef<WebSocket | null>(null);
   const relayPingRef = useRef<number | null>(null);
   const relayReconnectRef = useRef<number | null>(null);
@@ -1389,49 +1379,21 @@ const ToolsManager = ({
   };
 
   const handleCheckAiHealth = async () => {
-    const started = Date.now();
-    setKeyStatus({ state: 'checking', message: 'Đang kiểm tra...', elapsedMs: 0 });
-    setHealthSteps([
-      { id: 'key', label: 'Kiểm tra khóa', status: 'doing' },
-      { id: 'relay', label: 'Kết nối relay', status: relayStatus === 'connected' ? 'done' : 'pending' },
-      { id: 'sample', label: 'Gọi mẫu', status: 'pending' },
-    ]);
     setIsCheckingAi(true);
     setAiCheckStatus('Đang kiểm tra...');
     try {
       const ai = createGeminiClient();
-      setHealthSteps((prev) => prev.map((s) => (s.id === 'key' ? { ...s, status: 'done' } : s)));
       const result = await generateGeminiText(
         ai,
         'fast',
         'Chỉ trả về đúng một từ OK (chữ hoa), không thêm ký tự khác.',
         { temperature: 0, responseMimeType: 'text/plain' },
       );
-      setHealthSteps((prev) =>
-        prev.map((s) =>
-          s.id === 'sample'
-            ? { ...s, status: 'done' }
-            : s.id === 'relay' && relayStatus === 'connected'
-            ? { ...s, status: 'done' }
-            : s,
-        ),
-      );
       const ok = String(result || '').trim().toUpperCase().includes('OK');
       setAiUsageStats(readMainAiUsage());
       setAiCheckStatus(ok ? 'AI đang hoạt động bình thường.' : 'AI phản hồi nhưng kết quả chưa đúng mẫu.');
-      setKeyStatus({
-        state: ok ? 'ok' : 'warn',
-        message: ok ? 'Khóa ổn, AI phản hồi OK' : 'Khóa ổn nhưng phản hồi chưa đúng mẫu',
-        elapsedMs: Date.now() - started,
-      });
     } catch (error) {
-      setAiCheckStatus(`Chưa thể sử dụng AI: ${error instanceof Error ? error.message : 'Lỗi không xác định'}`);
-      setHealthSteps((prev) => prev.map((s) => (s.id === 'sample' ? { ...s, status: 'error' } : s)));
-      setKeyStatus({
-        state: 'error',
-        message: error instanceof Error ? error.message : 'Lỗi không xác định',
-        elapsedMs: Date.now() - started,
-      });
+      setAiCheckStatus('Không dùng được AI: có thể hết quota hoặc khóa không hợp lệ. Bật billing hoặc dùng key khác.');
     } finally {
       setIsCheckingAi(false);
     }
@@ -1504,8 +1466,6 @@ const ToolsManager = ({
     }
     return parsed;
   }, []);
-
-  const formatSeconds = (ms: number): string => `${(ms / 1000).toFixed(1)}s`;
 
   const handleResetAiUsage = () => {
     writeMainAiUsage({ requests: 0, estTokens: 0 });
@@ -2002,55 +1962,9 @@ const ToolsManager = ({
               </button>
             </div>
           </div>
-          <div className="flex flex-col gap-2 text-sm text-emerald-800">
-            <div className="flex flex-wrap items-center gap-2">
-              <span
-                className={cn(
-                  "px-3 py-1 rounded-full text-xs font-semibold",
-                  keyStatus.state === 'ok'
-                    ? "bg-emerald-100 text-emerald-700"
-                    : keyStatus.state === 'warn'
-                    ? "bg-amber-100 text-amber-700"
-                    : keyStatus.state === 'error'
-                    ? "bg-rose-100 text-rose-700"
-                    : "bg-slate-100 text-slate-600",
-                )}
-              >
-                {keyStatus.state === 'ok'
-                  ? 'Khóa hợp lệ'
-                  : keyStatus.state === 'warn'
-                  ? 'Cần kiểm tra'
-                  : keyStatus.state === 'error'
-                  ? 'Lỗi/Quota'
-                  : 'Chưa kiểm tra'}
-              </span>
-              <span className="text-xs text-slate-600">
-                {keyStatus.message} {keyStatus.elapsedMs ? `• Thời gian: ${formatSeconds(keyStatus.elapsedMs)}` : ''}
-              </span>
-            </div>
-            <div className="flex flex-wrap gap-2 text-xs">
-              {healthSteps.map((s) => (
-                <span
-                  key={s.id}
-                  className={cn(
-                    "px-3 py-1 rounded-full border",
-                    s.status === 'done'
-                      ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                      : s.status === 'doing'
-                      ? "bg-indigo-50 text-indigo-700 border-indigo-200 animate-pulse"
-                      : s.status === 'error'
-                      ? "bg-rose-50 text-rose-700 border-rose-200"
-                      : "bg-slate-50 text-slate-500 border-slate-200",
-                  )}
-                >
-                  {s.label}
-                </span>
-              ))}
-            </div>
-            <p className="text-sm text-emerald-800">
-              Trạng thái: <b>{aiCheckStatus}</b>
-            </p>
-          </div>
+          <p className="text-sm text-emerald-800">
+            Trạng thái: <b>{aiCheckStatus}</b>
+          </p>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-emerald-900">
             <p>
               Số lượt gọi trong phiên: <b>{aiUsageStats.requests.toLocaleString('vi-VN')}</b>
@@ -5425,7 +5339,7 @@ const AppContent = () => {
   if (loading) return <div className="min-h-screen flex items-center justify-center font-serif">Đang khởi động...</div>;
 
   return (
-    <div className={cn("min-h-screen neo-bg", themeMode === 'dark' ? "text-slate-100" : "text-slate-900")}>
+    <div className={cn("min-h-screen neo-bg", themeMode === 'dark' ? "text-slate-100" : "text-slate-100")}>
       <HelpModal isOpen={showHelp} onClose={() => setShowHelp(false)} />
       <AIGenerationModal 
         isOpen={showAIGen} 
