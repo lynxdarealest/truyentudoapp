@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth, AuthProvider } from './AuthContext';
 import { storage } from './storage';
-import { loadPhase1ApiConfig, savePhase1ApiConfig } from './phase1/apiConfig';
 import { db, auth, googleProvider, signInWithPopup } from './firebase';
 import { collection, addDoc, getDocs, query, where, getDocFromServer, doc, Timestamp, updateDoc, orderBy, onSnapshot } from 'firebase/firestore';
 import { 
@@ -60,6 +59,19 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.j
 import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { handleRelayMessage, relayGenerateContent, setRelaySender, notifyRelayDisconnected } from './relayBridge';
 import { QualityCenter, type QaIssue } from './components/QualityCenter';
+import {
+  type ApiProvider,
+  type AiProfileMode,
+  type StoredApiKeyRecord,
+  PROVIDER_LABELS,
+  PROVIDER_MODEL_OPTIONS,
+  activateApiKeyRecord,
+  detectApiProviderFromValue,
+  getActiveApiKeyRecord,
+  getDefaultModelForProvider,
+  getProviderBaseUrl,
+  normalizeStoredApiKeys,
+} from './apiVault';
 
 // Utility for tailwind classes
 function cn(...inputs: ClassValue[]) {
@@ -79,7 +91,10 @@ interface ApiRuntimeConfig {
   relayMatchedLong: string;
   relayToken: string;
   relayUpdatedAt: string;
-  aiProfile: 'economy' | 'balanced' | 'quality';
+  aiProfile: AiProfileMode;
+  selectedProvider: ApiProvider;
+  selectedModel: string;
+  activeApiKeyId: string;
   enableCache: boolean;
 }
 
@@ -220,6 +235,9 @@ function getApiRuntimeConfig(): ApiRuntimeConfig {
       relayToken: parsed.relayToken || '',
       relayUpdatedAt: parsed.relayUpdatedAt || '',
       aiProfile: parsed.aiProfile === 'economy' || parsed.aiProfile === 'quality' ? parsed.aiProfile : 'balanced',
+      selectedProvider: parsed.selectedProvider === 'openai' || parsed.selectedProvider === 'anthropic' || parsed.selectedProvider === 'unknown' ? parsed.selectedProvider : 'gemini',
+      selectedModel: parsed.selectedModel || '',
+      activeApiKeyId: parsed.activeApiKeyId || '',
       enableCache: parsed.enableCache !== false,
     };
   } catch {
@@ -231,6 +249,9 @@ function getApiRuntimeConfig(): ApiRuntimeConfig {
       relayToken: '',
       relayUpdatedAt: '',
       aiProfile: 'balanced',
+      selectedProvider: 'gemini',
+      selectedModel: '',
+      activeApiKeyId: '',
       enableCache: true,
     };
   }
@@ -289,11 +310,42 @@ function extractRelayPayload(rawMessage: string): { longId: string; codeId: stri
   return { longId, codeId, token };
 }
 
-function getProfileModel(kind: 'fast' | 'quality'): string {
-  const profile = getApiRuntimeConfig().aiProfile;
-  if (profile === 'economy') return 'gemini-2.0-flash';
-  if (profile === 'quality') return kind === 'fast' ? 'gemini-2.0-flash' : 'gemini-3.1-pro-preview';
-  return kind === 'fast' ? 'gemini-2.0-flash' : 'gemini-2.5-flash';
+function loadApiVault(profile: AiProfileMode = getApiRuntimeConfig().aiProfile): StoredApiKeyRecord[] {
+  return normalizeStoredApiKeys(storage.getApiKeys(), profile);
+}
+
+function saveApiVault(list: StoredApiKeyRecord[]): void {
+  storage.saveApiKeys(list);
+}
+
+function getRuntimeProvider(runtime: ApiRuntimeConfig, fallback?: ApiProvider): ApiProvider {
+  if (runtime.mode === 'relay') return 'gemini';
+  if (fallback && fallback !== 'unknown') return fallback;
+  return runtime.selectedProvider === 'unknown' ? 'gemini' : runtime.selectedProvider;
+}
+
+function getProfileModel(kind: 'fast' | 'quality', provider?: ApiProvider): string {
+  const runtime = getApiRuntimeConfig();
+  const resolvedProvider = getRuntimeProvider(runtime, provider);
+  if (runtime.selectedModel && (!provider || resolvedProvider === provider || provider === 'unknown')) {
+    return runtime.selectedModel;
+  }
+  if (resolvedProvider === 'gemini') {
+    if (runtime.aiProfile === 'economy') return 'gemini-2.0-flash';
+    if (runtime.aiProfile === 'quality') return kind === 'fast' ? 'gemini-2.0-flash' : 'gemini-3.1-pro-preview';
+    return kind === 'fast' ? 'gemini-2.0-flash' : 'gemini-2.5-flash';
+  }
+  if (resolvedProvider === 'openai') {
+    if (runtime.aiProfile === 'economy') return 'gpt-4.1-mini';
+    if (runtime.aiProfile === 'quality') return 'gpt-4.1';
+    return kind === 'fast' ? 'gpt-4.1-mini' : 'gpt-4o';
+  }
+  if (resolvedProvider === 'anthropic') {
+    if (runtime.aiProfile === 'economy') return 'claude-3-5-haiku-latest';
+    if (runtime.aiProfile === 'quality') return 'claude-3-7-sonnet-latest';
+    return kind === 'fast' ? 'claude-3-5-haiku-latest' : 'claude-3-5-sonnet-latest';
+  }
+  return getDefaultModelForProvider('gemini', runtime.aiProfile);
 }
 
 function readGeminiCache(): Record<string, { text: string; ts: number }> {
@@ -350,17 +402,25 @@ function bumpMainAiUsage(inputText: string, outputText: string): { requests: num
   return next;
 }
 
-type GeminiAuth = { apiKey: string; isApiKey: boolean; client?: GoogleGenAI };
+type AiAuth = {
+  provider: ApiProvider;
+  apiKey: string;
+  isApiKey: boolean;
+  client?: GoogleGenAI;
+  model: string;
+  baseUrl: string;
+  keyId?: string;
+};
 
 async function generateGeminiText(
-  auth: GeminiAuth,
+  auth: AiAuth,
   kind: 'fast' | 'quality',
   contents: string,
   config?: Record<string, unknown>,
 ): Promise<string> {
   const runtime = getApiRuntimeConfig();
-  const model = getProfileModel(kind);
-  const reqFingerprint = quickHash(JSON.stringify({ model, contents, config: config || {} }));
+  const model = auth.model || getProfileModel(kind, auth.provider);
+  const reqFingerprint = quickHash(JSON.stringify({ provider: auth.provider, model, contents, config: config || {} }));
   const cacheKey = `v1:${reqFingerprint}`;
 
   if (runtime.enableCache) {
@@ -391,14 +451,14 @@ async function generateGeminiText(
     } catch (_) {
       text = raw || '';
     }
-  } else if (auth.isApiKey && auth.client) {
+  } else if (auth.provider === 'gemini' && auth.isApiKey && auth.client) {
     const response = await auth.client.models.generateContent({
       model,
       contents,
       config,
     });
     text = response.text || '';
-  } else {
+  } else if (auth.provider === 'gemini') {
     const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
       method: 'POST',
       headers: {
@@ -420,6 +480,50 @@ async function generateGeminiText(
     }
     const data = await resp.json();
     text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  } else if (auth.provider === 'openai') {
+    const resp = await fetch(`${auth.baseUrl || getProviderBaseUrl('openai')}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${auth.apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: contents }],
+        temperature: typeof config?.temperature === 'number' ? config.temperature : 0.7,
+      }),
+    });
+    if (!resp.ok) {
+      const body = await resp.text();
+      throw new Error(`OpenAI error ${resp.status}: ${body.slice(0, 220)}`);
+    }
+    const data = await resp.json();
+    text = data?.choices?.[0]?.message?.content || '';
+  } else if (auth.provider === 'anthropic') {
+    const resp = await fetch(`${auth.baseUrl || getProviderBaseUrl('anthropic')}/messages`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': auth.apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: typeof config?.maxOutputTokens === 'number' ? config.maxOutputTokens : 4096,
+        temperature: typeof config?.temperature === 'number' ? config.temperature : 0.7,
+        messages: [{ role: 'user', content: contents }],
+      }),
+    });
+    if (!resp.ok) {
+      const body = await resp.text();
+      throw new Error(`Anthropic error ${resp.status}: ${body.slice(0, 220)}`);
+    }
+    const data = await resp.json();
+    text = Array.isArray(data?.content)
+      ? data.content.map((part: { text?: string }) => part?.text || '').join('\n').trim()
+      : '';
+  } else {
+    throw new Error('Nhà cung cấp hiện tại chưa được hỗ trợ.');
   }
 
   bumpMainAiUsage(contents, text);
@@ -442,31 +546,57 @@ function getConfiguredGeminiApiKey(): string {
       if (relayToken) return relayToken;
     }
 
-    const keys = storage.getApiKeys() as Array<{ key?: string; isActive?: boolean }>;
-    const activeKey = keys.find((k) => k?.isActive && k?.key?.trim())?.key?.trim();
-    const firstKey = keys.find((k) => k?.key?.trim())?.key?.trim();
+    const keys = loadApiVault(runtime.aiProfile);
+    const activeGemini = keys.find((item) => item.isActive && item.provider === 'gemini')?.key?.trim();
+    const firstKey = keys.find((k) => k.provider === 'gemini' && k?.key?.trim())?.key?.trim();
     const envKey = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_GEMINI_API_KEY?.trim();
-    return activeKey || firstKey || envKey || '';
+    return activeGemini || firstKey || envKey || '';
   } catch {
     return '';
   }
 }
 
-function createGeminiClient(): GeminiAuth {
-  const apiKey = getConfiguredGeminiApiKey();
+function createGeminiClient(): AiAuth {
+  const runtime = getApiRuntimeConfig();
+  if (runtime.mode === 'relay') {
+    return {
+      provider: 'gemini',
+      apiKey: '',
+      isApiKey: false,
+      model: getProfileModel('quality', 'gemini'),
+      baseUrl: '',
+    };
+  }
+
+  const vault = loadApiVault(runtime.aiProfile);
+  const activeEntry = vault.find((item) => item.id === runtime.activeApiKeyId) || getActiveApiKeyRecord(vault);
+  const provider = activeEntry?.provider && activeEntry.provider !== 'unknown'
+    ? activeEntry.provider
+    : (runtime.selectedProvider === 'unknown' ? 'gemini' : runtime.selectedProvider);
+
+  const apiKey = activeEntry?.key?.trim() || (provider === 'gemini' ? getConfiguredGeminiApiKey() : '');
   if (!apiKey) {
     const mode = getApiRuntimeConfig().mode;
     if (mode === 'relay') {
-      // Trong proxy mode, browser không cần API key; relay sẽ gọi thay.
-      return { apiKey: '', isApiKey: false };
+      return {
+        provider: 'gemini',
+        apiKey: '',
+        isApiKey: false,
+        model: getProfileModel('quality', 'gemini'),
+        baseUrl: '',
+      };
     }
-    throw new Error('Bạn chưa thiết lập khóa truy cập. Vào Công cụ > Thiết lập AI để bắt đầu.');
+    throw new Error('Bạn chưa thiết lập API. Vào mục API để thêm khóa và chọn model.');
   }
-  const isApiKey = /^AIza[0-9A-Za-z\-_]{20,}$/.test(apiKey);
+  const isApiKey = provider === 'gemini' && /^AIza[0-9A-Za-z\-_]{20,}$/.test(apiKey);
   return {
+    provider,
     apiKey,
     isApiKey,
-    client: isApiKey ? new GoogleGenAI({ apiKey }) : undefined,
+    client: provider === 'gemini' && isApiKey ? new GoogleGenAI({ apiKey }) : undefined,
+    model: activeEntry?.model || runtime.selectedModel || getProfileModel('quality', provider),
+    baseUrl: activeEntry?.baseUrl || getProviderBaseUrl(provider),
+    keyId: activeEntry?.id,
   };
 }
 
@@ -958,17 +1088,19 @@ const ToolsManager = ({
   onBack,
   profile,
   onSaveProfile,
+  section = 'tools',
 }: {
   onBack: () => void;
   profile: UiProfile;
   onSaveProfile: (next: UiProfile) => void;
+  section?: 'tools' | 'api';
 }) => {
   const { user } = useAuth();
+  const isApiSection = section === 'api';
   const [isExporting, setIsExporting] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [profileName, setProfileName] = useState(profile.displayName);
   const [profileAvatar, setProfileAvatar] = useState(profile.avatarUrl);
-  const [geminiKeyInput, setGeminiKeyInput] = useState('');
   const [maskedGeminiKey, setMaskedGeminiKey] = useState('');
   const [apiMode, setApiMode] = useState<ApiMode>('manual');
   const [relayUrl, setRelayUrl] = useState(buildRelaySocketUrl(''));
@@ -983,7 +1115,17 @@ const ToolsManager = ({
   const [aiUsageStats, setAiUsageStats] = useState<{ requests: number; estTokens: number }>({ requests: 0, estTokens: 0 });
   const [quickImportText, setQuickImportText] = useState('');
   const [quickImportResult, setQuickImportResult] = useState('');
-  const [aiProfile, setAiProfile] = useState<'economy' | 'balanced' | 'quality'>('balanced');
+  const [aiProfile, setAiProfile] = useState<AiProfileMode>('balanced');
+  const [apiVault, setApiVault] = useState<StoredApiKeyRecord[]>([]);
+  const [activeApiKeyId, setActiveApiKeyId] = useState('');
+  const [selectedProvider, setSelectedProvider] = useState<ApiProvider>('gemini');
+  const [selectedModel, setSelectedModel] = useState('');
+  const [apiEntryName, setApiEntryName] = useState('');
+  const [apiEntryText, setApiEntryText] = useState('');
+  const [apiEntryProvider, setApiEntryProvider] = useState<ApiProvider>('gemini');
+  const [apiEntryModel, setApiEntryModel] = useState(getDefaultModelForProvider('gemini'));
+  const [apiEntryBaseUrl, setApiEntryBaseUrl] = useState('');
+  const [testingApiId, setTestingApiId] = useState<string | null>(null);
   const [enablePromptCache, setEnablePromptCache] = useState(true);
   const relaySocketRef = useRef<WebSocket | null>(null);
   const relayPingRef = useRef<number | null>(null);
@@ -998,22 +1140,24 @@ const ToolsManager = ({
   }, [profile.displayName, profile.avatarUrl]);
 
   useEffect(() => {
-    const keys = storage.getApiKeys() as Array<{ key?: string; isActive?: boolean }>;
-    const active = keys.find((k) => k?.isActive && k?.key?.trim())?.key?.trim();
-    const fallback = keys.find((k) => k?.key?.trim())?.key?.trim();
-    const current = active || fallback || '';
+    const runtime = getApiRuntimeConfig();
+    const vault = loadApiVault(runtime.aiProfile);
+    const active = vault.find((item) => item.id === runtime.activeApiKeyId) || getActiveApiKeyRecord(vault);
+    const current = active?.key?.trim() || '';
     if (current.length > 10) {
       setMaskedGeminiKey(`${current.slice(0, 6)}...${current.slice(-4)}`);
     } else {
       setMaskedGeminiKey(current ? 'Đã cấu hình' : 'Chưa cấu hình');
     }
-
-    const runtime = getApiRuntimeConfig();
+    setApiVault(vault);
     setApiMode(runtime.mode);
     setRelayUrl(runtime.relayUrl);
     setRelayIdentityHint(runtime.identityHint);
     setRelayMatchedLong(runtime.relayMatchedLong);
     setAiProfile(runtime.aiProfile);
+    setSelectedProvider(active?.provider || runtime.selectedProvider || 'gemini');
+    setSelectedModel(active?.model || runtime.selectedModel || getDefaultModelForProvider(active?.provider || runtime.selectedProvider || 'gemini', runtime.aiProfile));
+    setActiveApiKeyId(active?.id || runtime.activeApiKeyId || '');
     setEnablePromptCache(runtime.enableCache);
     const token = (localStorage.getItem(RELAY_TOKEN_CACHE_KEY) || runtime.relayToken || '').trim();
     setRelayMaskedToken(token ? maskSensitive(token) : 'Chưa nhận token');
@@ -1026,6 +1170,22 @@ const ToolsManager = ({
     }, 1500);
     return () => window.clearInterval(timer);
   }, []);
+
+  const detectedDraftProvider = detectApiProviderFromValue(apiEntryText.trim());
+  const effectiveDraftProvider = detectedDraftProvider !== 'unknown' ? detectedDraftProvider : apiEntryProvider;
+  const availableDraftModels = effectiveDraftProvider === 'unknown' ? [] : PROVIDER_MODEL_OPTIONS[effectiveDraftProvider];
+  const currentApiEntry = apiVault.find((item) => item.id === activeApiKeyId) || getActiveApiKeyRecord(apiVault);
+
+  useEffect(() => {
+    if (effectiveDraftProvider === 'unknown') return;
+    const providerModels = PROVIDER_MODEL_OPTIONS[effectiveDraftProvider];
+    if (!providerModels?.some((item) => item.value === apiEntryModel)) {
+      setApiEntryModel(getDefaultModelForProvider(effectiveDraftProvider, aiProfile));
+    }
+    if (!apiEntryBaseUrl.trim()) {
+      setApiEntryBaseUrl(getProviderBaseUrl(effectiveDraftProvider));
+    }
+  }, [effectiveDraftProvider, aiProfile]);
 
   useEffect(() => {
     return () => {
@@ -1056,66 +1216,162 @@ const ToolsManager = ({
     saveApiRuntimeConfig(merged);
   };
 
-  const handleSaveGeminiKey = () => {
-    const key = geminiKeyInput.trim();
-    if (!key) return;
-    const existing = storage.getApiKeys() as Array<{ id?: string; key?: string; name?: string; isActive?: boolean }>;
-    const updated = [
-      {
-        id: `api-${Date.now()}`,
-        key,
-        name: 'Gemini Primary',
-        isActive: true,
-        usage: { requests: 0, tokens: 0, limit: 1500 },
-      },
-      ...existing.map((k) => ({ ...k, isActive: false })),
-    ];
-    storage.saveApiKeys(updated);
-    setMaskedGeminiKey(`${key.slice(0, 6)}...${key.slice(-4)}`);
-    setGeminiKeyInput('');
+  const syncActiveApi = (entry: StoredApiKeyRecord | null, nextMode: ApiMode = apiMode) => {
+    const provider = entry?.provider && entry.provider !== 'unknown' ? entry.provider : 'gemini';
+    const model = entry?.model || getDefaultModelForProvider(provider, aiProfile);
+    setSelectedProvider(provider);
+    setSelectedModel(model);
+    setActiveApiKeyId(entry?.id || '');
+    setMaskedGeminiKey(entry?.key ? maskSensitive(entry.key, 6, 4) : 'Chưa cấu hình');
+    persistRuntimeConfig({
+      mode: nextMode,
+      selectedProvider: provider,
+      selectedModel: model,
+      activeApiKeyId: entry?.id || '',
+      aiProfile,
+      enableCache: enablePromptCache,
+    });
+  };
+
+  const persistApiVault = (nextVault: StoredApiKeyRecord[], nextMode: ApiMode = apiMode) => {
+    setApiVault(nextVault);
+    saveApiVault(nextVault);
+    syncActiveApi(getActiveApiKeyRecord(nextVault), nextMode);
+  };
+
+  const buildAiAuthFromEntry = (entry: StoredApiKeyRecord): AiAuth => {
+    const provider = entry.provider === 'unknown' ? detectApiProviderFromValue(entry.key) : entry.provider;
+    const model = entry.model || getDefaultModelForProvider(provider, aiProfile);
+    return {
+      provider,
+      apiKey: entry.key,
+      isApiKey: provider === 'gemini' && /^AIza[0-9A-Za-z\-_]{20,}$/.test(entry.key),
+      client: provider === 'gemini' && /^AIza[0-9A-Za-z\-_]{20,}$/.test(entry.key) ? new GoogleGenAI({ apiKey: entry.key }) : undefined,
+      model,
+      baseUrl: entry.baseUrl || getProviderBaseUrl(provider),
+      keyId: entry.id,
+    };
+  };
+
+  const handleSaveApiEntry = () => {
+    const raw = apiEntryText.trim();
+    if (!raw) return;
+    const detected = detectApiProviderFromValue(raw);
+    const provider = detected !== 'unknown' ? detected : apiEntryProvider;
+    const key = raw;
+    const model = apiEntryModel || getDefaultModelForProvider(provider, aiProfile);
+    const baseUrl = apiEntryBaseUrl.trim() || getProviderBaseUrl(provider);
+    const existingMatch = apiVault.find((item) => item.key.trim() === key);
+    const nextEntry: StoredApiKeyRecord = {
+      id: existingMatch?.id || `api-${Date.now()}`,
+      name: apiEntryName.trim() || `${PROVIDER_LABELS[provider]} ${apiVault.length + (existingMatch ? 0 : 1)}`,
+      key,
+      provider,
+      model,
+      baseUrl,
+      isActive: true,
+      createdAt: existingMatch?.createdAt || new Date().toISOString(),
+      lastTested: existingMatch?.lastTested,
+      status: existingMatch?.status || 'idle',
+      usage: existingMatch?.usage || { requests: 0, tokens: 0, limit: 1500 },
+    };
+    const withoutCurrent = apiVault.filter((item) => item.id !== nextEntry.id);
+    const nextVault = activateApiKeyRecord([nextEntry, ...withoutCurrent], nextEntry.id);
     setApiMode('manual');
-    persistRuntimeConfig({ mode: 'manual' });
-    alert('Đã lưu khóa truy cập.');
+    persistApiVault(nextVault, 'manual');
+    setApiEntryText('');
+    setApiEntryName('');
+    setApiEntryBaseUrl('');
+    setApiEntryProvider(provider);
+    setApiEntryModel(model);
+    setQuickImportResult('Đã lưu API vào kho và đặt làm cấu hình đang dùng.');
+  };
+
+  const handleDeleteApiEntry = (id: string) => {
+    const nextVault = apiVault.filter((item) => item.id !== id);
+    persistApiVault(nextVault, apiMode);
+  };
+
+  const handleActivateApiEntry = (id: string) => {
+    const nextVault = activateApiKeyRecord(apiVault, id);
+    setApiMode('manual');
+    persistApiVault(nextVault, 'manual');
+  };
+
+  const handleApiModelChange = (id: string, model: string) => {
+    const nextVault = apiVault.map((item) => item.id === id ? { ...item, model } : item);
+    persistApiVault(nextVault, apiMode);
+  };
+
+  const handleApiBaseUrlChange = (id: string, baseUrl: string) => {
+    const nextVault = apiVault.map((item) => item.id === id ? { ...item, baseUrl } : item);
+    setApiVault(nextVault);
+    saveApiVault(nextVault);
+  };
+
+  const handleTestApiEntry = async (id: string) => {
+    const target = apiVault.find((item) => item.id === id);
+    if (!target) return;
+    setTestingApiId(id);
+    const testingVault = apiVault.map((item) => item.id === id ? { ...item, status: 'testing' as const } : item);
+    setApiVault(testingVault);
+    saveApiVault(testingVault);
+    try {
+      const text = await generateGeminiText(
+        buildAiAuthFromEntry(target),
+        'fast',
+        'Chỉ trả về đúng một từ OK.',
+        { temperature: 0 },
+      );
+      const nextVault = apiVault.map((item) => item.id === id ? {
+        ...item,
+        status: String(text || '').toUpperCase().includes('OK') ? 'valid' as const : 'invalid' as const,
+        lastTested: new Date().toISOString(),
+      } : item);
+      persistApiVault(nextVault, apiMode);
+    } catch {
+      const nextVault = apiVault.map((item) => item.id === id ? {
+        ...item,
+        status: 'invalid' as const,
+        lastTested: new Date().toISOString(),
+      } : item);
+      persistApiVault(nextVault, apiMode);
+    } finally {
+      setTestingApiId(null);
+    }
   };
 
   const handleQuickImportKeys = () => {
     const text = quickImportText.trim();
     if (!text) return;
-
-    const gemini = text.match(/AIza[0-9A-Za-z\-_]{20,}/g) || [];
-    const openai = text.match(/sk-[A-Za-z0-9_\-]{20,}/g) || [];
-    const anthropic = text.match(/sk-ant-[A-Za-z0-9_\-]{20,}/g) || [];
+    const keyCandidates = [
+      ...(text.match(/AIza[0-9A-Za-z\-_]{20,}/g) || []),
+      ...(text.match(/sk-ant-[A-Za-z0-9_\-]{20,}/g) || []),
+      ...(text.match(/sk-(proj-)?[A-Za-z0-9_\-]{20,}/g) || []),
+    ];
     const relayDetectedCode = parseRelayCodeFromText(text);
     const relayDetectedLong = parseLongIdFromText(text);
+    let nextVault = [...apiVault];
     let updates = 0;
 
-    if (gemini[0]) {
-      const key = gemini[0];
-      const existing = storage.getApiKeys() as Array<{ id?: string; key?: string; name?: string; isActive?: boolean }>;
-      const updated = [
-        {
-          id: `api-${Date.now()}`,
-          key,
-          name: 'Gemini Quick Import',
-          isActive: true,
-          usage: { requests: 0, tokens: 0, limit: 1500 },
-        },
-        ...existing.map((k) => ({ ...k, isActive: false })),
-      ];
-      storage.saveApiKeys(updated);
-      setMaskedGeminiKey(maskSensitive(key, 6, 4));
+    keyCandidates.forEach((candidate) => {
+      if (nextVault.some((item) => item.key === candidate)) return;
+      const provider = detectApiProviderFromValue(candidate);
+      const entry: StoredApiKeyRecord = {
+        id: `api-${Date.now()}-${updates}`,
+        name: `${PROVIDER_LABELS[provider]} import ${nextVault.length + 1}`,
+        key: candidate,
+        provider,
+        model: getDefaultModelForProvider(provider, aiProfile),
+        baseUrl: getProviderBaseUrl(provider),
+        isActive: updates === 0 && relayDetectedCode === '' && relayDetectedLong === '',
+        createdAt: new Date().toISOString(),
+        status: 'idle',
+        usage: { requests: 0, tokens: 0, limit: 1500 },
+      };
+      nextVault = [entry, ...nextVault.map((item) => ({ ...item, isActive: false }))];
       updates += 1;
-    }
-
-    if (openai[0] || anthropic[0]) {
-      const cfg = loadPhase1ApiConfig();
-      savePhase1ApiConfig({
-        ...cfg,
-        openaiKey: openai[0] || cfg.openaiKey,
-        anthropicKey: anthropic[0] || cfg.anthropicKey,
-      });
-      updates += 1;
-    }
+    });
 
     if (relayDetectedCode || relayDetectedLong) {
       const nextCode = relayDetectedCode || relayDetectedLong;
@@ -1129,10 +1385,15 @@ const ToolsManager = ({
       updates += 1;
     }
 
+    if (keyCandidates.length > 0) {
+      setApiMode('manual');
+      persistApiVault(nextVault, 'manual');
+    }
+
     if (updates === 0) {
-      setQuickImportResult(`Chưa nhận diện được thông tin phù hợp. Hãy dán khóa truy cập hoặc đường dẫn dạng ${RELAY_SOCKET_BASE}1234.`);
+      setQuickImportResult(`Chưa nhận diện được thông tin phù hợp. Hãy dán API key hoặc đường dẫn relay dạng ${RELAY_SOCKET_BASE}1234.`);
     } else {
-      setQuickImportResult(`Đã cập nhật ${updates} mục thông tin.`);
+      setQuickImportResult(`Đã nhận diện và lưu ${updates} mục thông tin.`);
       setQuickImportText('');
     }
   };
@@ -1238,13 +1499,16 @@ const ToolsManager = ({
         }
         return false;
       });
-      persistRuntimeConfig({
-        mode: 'relay',
-        relayUrl: buildRelaySocketUrl(inferredCode),
-        identityHint: relayUrl,
-        aiProfile,
-        enableCache: enablePromptCache,
-      });
+    persistRuntimeConfig({
+      mode: 'relay',
+      relayUrl: buildRelaySocketUrl(inferredCode),
+      identityHint: relayUrl,
+      selectedProvider: 'gemini',
+      selectedModel: getProfileModel('quality', 'gemini'),
+      activeApiKeyId: '',
+      aiProfile,
+      enableCache: enablePromptCache,
+    });
       ws.send(JSON.stringify({ type: 'subscribe', code: inferredCode, long: longFromInput || inferredCode }));
       ws.send(JSON.stringify({ type: 'auth', code: inferredCode }));
       ws.send(JSON.stringify({ type: 'ping' }));
@@ -1286,6 +1550,9 @@ const ToolsManager = ({
             relayMatchedLong: payload.longId || expectedLong,
             relayToken: token,
             relayUpdatedAt: new Date().toISOString(),
+            selectedProvider: 'gemini',
+            selectedModel: getProfileModel('quality', 'gemini'),
+            activeApiKeyId: '',
             aiProfile,
             enableCache: enablePromptCache,
           });
@@ -1373,6 +1640,9 @@ const ToolsManager = ({
       relayUrl,
       relayToken: token,
       relayUpdatedAt: new Date().toISOString(),
+      selectedProvider: 'gemini',
+      selectedModel: getProfileModel('quality', 'gemini'),
+      activeApiKeyId: '',
       aiProfile,
       enableCache: enablePromptCache,
     });
@@ -1391,9 +1661,9 @@ const ToolsManager = ({
       );
       const ok = String(result || '').trim().toUpperCase().includes('OK');
       setAiUsageStats(readMainAiUsage());
-      setAiCheckStatus(ok ? 'AI đang hoạt động bình thường.' : 'AI phản hồi nhưng kết quả chưa đúng mẫu.');
+      setAiCheckStatus(ok ? `Hoạt động tốt: ${PROVIDER_LABELS[ai.provider]} / ${ai.model}` : `Có phản hồi nhưng chưa đúng mẫu: ${PROVIDER_LABELS[ai.provider]} / ${ai.model}`);
     } catch (error) {
-      setAiCheckStatus('Không dùng được AI: có thể hết quota hoặc khóa không hợp lệ. Bật billing hoặc dùng key khác.');
+      setAiCheckStatus('Không dùng được AI: quota, model hoặc key hiện tại chưa hợp lệ.');
     } finally {
       setIsCheckingAi(false);
     }
@@ -1660,7 +1930,7 @@ const ToolsManager = ({
     event.target.value = '';
   };
 
-  if (!user) {
+  if (!user && !isApiSection) {
     return (
       <motion.div 
         initial={{ opacity: 0, x: 20 }}
@@ -1738,6 +2008,354 @@ const ToolsManager = ({
     );
   }
 
+  if (isApiSection) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, x: 20 }}
+        animate={{ opacity: 1, x: 0 }}
+        className="max-w-6xl mx-auto pt-24 pb-12 px-6 space-y-8"
+      >
+        <div className="flex items-center gap-4">
+          <button onClick={onBack} className="p-2 rounded-full hover:bg-slate-100 transition-colors"><ChevronLeft /></button>
+          <div>
+            <h2 className="text-3xl font-serif font-bold">API & Kết nối AI</h2>
+            <p className="text-sm text-slate-500">Quản lý kho API, chọn model đang dùng và cấu hình Relay riêng khỏi Công cụ.</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="phase1-stat">
+            <p>Nhà cung cấp</p>
+            <strong>{apiMode === 'relay' ? 'Relay / Gemini' : PROVIDER_LABELS[currentApiEntry?.provider || selectedProvider || 'gemini']}</strong>
+          </div>
+          <div className="phase1-stat">
+            <p>Model hiện tại</p>
+            <strong>{apiMode === 'relay' ? (selectedModel || getProfileModel('quality', 'gemini')) : (currentApiEntry?.model || selectedModel || 'Chưa chọn')}</strong>
+          </div>
+          <div className="phase1-stat">
+            <p>Kho API</p>
+            <strong>{apiVault.length.toLocaleString('vi-VN')} mục</strong>
+          </div>
+          <div className="phase1-stat">
+            <p>Trạng thái</p>
+            <strong>{apiMode === 'relay' ? relayStatusText : (currentApiEntry ? `Đang dùng ${currentApiEntry.name}` : 'Chưa cấu hình')}</strong>
+          </div>
+        </div>
+
+        <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm space-y-6">
+          <div className="flex items-center gap-3">
+            <div className="p-3 bg-emerald-50 rounded-2xl">
+              <Zap className="w-6 h-6 text-emerald-600" />
+            </div>
+            <div>
+              <h3 className="text-xl font-serif font-bold">Trung tâm API</h3>
+              <p className="text-sm text-slate-500">Tự nhận diện key, lưu vào kho, và đổi model theo từng nhà cung cấp.</p>
+            </div>
+          </div>
+
+          <div className="inline-flex rounded-2xl bg-slate-100 p-1">
+            <button
+              onClick={() => {
+                setApiMode('manual');
+                persistRuntimeConfig({ mode: 'manual' });
+              }}
+              className={`px-4 py-2 rounded-xl text-sm font-bold ${apiMode === 'manual' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}
+            >
+              Kho API thủ công
+            </button>
+            <button
+              onClick={() => {
+                setApiMode('relay');
+                persistRuntimeConfig({ mode: 'relay', selectedProvider: 'gemini' });
+              }}
+              className={`px-4 py-2 rounded-xl text-sm font-bold ${apiMode === 'relay' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}
+            >
+              Relay / Proxy mode
+            </button>
+          </div>
+
+          {apiMode === 'manual' ? (
+            <div className="grid grid-cols-1 xl:grid-cols-[1.05fr_1.35fr] gap-6">
+              <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5 space-y-4">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Thêm API mới</p>
+                  <h4 className="text-lg font-bold text-slate-900 mt-1">Một form duy nhất cho mọi provider</h4>
+                </div>
+                <input
+                  value={apiEntryName}
+                  onChange={(e) => setApiEntryName(e.target.value)}
+                  className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-emerald-500"
+                  placeholder="Tên gợi nhớ, ví dụ: Gemini chính"
+                />
+                <textarea
+                  value={apiEntryText}
+                  onChange={(e) => setApiEntryText(e.target.value)}
+                  className="w-full min-h-28 px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-emerald-500"
+                  placeholder="Dán API key ở đây. Hệ thống sẽ tự nhận biết Gemini / OpenAI / Anthropic."
+                />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Nhận diện</p>
+                    <p className="mt-1 font-bold text-slate-900">{PROVIDER_LABELS[effectiveDraftProvider]}</p>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Mode mặc định</p>
+                    <p className="mt-1 font-bold text-slate-900">{aiProfile === 'economy' ? 'Nhanh' : aiProfile === 'quality' ? 'Chất lượng cao' : 'Cân bằng'}</p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <select
+                    value={effectiveDraftProvider}
+                    onChange={(e) => setApiEntryProvider(e.target.value as ApiProvider)}
+                    className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
+                  >
+                    <option value="gemini">Gemini</option>
+                    <option value="openai">OpenAI</option>
+                    <option value="anthropic">Anthropic</option>
+                  </select>
+                  <select
+                    value={apiEntryModel}
+                    onChange={(e) => setApiEntryModel(e.target.value)}
+                    className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
+                  >
+                    {availableDraftModels.map((item) => (
+                      <option key={item.value} value={item.value}>{item.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <input
+                  value={apiEntryBaseUrl}
+                  onChange={(e) => setApiEntryBaseUrl(e.target.value)}
+                  className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
+                  placeholder="Base URL tùy chỉnh (để trống nếu dùng mặc định)"
+                />
+                <button
+                  onClick={handleSaveApiEntry}
+                  disabled={!apiEntryText.trim()}
+                  className="w-full px-6 py-3 rounded-2xl bg-emerald-600 text-white font-bold hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  Thêm vào kho API
+                </button>
+                <p className="text-xs text-slate-500">
+                  Key đang hoạt động sẽ được chọn làm cấu hình chạy AI hiện tại. Bạn có thể đổi model riêng cho từng key ở danh sách bên phải.
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5 space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Kho API</p>
+                      <h4 className="text-lg font-bold text-slate-900 mt-1">Tất cả key đã lưu</h4>
+                    </div>
+                    <span className="text-xs px-3 py-1 rounded-full bg-white border border-slate-200 text-slate-600 font-semibold">
+                      Đang dùng: {currentApiEntry?.name || 'Chưa có'}
+                    </span>
+                  </div>
+                  <div className="space-y-3 max-h-[30rem] overflow-y-auto pr-1">
+                    {apiVault.length === 0 ? (
+                      <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">
+                        Chưa có API nào trong kho. Dán key ở form bên trái để bắt đầu.
+                      </div>
+                    ) : apiVault.map((entry) => (
+                      <div key={entry.id} className={cn(
+                        "rounded-2xl border p-4 bg-white space-y-3 transition-all",
+                        entry.isActive ? "border-emerald-300 shadow-lg shadow-emerald-100" : "border-slate-200"
+                      )}>
+                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                          <div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="font-bold text-slate-900">{entry.name}</p>
+                              <span className="text-[11px] px-2 py-1 rounded-full bg-slate-100 text-slate-600 font-semibold">
+                                {PROVIDER_LABELS[entry.provider]}
+                              </span>
+                              {entry.status === 'valid' ? <span className="text-[11px] px-2 py-1 rounded-full bg-emerald-100 text-emerald-700 font-semibold">OK</span> : null}
+                              {entry.status === 'invalid' ? <span className="text-[11px] px-2 py-1 rounded-full bg-rose-100 text-rose-700 font-semibold">Lỗi</span> : null}
+                              {entry.isActive ? <span className="text-[11px] px-2 py-1 rounded-full bg-indigo-100 text-indigo-700 font-semibold">Đang dùng</span> : null}
+                            </div>
+                            <p className="text-xs text-slate-500 font-mono mt-1">{maskSensitive(entry.key, 6, 4)}</p>
+                          </div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <button
+                              onClick={() => handleTestApiEntry(entry.id)}
+                              className="px-3 py-2 rounded-xl border border-slate-200 text-slate-700 text-xs font-bold hover:border-emerald-300 hover:text-emerald-700"
+                            >
+                              {testingApiId === entry.id ? 'Đang thử...' : 'Kiểm tra'}
+                            </button>
+                            <button
+                              onClick={() => handleActivateApiEntry(entry.id)}
+                              className={cn(
+                                "px-3 py-2 rounded-xl text-xs font-bold",
+                                entry.isActive ? "bg-slate-900 text-white" : "bg-emerald-600 text-white hover:bg-emerald-700"
+                              )}
+                            >
+                              {entry.isActive ? 'Đang dùng' : 'Dùng key này'}
+                            </button>
+                            <button
+                              onClick={() => handleDeleteApiEntry(entry.id)}
+                              className="p-2 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr] gap-3">
+                          <select
+                            value={entry.model}
+                            onChange={(e) => handleApiModelChange(entry.id, e.target.value)}
+                            className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
+                          >
+                            {PROVIDER_MODEL_OPTIONS[(entry.provider === 'unknown' ? 'gemini' : entry.provider) as 'gemini' | 'openai' | 'anthropic'].map((item) => (
+                              <option key={item.value} value={item.value}>{item.label}</option>
+                            ))}
+                          </select>
+                          <input
+                            value={entry.baseUrl}
+                            onChange={(e) => handleApiBaseUrlChange(entry.id, e.target.value)}
+                            className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
+                            placeholder="Base URL"
+                          />
+                        </div>
+                        <p className="text-xs text-slate-500">
+                          {PROVIDER_MODEL_OPTIONS[(entry.provider === 'unknown' ? 'gemini' : entry.provider) as 'gemini' | 'openai' | 'anthropic'].find((item) => item.value === entry.model)?.description || 'Model tùy chỉnh.'}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 space-y-3">
+                <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
+                  <button
+                    onClick={relayStatus === 'connected' ? handleDisconnectRelay : handleConnectRelay}
+                    className={`px-6 py-3 rounded-2xl text-white font-bold ${relayStatus === 'connected' ? 'bg-slate-700 hover:bg-slate-800' : 'bg-indigo-600 hover:bg-indigo-700'}`}
+                  >
+                    {relayStatus === 'connected' ? (
+                      <span className="inline-flex items-center gap-2"><WifiOff className="w-4 h-4" /> Tạm ngắt kết nối</span>
+                    ) : (
+                      <span className="inline-flex items-center gap-2"><Wifi className="w-4 h-4" /> Bắt đầu kết nối</span>
+                    )}
+                  </button>
+                  <a
+                    href={RELAY_WEB_BASE}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="px-4 py-3 rounded-2xl bg-fuchsia-600 text-white font-bold hover:bg-fuchsia-700 text-center"
+                  >
+                    Mở trang relay
+                  </a>
+                </div>
+                <input
+                  type="text"
+                  value={relayUrl}
+                  onChange={(e) => {
+                    setRelayUrl(e.target.value);
+                    setRelayIdentityHint(e.target.value);
+                    persistRuntimeConfig({ relayUrl: e.target.value, identityHint: e.target.value, selectedProvider: 'gemini' });
+                  }}
+                  className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
+                  placeholder={`${RELAY_SOCKET_BASE}18101412`}
+                />
+                <div className="rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-600 space-y-1">
+                  <p><Link2 className="inline w-3 h-3 mr-1" /> Mã kết nối: <b>{parseRelayCodeFromText(relayUrl) || 'chưa có'}</b></p>
+                  <p><Zap className="inline w-3 h-3 mr-1" /> Mã đã nhận diện: <b>{relayMatchedLong || 'chưa có'}</b></p>
+                  <p><Shield className="inline w-3 h-3 mr-1" /> Khóa hiện tại: <b>{relayMaskedToken}</b></p>
+                  <p>Tiến trình: <b>{relayStatusText}</b></p>
+                </div>
+              </div>
+
+              <details className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                <summary className="cursor-pointer text-sm font-semibold text-amber-900">Không kết nối được relay? Dán khóa Gemini thủ công</summary>
+                <div className="mt-3 space-y-3">
+                  <div className="text-xs text-amber-900 leading-relaxed space-y-1">
+                    <p>1. Lấy API key tại <a className="text-indigo-600 underline" href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer">Google AI Studio</a>.</p>
+                    <p>2. Nếu dùng relay OAuth: bật <a className="text-indigo-600 underline" href="https://console.cloud.google.com/apis/library/generativelanguage.googleapis.com" target="_blank" rel="noreferrer">Generative Language API</a>.</p>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
+                    <input
+                      type="text"
+                      value={manualRelayTokenInput}
+                      onChange={(e) => setManualRelayTokenInput(e.target.value)}
+                      className="w-full px-4 py-3 rounded-2xl border border-amber-300 focus:ring-2 focus:ring-amber-500"
+                      placeholder="Dán khóa AIza... hoặc đoạn văn bản có chứa key"
+                    />
+                    <button
+                      onClick={handleSaveManualRelayToken}
+                      className="px-5 py-3 rounded-2xl bg-amber-600 text-white font-bold hover:bg-amber-700"
+                    >
+                      Lưu khóa relay
+                    </button>
+                  </div>
+                </div>
+              </details>
+            </div>
+          )}
+
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Kiểm tra AI & Mức sử dụng</p>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleCheckAiHealth}
+                  disabled={isCheckingAi}
+                  className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-bold hover:bg-emerald-700 disabled:opacity-60"
+                >
+                  {isCheckingAi ? 'Đang kiểm tra...' : 'Kiểm tra AI'}
+                </button>
+                <button
+                  onClick={handleResetAiUsage}
+                  className="px-4 py-2 rounded-xl bg-white border border-emerald-300 text-emerald-700 text-sm font-bold hover:bg-emerald-100"
+                >
+                  Đặt lại thống kê
+                </button>
+              </div>
+            </div>
+            <p className="text-sm text-emerald-800">
+              Trạng thái: <b>{aiCheckStatus}</b>
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-emerald-900">
+              <p>Số lượt gọi trong phiên: <b>{aiUsageStats.requests.toLocaleString('vi-VN')}</b></p>
+              <p>Token ước tính đã dùng: <b>{aiUsageStats.estTokens.toLocaleString('vi-VN')}</b></p>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-[1.1fr_auto] gap-3 pt-2">
+              <textarea
+                value={quickImportText}
+                onChange={(e) => setQuickImportText(e.target.value)}
+                className="w-full min-h-24 px-4 py-3 rounded-2xl border border-emerald-200 focus:ring-2 focus:ring-emerald-500"
+                placeholder={`Dán hàng loạt key hoặc URL relay, ví dụ ${RELAY_SOCKET_BASE}1234`}
+              />
+              <div className="flex flex-col gap-2">
+                <button
+                  onClick={handleQuickImportKeys}
+                  className="px-4 py-3 rounded-xl bg-slate-900 text-white text-sm font-bold hover:bg-slate-800"
+                >
+                  Tự nhận diện & lưu
+                </button>
+                <select
+                  value={aiProfile}
+                  onChange={(e) => {
+                    const next = e.target.value as AiProfileMode;
+                    setAiProfile(next);
+                    persistRuntimeConfig({ aiProfile: next });
+                  }}
+                  className="px-4 py-3 rounded-xl border border-emerald-200 text-sm font-medium"
+                >
+                  <option value="economy">Mode nhanh</option>
+                  <option value="balanced">Mode cân bằng</option>
+                  <option value="quality">Mode chất lượng</option>
+                </select>
+              </div>
+            </div>
+            {quickImportResult ? <p className="text-xs text-emerald-700">{quickImportResult}</p> : null}
+          </div>
+        </div>
+      </motion.div>
+    );
+  }
+
   return (
     <motion.div 
       initial={{ opacity: 0, x: 20 }}
@@ -1806,242 +2424,20 @@ const ToolsManager = ({
             <Zap className="w-6 h-6 text-emerald-600" />
           </div>
           <div>
-            <h3 className="text-xl font-serif font-bold">Thiết lập AI</h3>
-            <p className="text-sm text-slate-500">Kết nối nhanh để dùng các tính năng viết, dịch và gợi ý nội dung.</p>
+            <h3 className="text-xl font-serif font-bold">Trung tâm API đã tách riêng</h3>
+            <p className="text-sm text-slate-500">Quản lý key, chọn provider/model và relay hiện nằm ở tab API để giao diện gọn hơn.</p>
           </div>
         </div>
-
-        <div className="mb-4 inline-flex rounded-2xl bg-slate-100 p-1">
-          <button
-            onClick={() => {
-              setApiMode('manual');
-              persistRuntimeConfig({ mode: 'manual' });
-            }}
-            className={`px-4 py-2 rounded-xl text-sm font-bold ${apiMode === 'manual' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}
-          >
-            Tự nhập khóa truy cập
-          </button>
-          <button
-            onClick={() => {
-              setApiMode('relay');
-              persistRuntimeConfig({ mode: 'relay' });
-            }}
-            className={`px-4 py-2 rounded-xl text-sm font-bold ${apiMode === 'relay' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}
-          >
-            Kết nối qua Relay
-          </button>
-        </div>
-
-        {apiMode === 'manual' ? (
-          <>
-            <p className="text-xs text-slate-500 mb-3">Khóa hiện tại: <b>{maskedGeminiKey || 'Chưa thiết lập'}</b></p>
-            <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3">
-              <input
-                type="password"
-                value={geminiKeyInput}
-                onChange={(e) => setGeminiKeyInput(e.target.value)}
-                className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-emerald-500"
-                placeholder="Nhập khóa truy cập (AIza...)"
-              />
-              <button
-                onClick={handleSaveGeminiKey}
-                disabled={!geminiKeyInput.trim()}
-                className="px-6 py-3 rounded-2xl bg-emerald-600 text-white font-bold hover:bg-emerald-700 disabled:opacity-50"
-              >
-                Lưu khóa truy cập
-              </button>
-            </div>
-          </>
-        ) : (
-        <div className="space-y-3">
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 space-y-3">
-              <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
-                <button
-                  onClick={relayStatus === 'connected' ? handleDisconnectRelay : handleConnectRelay}
-                  className={`px-6 py-3 rounded-2xl text-white font-bold ${relayStatus === 'connected' ? 'bg-slate-700 hover:bg-slate-800' : 'bg-indigo-600 hover:bg-indigo-700'}`}
-                >
-                  {relayStatus === 'connected' ? (
-                    <span className="inline-flex items-center gap-2"><WifiOff className="w-4 h-4" /> Tạm ngắt kết nối</span>
-                  ) : (
-                    <span className="inline-flex items-center gap-2"><Wifi className="w-4 h-4" /> Bắt đầu kết nối</span>
-                  )}
-                </button>
-                <a
-                  href={RELAY_WEB_BASE}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="px-4 py-3 rounded-2xl bg-fuchsia-600 text-white font-bold hover:bg-fuchsia-700 text-center"
-                >
-                  Mở trang relay
-                </a>
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-xs font-semibold text-slate-600">Đường dẫn kết nối</label>
-                <input
-                  type="text"
-                  value={relayUrl}
-                  onChange={(e) => {
-                    setRelayUrl(e.target.value);
-                    setRelayIdentityHint(e.target.value);
-                    persistRuntimeConfig({ relayUrl: e.target.value, identityHint: e.target.value });
-                  }}
-                  className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
-                  placeholder={`${RELAY_SOCKET_BASE}18101412`}
-                />
-              </div>
-
-              <div className="rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-600 space-y-1">
-                <p><Link2 className="inline w-3 h-3 mr-1" /> Mẫu đường dẫn: <b>{RELAY_SOCKET_BASE}1234</b> (mã 4-8 số)</p>
-                <p><Shield className="inline w-3 h-3 mr-1" /> Trang đăng nhập: <b>{RELAY_WEB_BASE}</b></p>
-                <p><Zap className="inline w-3 h-3 mr-1" /> Mẹo: khi kết nối thành công, bạn có thể dùng AI ngay.</p>
-              </div>
-            </div>
-
-            <details className="rounded-2xl border border-amber-200 bg-amber-50 p-3">
-              <summary className="cursor-pointer text-xs font-semibold text-amber-800">Nếu chưa kết nối được: nhập khóa thủ công</summary>
-              <div className="text-xs text-amber-900 space-y-2 mt-2 leading-relaxed">
-                <p className="font-semibold">Cách tự lấy API key (dùng tài khoản Google của bạn):</p>
-                <ol className="list-decimal list-inside space-y-1">
-                  <li>Mở <a className="text-indigo-600 underline" href="https://ai.google.dev" target="_blank" rel="noreferrer">Google AI Studio</a> hoặc trực tiếp trang <a className="text-indigo-600 underline" href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer">API Keys</a>.</li>
-                  <li>Đăng nhập Google &gt; bấm <b>Create API key</b> (hoặc chọn key có sẵn).</li>
-                  <li>Copy key dạng <code>AIza...</code> và dán vào ô bên dưới.</li>
-                  <li>Bấm “Lưu khóa” để dùng ngay; chi phí/quota tính trên tài khoản của bạn.</li>
-                </ol>
-                <p className="font-semibold">Nếu muốn OAuth (nâng cao):</p>
-                <ol className="list-decimal list-inside space-y-1">
-                  <li>Bật API: <a className="text-indigo-600 underline" href="https://console.cloud.google.com/apis/library/generativelanguage.googleapis.com" target="_blank" rel="noreferrer">Generative Language API</a>.</li>
-                  <li>Tạo OAuth Client (Web), thêm scope <code>https://www.googleapis.com/auth/generative-language</code>.</li>
-                  <li>Đăng nhập ở trang relay; relay sẽ phát token về app nếu code khớp.</li>
-                </ol>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2 mt-3">
-                <input
-                  type="text"
-                  value={manualRelayTokenInput}
-                  onChange={(e) => setManualRelayTokenInput(e.target.value)}
-                  className="w-full px-4 py-3 rounded-2xl border border-amber-300 focus:ring-2 focus:ring-amber-500"
-                  placeholder="Dán khóa truy cập hoặc đoạn văn bản có chứa AIza..."
-                />
-                <button
-                  onClick={handleSaveManualRelayToken}
-                  className="px-5 py-3 rounded-2xl bg-amber-600 text-white font-bold hover:bg-amber-700"
-                >
-                  Lưu khóa
-                </button>
-              </div>
-            </details>
-
-            <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4 text-xs text-slate-600 space-y-1">
-              <p><Link2 className="inline w-3 h-3 mr-1" /> Mã kết nối: <b>{parseRelayCodeFromText(relayUrl) || 'chưa có'}</b></p>
-              <p><Zap className="inline w-3 h-3 mr-1" /> Mã đã nhận diện: <b>{relayMatchedLong || 'chưa có'}</b></p>
-              <p><Shield className="inline w-3 h-3 mr-1" /> Khóa hiện tại: <b>{relayMaskedToken}</b></p>
-              <p>Tiến trình: <b>{relayStatusText}</b></p>
-            </div>
+        <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-4 items-center">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+            <p>API đang dùng: <b>{currentApiEntry?.name || (apiMode === 'relay' ? 'Relay / Gemini' : 'Chưa cấu hình')}</b></p>
+            <p className="mt-1">Model hiện tại: <b>{currentApiEntry?.model || selectedModel || 'Chưa chọn'}</b></p>
           </div>
-        )}
-
-        <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
-              Kiểm tra AI & Theo dõi sử dụng
-            </p>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={handleCheckAiHealth}
-                disabled={isCheckingAi}
-                className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-bold hover:bg-emerald-700 disabled:opacity-60"
-              >
-                {isCheckingAi ? 'Đang kiểm tra...' : 'Kiểm tra AI'}
-              </button>
-              <button
-                onClick={handleResetAiUsage}
-                className="px-4 py-2 rounded-xl bg-white border border-emerald-300 text-emerald-700 text-sm font-bold hover:bg-emerald-100"
-              >
-                Đặt lại thống kê
-              </button>
-            </div>
-          </div>
-          <p className="text-sm text-emerald-800">
-            Trạng thái: <b>{aiCheckStatus}</b>
-          </p>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-emerald-900">
-            <p>
-              Số lượt gọi trong phiên: <b>{aiUsageStats.requests.toLocaleString('vi-VN')}</b>
-            </p>
-            <p>
-              Token ước tính đã dùng: <b>{aiUsageStats.estTokens.toLocaleString('vi-VN')}</b>
-            </p>
-          </div>
-          <p className="text-xs text-emerald-700">
-            Nếu relay đã kết nối nhưng kiểm tra AI vẫn lỗi, thường là relay chưa gửi khóa truy cập hợp lệ cho mã phiên hiện tại.
-          </p>
-        </div>
-
-        <QualityCenter onRun={handleRunQa} />
-
-        <div className="mt-4 border-t border-slate-100 pt-4 space-y-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Nhập Nhanh Thông Tin Kết Nối</p>
-          <textarea
-            value={quickImportText}
-            onChange={(e) => setQuickImportText(e.target.value)}
-            className="w-full min-h-24 px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-emerald-500"
-            placeholder={`Dán khóa truy cập hoặc đường dẫn kết nối: ${RELAY_SOCKET_BASE}1234`}
-          />
-          <div className="flex flex-wrap gap-2">
-            <button
-              onClick={handleQuickImportKeys}
-              className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-bold hover:bg-emerald-700"
-            >
-              Tự nhận diện & Lưu
-            </button>
-            <button
-              onClick={async () => {
-                try {
-                  const text = await navigator.clipboard.readText();
-                  setQuickImportText(text);
-                } catch {
-                  setQuickImportResult('Không đọc được nội dung vừa sao chép. Bạn hãy dán thủ công nhé.');
-                }
-              }}
-              className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 text-sm font-bold hover:bg-slate-200"
-            >
-              Dán nhanh
-            </button>
-          </div>
-          {quickImportResult ? <p className="text-xs text-slate-600">{quickImportResult}</p> : null}
-        </div>
-
-        <div className="mt-4 border-t border-slate-100 pt-4 space-y-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Ưu Tiên Tốc Độ Và Chất Lượng</p>
-          <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3">
-            <select
-              value={aiProfile}
-              onChange={(e) => {
-                const next = e.target.value as 'economy' | 'balanced' | 'quality';
-                setAiProfile(next);
-                persistRuntimeConfig({ aiProfile: next });
-              }}
-              className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
-            >
-              <option value="economy">Nhanh - phản hồi sớm, phù hợp thao tác thường xuyên</option>
-              <option value="balanced">Cân bằng - hài hòa tốc độ và chất lượng</option>
-              <option value="quality">Chất lượng cao - ưu tiên nội dung chỉn chu</option>
-            </select>
-            <label className="inline-flex items-center gap-2 px-4 py-3 rounded-2xl border border-slate-200 text-sm font-medium">
-              <input
-                type="checkbox"
-                checked={enablePromptCache}
-                onChange={(e) => {
-                  setEnablePromptCache(e.target.checked);
-                  persistRuntimeConfig({ enableCache: e.target.checked });
-                }}
-              />
-              Lưu gợi ý để dùng lại nhanh hơn
-            </label>
-          </div>
+          <p className="px-5 py-3 rounded-2xl bg-emerald-600 text-white font-bold text-center">Mở tab API ở thanh điều hướng để chỉnh</p>
         </div>
       </div>
+
+      <QualityCenter onRun={handleRunQa} />
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
         {/* Import Section */}
@@ -4551,7 +4947,7 @@ const AppContent = () => {
     };
   }, [isProcessingAI]);
   const [showAIGen, setShowAIGen] = useState(false);
-  const [view, setView] = useState<'stories' | 'characters' | 'tools'>('stories');
+  const [view, setView] = useState<'stories' | 'characters' | 'tools' | 'api'>('stories');
   const [showHelp, setShowHelp] = useState(false);
   const [showAIStoryModal, setShowAIStoryModal] = useState(false);
   const [showAIContinueModal, setShowAIContinueModal] = useState(false);
@@ -5413,9 +5809,18 @@ const AppContent = () => {
           />
         ) : view === 'characters' ? (
           <CharacterManager key="characters" onBack={() => setView('stories')} />
+        ) : view === 'api' ? (
+          <ToolsManager
+            key="api"
+            section="api"
+            onBack={() => setView('stories')}
+            profile={profile}
+            onSaveProfile={setProfile}
+          />
         ) : view === 'tools' ? (
           <ToolsManager
             key="tools"
+            section="tools"
             onBack={() => setView('stories')}
             profile={profile}
             onSaveProfile={setProfile}
@@ -5460,6 +5865,15 @@ const AppContent = () => {
                       )}
                     >
                       <Users className="w-4 h-4" /> Nhân vật
+                    </button>
+                    <button 
+                      onClick={() => setView('api')}
+                      className={cn(
+                        "flex items-center gap-2 px-5 py-2.5 rounded-2xl text-sm font-bold transition-all",
+                        (view as string) === 'api' ? "bg-slate-900 text-white shadow-lg shadow-slate-900/20" : "bg-white border border-slate-200 text-slate-500 hover:border-emerald-300"
+                      )}
+                    >
+                      <Zap className="w-4 h-4" /> API
                     </button>
                     <button 
                       onClick={() => setView('tools')}
@@ -5520,8 +5934,8 @@ const AppContent = () => {
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
                   <div className="rounded-2xl border border-slate-200 p-4 bg-slate-50">
-                    <p className="font-bold text-slate-800 mb-1">1. Chuẩn bị trong Công cụ</p>
-                    <p className="text-slate-600">Mở <b>Công cụ</b>, điền thông tin kết nối theo mẫu gợi ý rồi bấm bắt đầu.</p>
+                    <p className="font-bold text-slate-800 mb-1">1. Chuẩn bị trong API</p>
+                    <p className="text-slate-600">Mở <b>API</b>, thêm key hoặc relay rồi chọn model bạn muốn dùng.</p>
                   </div>
                   <div className="rounded-2xl border border-slate-200 p-4 bg-slate-50">
                     <p className="font-bold text-slate-800 mb-1">2. Chọn workflow AI</p>
