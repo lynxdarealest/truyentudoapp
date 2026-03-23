@@ -348,8 +348,10 @@ function bumpMainAiUsage(inputText: string, outputText: string): { requests: num
   return next;
 }
 
+type GeminiAuth = { apiKey: string; isApiKey: boolean; client?: GoogleGenAI };
+
 async function generateGeminiText(
-  ai: GoogleGenAI,
+  auth: GeminiAuth,
   kind: 'fast' | 'quality',
   contents: string,
   config?: Record<string, unknown>,
@@ -368,12 +370,34 @@ async function generateGeminiText(
     }
   }
 
-  const response = await ai.models.generateContent({
-    model,
-    contents,
-    config,
-  });
-  const text = response.text || '';
+  let text = '';
+  if (auth.isApiKey && auth.client) {
+    const response = await auth.client.models.generateContent({
+      model,
+      contents,
+      config,
+    });
+    text = response.text || '';
+  } else {
+    const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${auth.apiKey}`,
+      },
+      body: JSON.stringify({
+        contents,
+        generationConfig: config || {},
+      }),
+    });
+    if (!resp.ok) {
+      const body = await resp.text();
+      throw new Error(`Gemini (Bearer) error ${resp.status}: ${body.slice(0, 200)}`);
+    }
+    const data = await resp.json();
+    text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  }
+
   bumpMainAiUsage(contents, text);
 
   if (runtime.enableCache && text) {
@@ -404,16 +428,21 @@ function getConfiguredGeminiApiKey(): string {
   }
 }
 
-function createGeminiClient(): GoogleGenAI {
+function createGeminiClient(): GeminiAuth {
   const apiKey = getConfiguredGeminiApiKey();
   if (!apiKey) {
     const mode = getApiRuntimeConfig().mode;
     if (mode === 'relay') {
-        throw new Error('Chưa có khóa truy cập từ Relay. Vào Công cụ > Thiết lập AI để kết nối.');
+      throw new Error('Chưa có khóa truy cập từ Relay. Vào Công cụ > Thiết lập AI để kết nối.');
     }
-      throw new Error('Bạn chưa thiết lập khóa truy cập. Vào Công cụ > Thiết lập AI để bắt đầu.');
+    throw new Error('Bạn chưa thiết lập khóa truy cập. Vào Công cụ > Thiết lập AI để bắt đầu.');
   }
-  return new GoogleGenAI({ apiKey });
+  const isApiKey = /^AIza[0-9A-Za-z\-_]{20,}$/.test(apiKey);
+  return {
+    apiKey,
+    isApiKey,
+    client: isApiKey ? new GoogleGenAI({ apiKey }) : undefined,
+  };
 }
 
 // --- Types ---
