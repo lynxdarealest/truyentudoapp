@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth, AuthProvider } from './AuthContext';
 import { storage } from './storage';
 import { loadPhase1ApiConfig, savePhase1ApiConfig } from './phase1/apiConfig';
@@ -59,6 +59,7 @@ import { HelpModal } from './components/HelpModal';
 pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { handleRelayMessage, relayGenerateContent, setRelaySender, notifyRelayDisconnected } from './relayBridge';
+import { QualityCenter, type QaIssue } from './components/QualityCenter';
 
 // Utility for tailwind classes
 function cn(...inputs: ClassValue[]) {
@@ -1398,6 +1399,74 @@ const ToolsManager = ({
     }
   };
 
+  const parseQaJson = (text: string): QaIssue[] => {
+    try {
+      const parsed = JSON.parse(text);
+      const list = Array.isArray(parsed) ? parsed : parsed.issues;
+      if (!Array.isArray(list)) return [];
+      return list
+        .map((item, idx) => ({
+          id: `qa-${Date.now()}-${idx}`,
+          severity: (String(item.severity || 'medium').toLowerCase() as QaIssue['severity']) || 'medium',
+          problem: String(item.problem || item.title || item.issue || '').trim(),
+          suggestion: String(item.suggestion || item.fix || item.rewrite || '').trim(),
+          quote: String(item.quote || item.span || item.text || '').trim(),
+        }))
+        .filter((i) => i.problem || i.suggestion);
+    } catch {
+      return [];
+    }
+  };
+
+  const parseQaBullets = (text: string): QaIssue[] => {
+    const lines = text.split('\n').filter((l) => l.trim().startsWith('-'));
+    return lines.map((line, idx) => {
+      const clean = line.replace(/^-+\s*/, '');
+      return {
+        id: `qa-${Date.now()}-${idx}`,
+        severity: clean.toLowerCase().includes('high') ? 'high' : clean.toLowerCase().includes('low') ? 'low' : 'medium',
+        problem: clean,
+        suggestion: '',
+        quote: '',
+      };
+    });
+  };
+
+  const handleRunQa = useCallback(async (inputText: string): Promise<QaIssue[]> => {
+    const text = inputText.trim();
+    if (!text) throw new Error('Bạn chưa dán nội dung cần quét.');
+    const ai = createGeminiClient();
+    const prompt = [
+      'You are a Vietnamese proofreading assistant. Analyze the text and return JSON with issues.',
+      'Return strictly JSON array named "issues" or plain array. Each item fields:',
+      '{ severity: "low|medium|high", problem: string, suggestion: string, quote: string }',
+      'Focus on: chính tả, ngữ pháp, từ lặp, câu khó đọc, xưng hô không phù hợp, vi phạm glossary nếu thấy.',
+      'Nếu không có lỗi, trả []',
+      'Text:',
+      text,
+    ].join('\n');
+    const result = await generateGeminiText(ai, 'fast', prompt, {
+      temperature: 0.2,
+      responseMimeType: 'application/json',
+    });
+    const parsed = parseQaJson(result).length ? parseQaJson(result) : parseQaBullets(result);
+    // Lưu Firestore nếu có user
+    if (user?.uid) {
+      try {
+        await addDoc(collection(db, 'qa_reports'), {
+          authorId: user.uid,
+          textPreview: text.slice(0, 500),
+          issueCount: parsed.length,
+          issues: parsed,
+          createdAt: Timestamp.now(),
+        });
+      } catch (err) {
+        console.warn('Lưu QA report thất bại', err);
+      }
+    }
+    return parsed;
+  }, []);
+
   const handleResetAiUsage = () => {
     writeMainAiUsage({ requests: 0, estTokens: 0 });
     setAiUsageStats({ requests: 0, estTokens: 0 });
@@ -1831,6 +1900,21 @@ const ToolsManager = ({
 
             <details className="rounded-2xl border border-amber-200 bg-amber-50 p-3">
               <summary className="cursor-pointer text-xs font-semibold text-amber-800">Nếu chưa kết nối được: nhập khóa thủ công</summary>
+              <div className="text-xs text-amber-900 space-y-2 mt-2 leading-relaxed">
+                <p className="font-semibold">Cách tự lấy API key (dùng tài khoản Google của bạn):</p>
+                <ol className="list-decimal list-inside space-y-1">
+                  <li>Mở <a className="text-indigo-600 underline" href="https://ai.google.dev" target="_blank" rel="noreferrer">Google AI Studio</a> hoặc trực tiếp trang <a className="text-indigo-600 underline" href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer">API Keys</a>.</li>
+                  <li>Đăng nhập Google &gt; bấm <b>Create API key</b> (hoặc chọn key có sẵn).</li>
+                  <li>Copy key dạng <code>AIza...</code> và dán vào ô bên dưới.</li>
+                  <li>Bấm “Lưu khóa” để dùng ngay; chi phí/quota tính trên tài khoản của bạn.</li>
+                </ol>
+                <p className="font-semibold">Nếu muốn OAuth (nâng cao):</p>
+                <ol className="list-decimal list-inside space-y-1">
+                  <li>Bật API: <a className="text-indigo-600 underline" href="https://console.cloud.google.com/apis/library/generativelanguage.googleapis.com" target="_blank" rel="noreferrer">Generative Language API</a>.</li>
+                  <li>Tạo OAuth Client (Web), thêm scope <code>https://www.googleapis.com/auth/generative-language</code>.</li>
+                  <li>Đăng nhập ở trang relay; relay sẽ phát token về app nếu code khớp.</li>
+                </ol>
+              </div>
               <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2 mt-3">
                 <input
                   type="text"
@@ -1893,6 +1977,8 @@ const ToolsManager = ({
             Nếu relay đã kết nối nhưng kiểm tra AI vẫn lỗi, thường là relay chưa gửi khóa truy cập hợp lệ cho mã phiên hiện tại.
           </p>
         </div>
+
+        <QualityCenter onRun={handleRunQa} />
 
         <div className="mt-4 border-t border-slate-100 pt-4 space-y-3">
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Nhập Nhanh Thông Tin Kết Nối</p>
