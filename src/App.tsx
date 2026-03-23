@@ -52,6 +52,8 @@ import { twMerge } from 'tailwind-merge';
 import * as mammoth from 'mammoth';
 import * as pdfjsLib from 'pdfjs-dist';
 import ePub from 'epubjs';
+import { Navbar } from './components/Navbar';
+import { HelpModal } from './components/HelpModal';
 
 // Setup PDF worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
@@ -63,6 +65,7 @@ function cn(...inputs: ClassValue[]) {
 }
 
 type ApiMode = 'manual' | 'relay';
+const RELAY_SOCKET_BASE = 'wss://relay2026.vercel.app/=';
 
 interface ApiRuntimeConfig {
   mode: ApiMode;
@@ -131,13 +134,21 @@ function parseLongIdFromText(input: string): string {
 function parseRelayCodeFromText(input: string): string {
   const value = String(input || '').trim();
   if (!value) return '';
+  const c0 = value.match(/\/=(\d{4,8})(?:\D|$)/i);
+  if (c0?.[1]) return c0[1];
   const c1 = value.match(/[?&]code=(\d{4,8})/i);
   if (c1?.[1]) return c1[1];
   const c2 = value.match(/\/code=(\d{4,8})/i);
   if (c2?.[1]) return c2[1];
+  if (/^\d{4,8}$/.test(value)) return value;
   const asLong = parseLongIdFromText(value);
   if (/^\d{4,8}$/.test(asLong)) return asLong;
   return '';
+}
+
+function buildRelaySocketUrl(code: string): string {
+  const clean = String(code || '').trim();
+  return `${RELAY_SOCKET_BASE}${clean}`;
 }
 
 function maskSensitive(value: string, head = 8, tail = 6): string {
@@ -161,7 +172,7 @@ function getApiRuntimeConfig(): ApiRuntimeConfig {
     const parsed = raw ? (JSON.parse(raw) as Partial<ApiRuntimeConfig>) : {};
     return {
       mode: parsed.mode === 'relay' ? 'relay' : 'manual',
-      relayUrl: parsed.relayUrl || 'wss://relay2026.vercel.app/',
+      relayUrl: parsed.relayUrl || buildRelaySocketUrl(''),
       identityHint: parsed.identityHint || '',
       relayMatchedLong: parsed.relayMatchedLong || '',
       relayToken: parsed.relayToken || '',
@@ -172,7 +183,7 @@ function getApiRuntimeConfig(): ApiRuntimeConfig {
   } catch {
     return {
       mode: 'manual',
-      relayUrl: 'wss://relay2026.vercel.app/',
+      relayUrl: buildRelaySocketUrl(''),
       identityHint: '',
       relayMatchedLong: '',
       relayToken: '',
@@ -438,157 +449,6 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { has
 }
 
 // --- Components ---
-
-const Navbar = ({ 
-  currentView, 
-  setView, 
-  onShowHelp,
-  onHome,
-  themeMode,
-  onToggleTheme,
-  profile,
-}: { 
-  currentView: string, 
-  setView: (view: 'stories' | 'characters' | 'tools') => void,
-  onShowHelp: () => void,
-  onHome: () => void,
-  themeMode: ThemeMode,
-  onToggleTheme: () => void,
-  profile: UiProfile,
-}) => {
-  const [showDataMenu, setShowDataMenu] = useState(false);
-  
-  const handleExport = () => {
-    storage.exportData();
-  };
-
-  const handleImport = () => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.json';
-    input.onchange = (e: any) => {
-      const file = e.target.files?.[0];
-      if (file) {
-        const reader = new FileReader();
-        reader.onload = (event) => {
-          try {
-            const data = JSON.parse(event.target?.result as string);
-            storage.importData(data);
-          } catch (err) {
-            alert("Lỗi khi đọc file backup.");
-          }
-        };
-        reader.readAsText(file);
-      }
-    };
-    input.click();
-  };
-
-  return (
-    <nav className="fixed top-0 left-0 right-0 h-20 bg-white/80 backdrop-blur-md border-b border-slate-200 z-50 flex items-center justify-between px-6">
-      <div className="flex items-center gap-8">
-        <div 
-          className="flex items-center gap-3 cursor-pointer group"
-          onClick={onHome}
-        >
-          <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-900/20 group-hover:scale-105 transition-transform">
-            <Feather className="w-6 h-6 text-white" />
-          </div>
-          <span className="text-xl font-serif font-bold tracking-tight hidden sm:block">Truyện Tự Do</span>
-        </div>
-
-        <div className="flex items-center gap-1 bg-slate-100/50 p-1 rounded-2xl border border-slate-200">
-          <button 
-            onClick={onHome}
-            className={cn(
-              "flex items-center gap-2 px-3 md:px-4 py-2 rounded-xl text-sm font-bold transition-all",
-              currentView === 'stories' ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
-            )}
-            title="Trang chủ"
-          >
-            <BookOpen className="w-4 h-4" /> <span className="hidden sm:inline">Trang chủ</span>
-          </button>
-          <button 
-            onClick={() => setView('characters')}
-            className={cn(
-              "flex items-center gap-2 px-3 md:px-4 py-2 rounded-xl text-sm font-bold transition-all",
-              currentView === 'characters' ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
-            )}
-            title="Nhân vật"
-          >
-            <Users className="w-4 h-4" /> <span className="hidden sm:inline">Nhân vật</span>
-          </button>
-          <button 
-            onClick={() => setView('tools')}
-            className={cn(
-              "flex items-center gap-2 px-3 md:px-4 py-2 rounded-xl text-sm font-bold transition-all",
-              currentView === 'tools' ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
-            )}
-            title="Công cụ"
-          >
-            <Settings className="w-4 h-4" /> <span className="hidden sm:inline">Công cụ</span>
-          </button>
-        </div>
-      </div>
-      
-      <div className="flex items-center gap-4">
-        <div className="relative">
-          <button
-            onClick={() => setShowDataMenu((v) => !v)}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-100 transition-all"
-            title="Dữ liệu"
-          >
-            <Database className="w-4 h-4" /> <span className="hidden md:inline">Dữ liệu</span>
-          </button>
-          {showDataMenu ? (
-            <div className="absolute right-0 mt-2 w-48 rounded-xl border border-slate-200 bg-white shadow-xl z-50 p-1">
-              <button
-                onClick={() => { setShowDataMenu(false); handleExport(); }}
-                className="w-full text-left px-3 py-2 rounded-lg text-sm font-semibold text-slate-700 hover:bg-slate-100"
-              >
-                <Download className="w-4 h-4 inline mr-2" />
-                Sao lưu JSON
-              </button>
-              <button
-                onClick={() => { setShowDataMenu(false); handleImport(); }}
-                className="w-full text-left px-3 py-2 rounded-lg text-sm font-semibold text-slate-700 hover:bg-slate-100"
-              >
-                <Upload className="w-4 h-4 inline mr-2" />
-                Khôi phục JSON
-              </button>
-            </div>
-          ) : null}
-        </div>
-        <div className="h-8 w-[1px] bg-slate-200 mx-2" />
-        <button
-          onClick={onToggleTheme}
-          className="w-10 h-10 rounded-full border border-slate-200 flex items-center justify-center text-slate-500 hover:text-indigo-600 hover:border-indigo-200 transition-all"
-          title={themeMode === 'dark' ? 'Đổi sang giao diện sáng' : 'Đổi sang giao diện tối'}
-        >
-          {themeMode === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-        </button>
-        <div className="h-8 w-[1px] bg-slate-200 mx-2" />
-        <button 
-          onClick={onShowHelp}
-          className="w-10 h-10 rounded-full border border-slate-200 flex items-center justify-center text-slate-400 hover:text-indigo-600 hover:border-indigo-200 transition-all"
-          title="Hướng dẫn"
-        >
-          <Info className="w-5 h-5" />
-        </button>
-        <div className="h-8 w-[1px] bg-slate-200 mx-2" />
-        <div className="flex items-center gap-3">
-          <div className="text-right hidden sm:block">
-            <p className="text-sm font-bold leading-none">{profile.displayName}</p>
-            <p className="text-[10px] text-slate-400 uppercase tracking-widest mt-1">Local Storage</p>
-          </div>
-          <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center overflow-hidden border border-slate-200">
-            <img src={profile.avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
-          </div>
-        </div>
-      </div>
-    </nav>
-  );
-};
 
 const CharacterManager = ({ storyId, onBack }: { storyId?: string, onBack: () => void }) => {
   const { user } = useAuth();
@@ -971,7 +831,7 @@ const ToolsManager = ({
   const [geminiKeyInput, setGeminiKeyInput] = useState('');
   const [maskedGeminiKey, setMaskedGeminiKey] = useState('');
   const [apiMode, setApiMode] = useState<ApiMode>('manual');
-  const [relayUrl, setRelayUrl] = useState('wss://relay2026.vercel.app/');
+  const [relayUrl, setRelayUrl] = useState(buildRelaySocketUrl(''));
   const [relayIdentityHint, setRelayIdentityHint] = useState('');
   const [relayMatchedLong, setRelayMatchedLong] = useState('');
   const [relayMaskedToken, setRelayMaskedToken] = useState('Chưa nhận token');
@@ -985,6 +845,7 @@ const ToolsManager = ({
   const relayPingRef = useRef<number | null>(null);
   const relayReconnectRef = useRef<number | null>(null);
   const relayShouldReconnectRef = useRef(false);
+  const avatarUploadInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     setProfileName(profile.displayName);
@@ -1102,10 +963,7 @@ const ToolsManager = ({
 
     if (relayDetectedCode || relayDetectedLong) {
       const nextCode = relayDetectedCode || relayDetectedLong;
-      const relayBase = toWsUrl(relayUrl);
-      const nextRelayUrl = relayBase.includes('/code=')
-        ? relayBase.replace(/\/code=\d*$/i, `/code=${nextCode}`)
-        : `${relayBase.replace(/\/+$/, '')}/code=${nextCode}`;
+      const nextRelayUrl = buildRelaySocketUrl(nextCode);
       setRelayUrl(nextRelayUrl);
       setRelayIdentityHint(text);
       persistRuntimeConfig({
@@ -1116,7 +974,7 @@ const ToolsManager = ({
     }
 
     if (updates === 0) {
-      setQuickImportResult('Không phát hiện được key/mã hợp lệ. Gợi ý: dán chuỗi chứa AIza..., sk-..., sk-ant-..., hoặc code=1234.');
+      setQuickImportResult('Không phát hiện được key/mã hợp lệ. Gợi ý: dán AIza..., sk-..., sk-ant-..., hoặc link relay dạng wss://relay2026.vercel.app/=1234.');
     } else {
       setQuickImportResult(`Đã nhận ${updates} nguồn cấu hình.`);
       setQuickImportText('');
@@ -1127,12 +985,13 @@ const ToolsManager = ({
     const inferredCode = parseRelayCodeFromText(relayUrl);
     if (!/^\d{4,8}$/.test(inferredCode)) {
       setRelayStatus('error');
-      setRelayStatusText('Base URL phải chứa code=xxxx (4-8 chữ số).');
+      setRelayStatusText('Base URL phải đúng dạng wss://relay2026.vercel.app/=1234 (code 4-8 số).');
       return;
     }
-    const wsTarget = toWsUrl(relayUrl);
+    const wsTarget = buildRelaySocketUrl(inferredCode);
     const longFromInput = parseLongIdFromText(relayUrl);
     relayShouldReconnectRef.current = true;
+    setRelayUrl(wsTarget);
 
     try {
       if (relaySocketRef.current) {
@@ -1397,6 +1256,41 @@ const ToolsManager = ({
     alert('Đã cập nhật hồ sơ hiển thị.');
   };
 
+  const handlePickAvatarFile = () => {
+    avatarUploadInputRef.current?.click();
+  };
+
+  const handleAvatarFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      alert('Chỉ hỗ trợ file ảnh (png, jpg, webp...).');
+      event.target.value = '';
+      return;
+    }
+    const maxSize = 2 * 1024 * 1024;
+    if (file.size > maxSize) {
+      alert('Ảnh quá lớn. Vui lòng chọn ảnh nhỏ hơn 2MB.');
+      event.target.value = '';
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const nextAvatar = String(reader.result || '').trim();
+      if (!nextAvatar) {
+        alert('Không đọc được file ảnh.');
+        return;
+      }
+      setProfileAvatar(nextAvatar);
+    };
+    reader.onerror = () => {
+      alert('Đọc file ảnh thất bại.');
+    };
+    reader.readAsDataURL(file);
+    event.target.value = '';
+  };
+
   if (!user) {
     return (
       <motion.div 
@@ -1437,6 +1331,25 @@ const ToolsManager = ({
             >
               Lưu hồ sơ
             </button>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <input
+              ref={avatarUploadInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleAvatarFileChange}
+              className="hidden"
+            />
+            <button
+              type="button"
+              onClick={handlePickAvatarFile}
+              className="px-4 py-2 rounded-xl border border-violet-200 text-violet-700 bg-violet-50 hover:bg-violet-100 text-sm font-semibold"
+            >
+              Tải ảnh từ thiết bị
+            </button>
+            <p className="text-xs text-slate-500">
+              Có thể dán URL hoặc tải ảnh từ máy (khuyến nghị dưới 2MB).
+            </p>
           </div>
         </div>
         <div className="bg-white p-12 rounded-[32px] border border-slate-200 text-center">
@@ -1497,6 +1410,25 @@ const ToolsManager = ({
             Lưu hồ sơ
           </button>
         </div>
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <input
+            ref={avatarUploadInputRef}
+            type="file"
+            accept="image/*"
+            onChange={handleAvatarFileChange}
+            className="hidden"
+          />
+          <button
+            type="button"
+            onClick={handlePickAvatarFile}
+            className="px-4 py-2 rounded-xl border border-violet-200 text-violet-700 bg-violet-50 hover:bg-violet-100 text-sm font-semibold"
+          >
+            Tải ảnh từ thiết bị
+          </button>
+          <p className="text-xs text-slate-500">
+            Có thể dán URL hoặc tải ảnh từ máy (khuyến nghị dưới 2MB).
+          </p>
+        </div>
       </div>
 
       <div className="mb-8 bg-white p-8 rounded-3xl border border-slate-200 shadow-sm">
@@ -1554,7 +1486,7 @@ const ToolsManager = ({
         ) : (
         <div className="space-y-3">
             <p className="text-xs text-slate-500">
-              Dán mã nhận dạng (ví dụ: <b>abcxyz.com/long=123</b>). Khi relay gửi token có <b>long=123</b> trùng, hệ thống sẽ tự nhận token.
+              Dùng đúng định dạng relay socket: <b>wss://relay2026.vercel.app/=1234</b> (code 4-8 số). Hệ thống sẽ tự đọc code và chờ token từ proxy app.
             </p>
             <div className="grid grid-cols-1 gap-3">
               <input
@@ -1566,7 +1498,7 @@ const ToolsManager = ({
                   persistRuntimeConfig({ relayUrl: e.target.value, identityHint: e.target.value });
                 }}
                 className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
-                placeholder="wss://relay2026.vercel.app/code=18101412"
+                placeholder="wss://relay2026.vercel.app/=18101412"
               />
             </div>
             <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3">
@@ -1582,10 +1514,9 @@ const ToolsManager = ({
               </button>
             </div>
             <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4 text-xs text-slate-600 space-y-1">
-              <p><Link2 className="inline w-3 h-3 mr-1" /> long từ URL: <b>{parseLongIdFromText(relayUrl) || 'chưa có'}</b></p>
+              <p><Link2 className="inline w-3 h-3 mr-1" /> code từ URL: <b>{parseRelayCodeFromText(relayUrl) || 'chưa có'}</b></p>
               <p><Zap className="inline w-3 h-3 mr-1" /> long đã match: <b>{relayMatchedLong || 'chưa match'}</b></p>
               <p><Shield className="inline w-3 h-3 mr-1" /> token relay: <b>{relayMaskedToken}</b></p>
-              <p>Relay code từ URL: <b>{parseRelayCodeFromText(relayUrl) || 'chưa có'}</b></p>
               <p>Trạng thái: <b>{relayStatus}</b> - {relayStatusText}</p>
             </div>
           </div>
@@ -1597,7 +1528,7 @@ const ToolsManager = ({
             value={quickImportText}
             onChange={(e) => setQuickImportText(e.target.value)}
             className="w-full min-h-24 px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-emerald-500"
-            placeholder="Dán chuỗi bất kỳ: AIza..., sk-..., sk-ant-..., URL có code=1234 hoặc long=123"
+            placeholder="Dán chuỗi bất kỳ: AIza..., sk-..., sk-ant-..., hoặc relay wss://relay2026.vercel.app/=1234"
           />
           <div className="flex flex-wrap gap-2">
             <button
@@ -2822,55 +2753,6 @@ const StoryList = ({ onView }: { onView: (story: Story) => void }) => {
         />
       </div>
     </>
-  );
-};
-
-const HelpModal = ({ isOpen, onClose }: { isOpen: boolean, onClose: () => void }) => {
-  if (!isOpen) return null;
-
-  const features = [
-    { title: 'Relay Base URL 1 ô duy nhất', desc: 'Nhập trực tiếp URL dạng wss://.../code=18101412 và tự sửa code ở cuối URL để kết nối.', icon: <Link2 className="w-5 h-5 text-indigo-600" /> },
-    { title: 'AI từ file (gộp)', desc: 'Một luồng nhập file dùng chung, sau đó chọn Dịch truyện hoặc Viết tiếp.', icon: <Upload className="w-5 h-5 text-amber-600" /> },
-    { title: 'Hồ sơ cá nhân', desc: 'Bạn có thể đổi tên hiển thị và ảnh đại diện ngay trong mục Công cụ.', icon: <ImagePlus className="w-5 h-5 text-emerald-600" /> },
-    { title: 'Theme ngày/đêm', desc: 'Dùng nút Mặt trăng/Mặt trời ở thanh trên để chuyển giao diện.', icon: <Moon className="w-5 h-5 text-purple-600" /> },
-  ];
-
-  return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-slate-900/40 backdrop-blur-sm">
-      <motion.div 
-        initial={{ opacity: 0, scale: 0.9 }}
-        animate={{ opacity: 1, scale: 1 }}
-        className="bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden"
-      >
-        <div className="p-8">
-          <div className="flex justify-between items-center mb-6">
-            <h3 className="text-2xl font-serif font-bold text-slate-900">Hướng dẫn sử dụng</h3>
-            <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
-              <Plus className="w-6 h-6 rotate-45 text-slate-400" />
-            </button>
-          </div>
-          <div className="space-y-6">
-            {features.map((f, i) => (
-              <div key={i} className="flex gap-4">
-                <div className="p-3 bg-slate-50 rounded-2xl h-fit">
-                  {f.icon}
-                </div>
-                <div>
-                  <h4 className="font-bold text-slate-800">{f.title}</h4>
-                  <p className="text-sm text-slate-500 leading-relaxed">{f.desc}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-          <button 
-            onClick={onClose}
-            className="w-full mt-8 py-4 bg-slate-900 text-white rounded-2xl font-bold hover:bg-slate-800 transition-all"
-          >
-            Đã hiểu
-          </button>
-        </div>
-      </motion.div>
-    </div>
   );
 };
 
@@ -5178,7 +5060,7 @@ const AppContent = () => {
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
                   <div className="rounded-2xl border border-slate-200 p-4 bg-slate-50">
                     <p className="font-bold text-slate-800 mb-1">1. Thiết lập API</p>
-                    <p className="text-slate-600">Vào <b>Công cụ</b>, nhập key hoặc Base URL relay có <code>code=xxxx</code>.</p>
+                    <p className="text-slate-600">Vào <b>Công cụ</b>, nhập key hoặc Relay URL dạng <code>wss://relay2026.vercel.app/=1234</code>.</p>
                   </div>
                   <div className="rounded-2xl border border-slate-200 p-4 bg-slate-50">
                     <p className="font-bold text-slate-800 mb-1">2. Chọn workflow AI</p>

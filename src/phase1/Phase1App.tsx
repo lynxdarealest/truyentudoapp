@@ -601,13 +601,14 @@ export default function Phase1App() {
                 <span className="text-xs text-slate-500">Smart routing + failover</span>
               </div>
               <div className="space-y-2">
-                <label className="text-xs font-semibold text-slate-600">Relay / Base URL</label>
+                <label className="text-xs font-semibold text-slate-600">Relay Socket URL</label>
                 <input
                   className="phase1-input"
                   value={apiConfig.relayBaseUrl}
                   onChange={(e) => setApiConfig((prev) => ({ ...prev, relayBaseUrl: e.target.value }))}
-                  placeholder="https://relay-web.com/v1?code="
+                  placeholder="wss://relay2026.vercel.app/=1234"
                 />
+                <p className="text-xs text-slate-500">Định dạng chuẩn: <code>wss://relay2026.vercel.app/=CODE</code> (CODE từ 4 đến 8 số).</p>
                 <div className="flex items-center gap-2">
                   <button className="phase1-primary-btn" onClick={onTestConnection} disabled={connectionStatus.state === 'testing'}>
                     {connectionStatus.state === 'testing' ? 'Testing...' : 'Test Connection'}
