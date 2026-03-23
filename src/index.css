@@ -18,6 +18,78 @@
   color: #e2e8f0;
 }
 
+/* Futuristic theme overlay */
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap');
+
+:root {
+  --neo-bg-0: #0b1224;
+  --neo-bg-1: #0f1b32;
+  --neo-grid: rgba(255, 255, 255, 0.04);
+  --neo-primary: #5de4c7;
+  --neo-accent: #8ab4ff;
+}
+
+body {
+  background: radial-gradient(circle at 20% 20%, #14213d 0, transparent 25%),
+              radial-gradient(circle at 80% 0%, #0ea5e9 0, transparent 30%),
+              linear-gradient(135deg, #0b1224 0%, #0f1b32 50%, #0b1224 100%);
+  color: #e2e8f0;
+  font-family: 'Space Grotesk', 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+.neo-bg {
+  background: transparent;
+  position: relative;
+  overflow: hidden;
+}
+
+.neo-bg::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(var(--neo-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--neo-grid) 1px, transparent 1px);
+  background-size: 64px 64px;
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.neo-card {
+  background: rgba(15, 27, 50, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 10px 35px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(12px);
+}
+
+.glow-pill {
+  background: linear-gradient(90deg, rgba(93, 228, 199, 0.15), rgba(138, 180, 255, 0.2));
+  border: 1px solid rgba(93, 228, 199, 0.35);
+  box-shadow: 0 0 20px rgba(93, 228, 199, 0.35);
+}
+
+.pulse {
+  animation: pulseGlow 1.8s ease-in-out infinite;
+}
+
+@keyframes pulseGlow {
+  0% { box-shadow: 0 0 0 0 rgba(93, 228, 199, 0.35); }
+  70% { box-shadow: 0 0 0 12px rgba(93, 228, 199, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(93, 228, 199, 0); }
+}
+
+.neo-timer {
+  background: linear-gradient(90deg, var(--neo-primary), var(--neo-accent));
+  height: 4px;
+  border-radius: 999px;
+  animation: timerFlow 2s linear infinite;
+}
+
+@keyframes timerFlow {
+  0% { transform: translateX(-10%); }
+  100% { transform: translateX(110%); }
+}
+
 :root[data-theme="dark"] .bg-white {
   background-color: #0f172a !important;
   color: #e2e8f0 !important;
