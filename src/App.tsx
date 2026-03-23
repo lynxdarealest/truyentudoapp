@@ -84,6 +84,7 @@ interface ApiRuntimeConfig {
 const API_RUNTIME_CONFIG_KEY = 'api_runtime_config_v1';
 const RELAY_TOKEN_CACHE_KEY = 'relay_token_cache_v1';
 const GEMINI_RESPONSE_CACHE_KEY = 'gemini_response_cache_v1';
+const MAIN_AI_USAGE_KEY = 'main_ai_usage_v1';
 const UI_PROFILE_KEY = 'ui_profile_v1';
 const UI_THEME_KEY = 'ui_theme_v1';
 
@@ -267,11 +268,15 @@ function extractRelayPayload(rawMessage: string): { longId: string; codeId: stri
       }
     }
     const nested = (parsed.data && typeof parsed.data === 'object') ? (parsed.data as Record<string, unknown>) : {};
-    const tokenCandidates = [parsed.token, parsed.apiKey, parsed.geminiKey, parsed.accessToken, nested.token, nested.apiKey, nested.accessToken];
+    const tokenCandidates = [
+      parsed.token, parsed.apiKey, parsed.geminiKey, parsed.accessToken, parsed.authorization, parsed.bearerToken,
+      nested.token, nested.apiKey, nested.accessToken, nested.authorization, nested.bearerToken,
+    ];
     for (const t of tokenCandidates) {
       const value = String(t || '').trim();
       if (value) {
-        token = value;
+        const normalized = value.replace(/^Bearer\s+/i, '').trim();
+        token = normalized;
         break;
       }
     }
@@ -312,6 +317,37 @@ function quickHash(input: string): string {
   return `${h}`;
 }
 
+function readMainAiUsage(): { requests: number; estTokens: number } {
+  try {
+    const raw = localStorage.getItem(MAIN_AI_USAGE_KEY);
+    const parsed = raw ? (JSON.parse(raw) as Partial<{ requests: number; estTokens: number }>) : {};
+    return {
+      requests: Number(parsed.requests || 0),
+      estTokens: Number(parsed.estTokens || 0),
+    };
+  } catch {
+    return { requests: 0, estTokens: 0 };
+  }
+}
+
+function writeMainAiUsage(next: { requests: number; estTokens: number }): void {
+  localStorage.setItem(MAIN_AI_USAGE_KEY, JSON.stringify(next));
+}
+
+function estimateTextTokens(text: string): number {
+  return Math.max(1, Math.round(String(text || '').length / 4));
+}
+
+function bumpMainAiUsage(inputText: string, outputText: string): { requests: number; estTokens: number } {
+  const current = readMainAiUsage();
+  const next = {
+    requests: current.requests + 1,
+    estTokens: current.estTokens + estimateTextTokens(inputText) + estimateTextTokens(outputText),
+  };
+  writeMainAiUsage(next);
+  return next;
+}
+
 async function generateGeminiText(
   ai: GoogleGenAI,
   kind: 'fast' | 'quality',
@@ -338,6 +374,7 @@ async function generateGeminiText(
     config,
   });
   const text = response.text || '';
+  bumpMainAiUsage(contents, text);
 
   if (runtime.enableCache && text) {
     const cache = readGeminiCache();
@@ -887,6 +924,9 @@ const ToolsManager = ({
   const [relayStatus, setRelayStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected');
   const [relayStatusText, setRelayStatusText] = useState('Chưa kết nối');
   const [manualRelayTokenInput, setManualRelayTokenInput] = useState('');
+  const [isCheckingAi, setIsCheckingAi] = useState(false);
+  const [aiCheckStatus, setAiCheckStatus] = useState('Chưa kiểm tra');
+  const [aiUsageStats, setAiUsageStats] = useState<{ requests: number; estTokens: number }>({ requests: 0, estTokens: 0 });
   const [quickImportText, setQuickImportText] = useState('');
   const [quickImportResult, setQuickImportResult] = useState('');
   const [aiProfile, setAiProfile] = useState<'economy' | 'balanced' | 'quality'>('balanced');
@@ -922,6 +962,14 @@ const ToolsManager = ({
     setEnablePromptCache(runtime.enableCache);
     const token = (localStorage.getItem(RELAY_TOKEN_CACHE_KEY) || runtime.relayToken || '').trim();
     setRelayMaskedToken(token ? maskSensitive(token) : 'Chưa nhận token');
+    setAiUsageStats(readMainAiUsage());
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setAiUsageStats(readMainAiUsage());
+    }, 1500);
+    return () => window.clearInterval(timer);
   }, []);
 
   useEffect(() => {
@@ -1144,8 +1192,13 @@ const ToolsManager = ({
         const payload = extractRelayPayload(String(event.data || ''));
         const expectedLong = parseLongIdFromText(relayUrl);
         const expectedCode = parseRelayCodeFromText(relayUrl);
-        const isCodeMatch = expectedCode ? payload.codeId === expectedCode || payload.longId === expectedCode : true;
-        const isLongMatch = expectedLong ? payload.longId === expectedLong : true;
+        const hasPayloadIdentifier = Boolean(payload.codeId || payload.longId);
+        const isCodeMatch = expectedCode
+          ? (!hasPayloadIdentifier || payload.codeId === expectedCode || payload.longId === expectedCode)
+          : true;
+        const isLongMatch = expectedLong
+          ? (!payload.longId || payload.longId === expectedLong)
+          : true;
         const isMatch = isCodeMatch && isLongMatch;
 
         if (payload.token && isMatch) {
@@ -1245,6 +1298,32 @@ const ToolsManager = ({
       aiProfile,
       enableCache: enablePromptCache,
     });
+  };
+
+  const handleCheckAiHealth = async () => {
+    setIsCheckingAi(true);
+    setAiCheckStatus('Đang kiểm tra...');
+    try {
+      const ai = createGeminiClient();
+      const result = await generateGeminiText(
+        ai,
+        'fast',
+        'Trả về đúng một từ: OK',
+      );
+      const ok = String(result || '').trim().toUpperCase().includes('OK');
+      setAiUsageStats(readMainAiUsage());
+      setAiCheckStatus(ok ? 'AI đang hoạt động bình thường.' : 'AI phản hồi nhưng kết quả chưa đúng mẫu.');
+    } catch (error) {
+      setAiCheckStatus(`Chưa thể sử dụng AI: ${error instanceof Error ? error.message : 'Lỗi không xác định'}`);
+    } finally {
+      setIsCheckingAi(false);
+    }
+  };
+
+  const handleResetAiUsage = () => {
+    writeMainAiUsage({ requests: 0, estTokens: 0 });
+    setAiUsageStats({ requests: 0, estTokens: 0 });
+    setAiCheckStatus('Đã đặt lại thống kê phiên hiện tại.');
   };
 
   const handleExportJSON = async () => {
@@ -1699,6 +1778,43 @@ const ToolsManager = ({
             </div>
           </div>
         )}
+
+        <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+              Kiểm tra AI & Theo dõi sử dụng
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleCheckAiHealth}
+                disabled={isCheckingAi}
+                className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-bold hover:bg-emerald-700 disabled:opacity-60"
+              >
+                {isCheckingAi ? 'Đang kiểm tra...' : 'Kiểm tra AI'}
+              </button>
+              <button
+                onClick={handleResetAiUsage}
+                className="px-4 py-2 rounded-xl bg-white border border-emerald-300 text-emerald-700 text-sm font-bold hover:bg-emerald-100"
+              >
+                Đặt lại thống kê
+              </button>
+            </div>
+          </div>
+          <p className="text-sm text-emerald-800">
+            Trạng thái: <b>{aiCheckStatus}</b>
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-emerald-900">
+            <p>
+              Số lượt gọi trong phiên: <b>{aiUsageStats.requests.toLocaleString('vi-VN')}</b>
+            </p>
+            <p>
+              Token ước tính đã dùng: <b>{aiUsageStats.estTokens.toLocaleString('vi-VN')}</b>
+            </p>
+          </div>
+          <p className="text-xs text-emerald-700">
+            Nếu relay đã kết nối nhưng kiểm tra AI vẫn lỗi, thường là relay chưa gửi khóa truy cập hợp lệ cho mã phiên hiện tại.
+          </p>
+        </div>
 
         <div className="mt-4 border-t border-slate-100 pt-4 space-y-3">
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Nhập Nhanh Thông Tin Kết Nối</p>
