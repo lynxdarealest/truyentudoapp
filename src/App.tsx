@@ -1009,14 +1009,58 @@ const ToolsManager = ({
     }
   };
 
-  const handleConnectRelay = () => {
+  const openWsWithTimeout = (url: string, timeoutMs = 7000): Promise<WebSocket> =>
+    new Promise((resolve, reject) => {
+      const ws = new WebSocket(url);
+      let done = false;
+      const timer = window.setTimeout(() => {
+        if (done) return;
+        done = true;
+        try { ws.close(); } catch {}
+        reject(new Error(`timeout ${timeoutMs}ms`));
+      }, timeoutMs);
+
+      ws.onopen = () => {
+        if (done) return;
+        done = true;
+        window.clearTimeout(timer);
+        resolve(ws);
+      };
+
+      ws.onerror = () => {
+        if (done) return;
+        done = true;
+        window.clearTimeout(timer);
+        try { ws.close(); } catch {}
+        reject(new Error('websocket error'));
+      };
+
+      ws.onclose = () => {
+        if (done) return;
+        done = true;
+        window.clearTimeout(timer);
+        reject(new Error('closed before open'));
+      };
+    });
+
+  const buildRelayCandidateUrls = (rawInput: string, code: string): string[] => {
+    const candidates = new Set<string>();
+    const inferred = toWsUrl(rawInput);
+    if (inferred) candidates.add(inferred);
+    candidates.add(buildRelayConnectUrl(rawInput, code));
+    candidates.add(`wss://relay2026.vercel.app/?code=${code}`);
+    candidates.add(`wss://relay2026.vercel.app/code=${code}`);
+    return Array.from(candidates);
+  };
+
+  const handleConnectRelay = async () => {
     const inferredCode = parseRelayCodeFromText(relayUrl);
     if (!/^\d{4,8}$/.test(inferredCode)) {
       setRelayStatus('error');
       setRelayStatusText('Base URL phải đúng dạng wss://relay2026.vercel.app/code=1234 (code 4-8 số).');
       return;
     }
-    const wsTarget = buildRelayConnectUrl(relayUrl, inferredCode);
+    const wsCandidates = buildRelayCandidateUrls(relayUrl, inferredCode);
     const longFromInput = parseLongIdFromText(relayUrl);
     relayShouldReconnectRef.current = true;
     setRelayUrl(buildRelaySocketUrl(inferredCode));
@@ -1031,30 +1075,45 @@ const ToolsManager = ({
         relayPingRef.current = null;
       }
       setRelayStatus('connecting');
-      setRelayStatusText('Đang kết nối websocket...');
+      setRelayStatusText(`Đang kết nối websocket... (${wsCandidates[0]})`);
 
-      const ws = new WebSocket(wsTarget);
+      let ws: WebSocket | null = null;
+      let connectedUrl = '';
+      let lastErr = '';
+      for (const candidate of wsCandidates) {
+        try {
+          ws = await openWsWithTimeout(candidate, 7000);
+          connectedUrl = candidate;
+          break;
+        } catch (error) {
+          lastErr = error instanceof Error ? error.message : 'unknown';
+        }
+      }
+      if (!ws) {
+        throw new Error(
+          `Không mở được websocket. Endpoint có thể chưa hỗ trợ WS handshake (101). ` +
+          `Code: ${inferredCode}. Đã thử: ${wsCandidates.join(' | ')}. Lỗi cuối: ${lastErr}`,
+        );
+      }
+
       relaySocketRef.current = ws;
-
-      ws.onopen = () => {
-        setRelayStatus('connected');
-        setRelayStatusText('Đã kết nối proxy relay, đang chờ token...');
-        persistRuntimeConfig({
-          mode: 'relay',
-          relayUrl: buildRelaySocketUrl(inferredCode),
-          identityHint: relayUrl,
-          aiProfile,
-          enableCache: enablePromptCache,
-        });
-        ws.send(JSON.stringify({ type: 'subscribe', code: inferredCode, long: longFromInput || inferredCode }));
-        ws.send(JSON.stringify({ type: 'auth', code: inferredCode }));
-        ws.send(JSON.stringify({ type: 'ping' }));
-        relayPingRef.current = window.setInterval(() => {
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'ping' }));
-          }
-        }, 15000);
-      };
+      setRelayStatus('connected');
+      setRelayStatusText(`Đã kết nối proxy relay (${connectedUrl}), đang chờ token...`);
+      persistRuntimeConfig({
+        mode: 'relay',
+        relayUrl: buildRelaySocketUrl(inferredCode),
+        identityHint: relayUrl,
+        aiProfile,
+        enableCache: enablePromptCache,
+      });
+      ws.send(JSON.stringify({ type: 'subscribe', code: inferredCode, long: longFromInput || inferredCode }));
+      ws.send(JSON.stringify({ type: 'auth', code: inferredCode }));
+      ws.send(JSON.stringify({ type: 'ping' }));
+      relayPingRef.current = window.setInterval(() => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'ping' }));
+        }
+      }, 15000);
 
       ws.onmessage = (event) => {
         const payload = extractRelayPayload(String(event.data || ''));
@@ -1110,7 +1169,7 @@ const ToolsManager = ({
             window.clearTimeout(relayReconnectRef.current);
           }
           relayReconnectRef.current = window.setTimeout(() => {
-            handleConnectRelay();
+            void handleConnectRelay();
           }, 5000);
         }
       };
