@@ -208,6 +208,15 @@ function extractGeminiKeyFromText(input: string): string {
   const found = String(input || '').match(/AIza[0-9A-Za-z\-_]{20,}/);
   return found?.[0] || '';
 }
+
+function extractGcliTokenFromText(input: string): string {
+  const text = String(input || '').trim();
+  if (!text) return '';
+  const bearer = text.match(/Bearer\s+(ya29\.[0-9A-Za-z\-_\.]+)/i);
+  if (bearer?.[1]) return bearer[1];
+  const raw = text.match(/ya29\.[0-9A-Za-z\-_\.]+/);
+  return raw?.[0] || '';
+}
 function maskSensitive(value: string, head = 8, tail = 6): string {
   const v = String(value || '').trim();
   if (!v) return '';
@@ -235,7 +244,7 @@ function getApiRuntimeConfig(): ApiRuntimeConfig {
       relayToken: parsed.relayToken || '',
       relayUpdatedAt: parsed.relayUpdatedAt || '',
       aiProfile: parsed.aiProfile === 'economy' || parsed.aiProfile === 'quality' ? parsed.aiProfile : 'balanced',
-      selectedProvider: parsed.selectedProvider === 'openai' || parsed.selectedProvider === 'anthropic' || parsed.selectedProvider === 'unknown' ? parsed.selectedProvider : 'gemini',
+      selectedProvider: parsed.selectedProvider === 'gcli' || parsed.selectedProvider === 'openai' || parsed.selectedProvider === 'anthropic' || parsed.selectedProvider === 'custom' || parsed.selectedProvider === 'unknown' ? parsed.selectedProvider : 'gemini',
       selectedModel: parsed.selectedModel || '',
       activeApiKeyId: parsed.activeApiKeyId || '',
       enableCache: parsed.enableCache !== false,
@@ -335,6 +344,11 @@ function getProfileModel(kind: 'fast' | 'quality', provider?: ApiProvider): stri
     if (runtime.aiProfile === 'quality') return kind === 'fast' ? 'gemini-2.0-flash' : 'gemini-3.1-pro-preview';
     return kind === 'fast' ? 'gemini-2.0-flash' : 'gemini-2.5-flash';
   }
+  if (resolvedProvider === 'gcli') {
+    if (runtime.aiProfile === 'economy') return 'gemini-2.0-flash';
+    if (runtime.aiProfile === 'quality') return kind === 'fast' ? 'gemini-2.0-flash' : 'gemini-3.1-pro-preview';
+    return kind === 'fast' ? 'gemini-2.0-flash' : 'gemini-2.5-flash';
+  }
   if (resolvedProvider === 'openai') {
     if (runtime.aiProfile === 'economy') return 'gpt-4.1-mini';
     if (runtime.aiProfile === 'quality') return 'gpt-4.1';
@@ -344,6 +358,9 @@ function getProfileModel(kind: 'fast' | 'quality', provider?: ApiProvider): stri
     if (runtime.aiProfile === 'economy') return 'claude-3-5-haiku-latest';
     if (runtime.aiProfile === 'quality') return 'claude-3-7-sonnet-latest';
     return kind === 'fast' ? 'claude-3-5-haiku-latest' : 'claude-3-5-sonnet-latest';
+  }
+  if (resolvedProvider === 'custom') {
+    return runtime.selectedModel || 'custom-model';
   }
   return getDefaultModelForProvider('gemini', runtime.aiProfile);
 }
@@ -458,8 +475,12 @@ async function generateGeminiText(
       config,
     });
     text = response.text || '';
-  } else if (auth.provider === 'gemini') {
-    const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+  } else if (auth.provider === 'gemini' || auth.provider === 'gcli') {
+    const geminiBase = auth.baseUrl || getProviderBaseUrl('gcli');
+    const geminiEndpoint = geminiBase.includes('/models/')
+      ? geminiBase
+      : `${geminiBase.replace(/\/+$/, '')}/models/${model}:generateContent`;
+    const resp = await fetch(geminiEndpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -476,17 +497,24 @@ async function generateGeminiText(
     });
     if (!resp.ok) {
       const body = await resp.text();
-      throw new Error(`Gemini (Bearer) error ${resp.status}: ${body.slice(0, 200)}`);
+      throw new Error(`${auth.provider === 'gcli' ? 'GCLI' : 'Gemini'} (Bearer) error ${resp.status}: ${body.slice(0, 200)}`);
     }
     const data = await resp.json();
     text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-  } else if (auth.provider === 'openai') {
-    const resp = await fetch(`${auth.baseUrl || getProviderBaseUrl('openai')}/chat/completions`, {
+  } else if (auth.provider === 'openai' || auth.provider === 'custom') {
+    const openAiBase = auth.baseUrl || getProviderBaseUrl(auth.provider === 'custom' ? 'custom' : 'openai');
+    const completionEndpoint = /\/chat\/completions$/i.test(openAiBase)
+      ? openAiBase
+      : `${openAiBase.replace(/\/+$/, '')}/chat/completions`;
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (auth.apiKey.trim()) {
+      headers.Authorization = `Bearer ${auth.apiKey}`;
+    }
+    const resp = await fetch(completionEndpoint, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${auth.apiKey}`,
-      },
+      headers,
       body: JSON.stringify({
         model,
         messages: [{ role: 'user', content: contents }],
@@ -495,7 +523,7 @@ async function generateGeminiText(
     });
     if (!resp.ok) {
       const body = await resp.text();
-      throw new Error(`OpenAI error ${resp.status}: ${body.slice(0, 220)}`);
+      throw new Error(`${auth.provider === 'custom' ? 'Custom endpoint' : 'OpenAI'} error ${resp.status}: ${body.slice(0, 220)}`);
     }
     const data = await resp.json();
     text = data?.choices?.[0]?.message?.content || '';
@@ -547,8 +575,8 @@ function getConfiguredGeminiApiKey(): string {
     }
 
     const keys = loadApiVault(runtime.aiProfile);
-    const activeGemini = keys.find((item) => item.isActive && item.provider === 'gemini')?.key?.trim();
-    const firstKey = keys.find((k) => k.provider === 'gemini' && k?.key?.trim())?.key?.trim();
+    const activeGemini = keys.find((item) => item.isActive && (item.provider === 'gemini' || item.provider === 'gcli'))?.key?.trim();
+    const firstKey = keys.find((k) => (k.provider === 'gemini' || k.provider === 'gcli') && k?.key?.trim())?.key?.trim();
     const envKey = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_GEMINI_API_KEY?.trim();
     return activeGemini || firstKey || envKey || '';
   } catch {
@@ -574,8 +602,8 @@ function createGeminiClient(): AiAuth {
     ? activeEntry.provider
     : (runtime.selectedProvider === 'unknown' ? 'gemini' : runtime.selectedProvider);
 
-  const apiKey = activeEntry?.key?.trim() || (provider === 'gemini' ? getConfiguredGeminiApiKey() : '');
-  if (!apiKey) {
+  const apiKey = activeEntry?.key?.trim() || ((provider === 'gemini' || provider === 'gcli') ? getConfiguredGeminiApiKey() : '');
+  if (!apiKey && !(provider === 'custom' && (activeEntry?.baseUrl || runtime.selectedModel))) {
     const mode = getApiRuntimeConfig().mode;
     if (mode === 'relay') {
       return {
@@ -1258,10 +1286,14 @@ const ToolsManager = ({
     if (!raw) return;
     const detected = detectApiProviderFromValue(raw);
     const provider = detected !== 'unknown' ? detected : apiEntryProvider;
-    const key = raw;
-    const model = apiEntryModel || getDefaultModelForProvider(provider, aiProfile);
+    const key = provider === 'gcli' ? (extractGcliTokenFromText(raw) || raw.replace(/^Bearer\s+/i, '').trim()) : raw;
+    const model = (provider === 'custom' ? apiEntryModel.trim() : apiEntryModel) || getDefaultModelForProvider(provider, aiProfile);
     const baseUrl = apiEntryBaseUrl.trim() || getProviderBaseUrl(provider);
-    const existingMatch = apiVault.find((item) => item.key.trim() === key);
+    const existingMatch = apiVault.find((item) => (
+      provider === 'custom'
+        ? item.provider === 'custom' && item.baseUrl.trim() === baseUrl
+        : item.key.trim() === key
+    ));
     const nextEntry: StoredApiKeyRecord = {
       id: existingMatch?.id || `api-${Date.now()}`,
       name: apiEntryName.trim() || `${PROVIDER_LABELS[provider]} ${apiVault.length + (existingMatch ? 0 : 1)}`,
@@ -1346,6 +1378,7 @@ const ToolsManager = ({
     if (!text) return;
     const keyCandidates = [
       ...(text.match(/AIza[0-9A-Za-z\-_]{20,}/g) || []),
+      ...(text.match(/ya29\.[0-9A-Za-z\-_\.]+/g) || []),
       ...(text.match(/sk-ant-[A-Za-z0-9_\-]{20,}/g) || []),
       ...(text.match(/sk-(proj-)?[A-Za-z0-9_\-]{20,}/g) || []),
     ];
@@ -2091,7 +2124,7 @@ const ToolsManager = ({
                   value={apiEntryText}
                   onChange={(e) => setApiEntryText(e.target.value)}
                   className="w-full min-h-28 px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-emerald-500"
-                  placeholder="Dán API key ở đây. Hệ thống sẽ tự nhận biết Gemini / OpenAI / Anthropic."
+                  placeholder="Dán API key, bearer token GCLI (ya29...), hoặc để trống nếu custom endpoint của bạn không cần key."
                 />
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
@@ -2110,34 +2143,45 @@ const ToolsManager = ({
                     className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
                   >
                     <option value="gemini">Gemini</option>
+                    <option value="gcli">GCLI / Bearer Gemini</option>
                     <option value="openai">OpenAI</option>
                     <option value="anthropic">Anthropic</option>
+                    <option value="custom">Custom endpoint</option>
                   </select>
-                  <select
-                    value={apiEntryModel}
-                    onChange={(e) => setApiEntryModel(e.target.value)}
-                    className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
-                  >
-                    {availableDraftModels.map((item) => (
-                      <option key={item.value} value={item.value}>{item.label}</option>
-                    ))}
-                  </select>
+                  {effectiveDraftProvider === 'custom' ? (
+                    <input
+                      value={apiEntryModel}
+                      onChange={(e) => setApiEntryModel(e.target.value)}
+                      className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
+                      placeholder="Tên model custom, ví dụ: llama-3.1-70b"
+                    />
+                  ) : (
+                    <select
+                      value={apiEntryModel}
+                      onChange={(e) => setApiEntryModel(e.target.value)}
+                      className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
+                    >
+                      {availableDraftModels.map((item) => (
+                        <option key={item.value} value={item.value}>{item.label}</option>
+                      ))}
+                    </select>
+                  )}
                 </div>
                 <input
                   value={apiEntryBaseUrl}
                   onChange={(e) => setApiEntryBaseUrl(e.target.value)}
                   className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
-                  placeholder="Base URL tùy chỉnh (để trống nếu dùng mặc định)"
+                  placeholder={effectiveDraftProvider === 'custom' ? 'Endpoint hoặc base URL, ví dụ: http://127.0.0.1:11434/v1/chat/completions' : 'Base URL tùy chỉnh (để trống nếu dùng mặc định)'}
                 />
                 <button
                   onClick={handleSaveApiEntry}
-                  disabled={!apiEntryText.trim()}
+                  disabled={!apiEntryText.trim() && !(effectiveDraftProvider === 'custom' && apiEntryBaseUrl.trim())}
                   className="w-full px-6 py-3 rounded-2xl bg-emerald-600 text-white font-bold hover:bg-emerald-700 disabled:opacity-50"
                 >
                   Thêm vào kho API
                 </button>
                 <p className="text-xs text-slate-500">
-                  Key đang hoạt động sẽ được chọn làm cấu hình chạy AI hiện tại. Bạn có thể đổi model riêng cho từng key ở danh sách bên phải.
+                  GCLI nhận token `ya29...` hoặc `Bearer ...`. Custom endpoint có thể dùng endpoint tương thích OpenAI và không bắt buộc key nếu gateway nội bộ của bạn không cần auth.
                 </p>
               </div>
 
@@ -2200,15 +2244,24 @@ const ToolsManager = ({
                           </div>
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr] gap-3">
-                          <select
-                            value={entry.model}
-                            onChange={(e) => handleApiModelChange(entry.id, e.target.value)}
-                            className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
-                          >
-                            {PROVIDER_MODEL_OPTIONS[(entry.provider === 'unknown' ? 'gemini' : entry.provider) as 'gemini' | 'openai' | 'anthropic'].map((item) => (
-                              <option key={item.value} value={item.value}>{item.label}</option>
-                            ))}
-                          </select>
+                          {entry.provider === 'custom' ? (
+                            <input
+                              value={entry.model}
+                              onChange={(e) => handleApiModelChange(entry.id, e.target.value)}
+                              className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
+                              placeholder="Custom model"
+                            />
+                          ) : (
+                            <select
+                              value={entry.model}
+                              onChange={(e) => handleApiModelChange(entry.id, e.target.value)}
+                              className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
+                            >
+                              {PROVIDER_MODEL_OPTIONS[(entry.provider === 'unknown' ? 'gemini' : entry.provider) as 'gemini' | 'gcli' | 'openai' | 'anthropic' | 'custom'].map((item) => (
+                                <option key={item.value} value={item.value}>{item.label}</option>
+                              ))}
+                            </select>
+                          )}
                           <input
                             value={entry.baseUrl}
                             onChange={(e) => handleApiBaseUrlChange(entry.id, e.target.value)}
@@ -2217,7 +2270,7 @@ const ToolsManager = ({
                           />
                         </div>
                         <p className="text-xs text-slate-500">
-                          {PROVIDER_MODEL_OPTIONS[(entry.provider === 'unknown' ? 'gemini' : entry.provider) as 'gemini' | 'openai' | 'anthropic'].find((item) => item.value === entry.model)?.description || 'Model tùy chỉnh.'}
+                          {PROVIDER_MODEL_OPTIONS[(entry.provider === 'unknown' ? 'gemini' : entry.provider) as 'gemini' | 'gcli' | 'openai' | 'anthropic' | 'custom'].find((item) => item.value === entry.model)?.description || 'Model hoặc endpoint tùy chỉnh.'}
                         </p>
                       </div>
                     ))}
