@@ -49,7 +49,15 @@ export async function translateWithGlossary(input: {
   sourceText: string;
   glossary: Phase1GlossaryEntry[];
   tone: string;
-}): Promise<{ provider: string; alternatives: string[]; violationsByOption: string[][] }> {
+  parallelMode?: boolean;
+}): Promise<{
+  provider: string;
+  alternatives: string[];
+  violationsByOption: string[][];
+  comparisons: Array<{ provider: string; model: string; text: string; latencyMs: number }>;
+  usage?: { sessionRequests: number; estimatedTokens: number; byProvider: Record<string, number>; byKey: Record<string, number> };
+  failoverTrail: string[];
+}> {
   const glossaryTerms = glossaryToTerms(input.glossary);
   const response = await translateSegment({
     sourceText: input.sourceText,
@@ -57,6 +65,7 @@ export async function translateWithGlossary(input: {
     targetLang: 'vi-VN',
     glossary: glossaryTerms,
     tone: input.tone,
+    parallelProviders: input.parallelMode ? 3 : 1,
   });
 
   const alternatives = response.alternatives
@@ -71,6 +80,9 @@ export async function translateWithGlossary(input: {
     provider: response.provider,
     alternatives,
     violationsByOption,
+    comparisons: response.comparisons || [],
+    usage: response.usage,
+    failoverTrail: response.failoverTrail || [],
   };
 }
 
