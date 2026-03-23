@@ -55,7 +55,6 @@ import { Navbar } from './components/Navbar';
 import { HelpModal } from './components/HelpModal';
 import { ApiSectionPanel } from './components/tools/ApiSectionPanel';
 import { ProfileSettingsPanel } from './components/tools/ProfileSettingsPanel';
-import { AiConfigSummaryPanel } from './components/tools/AiConfigSummaryPanel';
 import { DataManagementPanels } from './components/tools/DataManagementPanels';
 
 // Setup PDF worker
@@ -108,8 +107,10 @@ const GEMINI_RESPONSE_CACHE_KEY = 'gemini_response_cache_v1';
 const MAIN_AI_USAGE_KEY = 'main_ai_usage_v1';
 const UI_PROFILE_KEY = 'ui_profile_v1';
 const UI_THEME_KEY = 'ui_theme_v1';
+const UI_VIEWPORT_MODE_KEY = 'ui_viewport_mode_v1';
 
 type ThemeMode = 'light' | 'dark';
+type ViewportMode = 'desktop' | 'mobile';
 
 interface UiProfile {
   displayName: string;
@@ -143,6 +144,15 @@ function loadThemeMode(): ThemeMode {
 
 function saveThemeMode(mode: ThemeMode): void {
   localStorage.setItem(UI_THEME_KEY, mode);
+}
+
+function loadViewportMode(): ViewportMode {
+  const raw = localStorage.getItem(UI_VIEWPORT_MODE_KEY);
+  return raw === 'mobile' ? 'mobile' : 'desktop';
+}
+
+function saveViewportMode(mode: ViewportMode): void {
+  localStorage.setItem(UI_VIEWPORT_MODE_KEY, mode);
 }
 
 function parseLongIdFromText(input: string): string {
@@ -1118,13 +1128,11 @@ const parseEPUB = async (file: File): Promise<string> => {
 
 const ToolsManager = ({
   onBack,
-  onOpenApi,
   profile,
   onSaveProfile,
   section = 'tools',
 }: {
   onBack: () => void;
-  onOpenApi?: () => void;
   profile: UiProfile;
   onSaveProfile: (next: UiProfile) => void;
   section?: 'tools' | 'api';
@@ -2144,12 +2152,6 @@ const ToolsManager = ({
         onPickAvatarFile={handlePickAvatarFile}
         onAvatarFileChange={handleAvatarFileChange}
         avatarInputRef={avatarUploadInputRef}
-      />
-
-      <AiConfigSummaryPanel
-        currentConnectionName={currentApiEntry?.name || (apiMode === 'relay' ? 'Trạm trung chuyển' : 'Chưa cấu hình')}
-        currentModel={currentApiEntry?.model || selectedModel || 'Chưa chọn'}
-        onOpenApi={() => onOpenApi?.()}
       />
 
       <QualityCenter onRun={handleRunQa} />
@@ -4608,6 +4610,7 @@ const AIGenerationModal = ({
 const AppContent = () => {
   const { user, loading } = useAuth();
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => loadThemeMode());
+  const [viewportMode, setViewportMode] = useState<ViewportMode>(() => loadViewportMode());
   const [profile, setProfile] = useState<UiProfile>(() => loadUiProfile(user?.displayName || undefined, user?.photoURL || undefined));
 
   const [editingStory, setEditingStory] = useState<Story | null>(null);
@@ -4700,8 +4703,16 @@ const AppContent = () => {
     saveThemeMode(themeMode);
   }, [themeMode]);
 
+  useEffect(() => {
+    saveViewportMode(viewportMode);
+  }, [viewportMode]);
+
   const handleToggleTheme = () => {
     setThemeMode((prev) => (prev === 'dark' ? 'light' : 'dark'));
+  };
+
+  const handleToggleViewportMode = () => {
+    setViewportMode((prev) => (prev === 'desktop' ? 'mobile' : 'desktop'));
   };
 
   const handleTranslateStory = async (options: {
@@ -5419,8 +5430,9 @@ const AppContent = () => {
 
   return (
     <div className={cn(
-      "min-h-screen",
-      themeMode === 'dark' ? "night-bg text-slate-100" : "day-bg text-slate-900"
+      'app-shell min-h-screen',
+      viewportMode === 'mobile' ? 'app-shell--mobile' : 'app-shell--desktop',
+      themeMode === 'dark' ? 'night-bg text-slate-100' : 'day-bg text-slate-900'
     )}>
       <HelpModal isOpen={showHelp} onClose={() => setShowHelp(false)} />
       <AIGenerationModal 
@@ -5480,9 +5492,12 @@ const AppContent = () => {
         }}
         themeMode={themeMode}
         onToggleTheme={handleToggleTheme}
+        viewportMode={viewportMode}
+        onToggleViewportMode={handleToggleViewportMode}
         profile={profile}
       />
-      
+
+      <div className="app-shell__body">
       <AnimatePresence mode="wait">
         {selectedStory ? (
           <StoryDetail 
@@ -5502,7 +5517,6 @@ const AppContent = () => {
             key="api"
             section="api"
             onBack={() => setView('stories')}
-            onOpenApi={() => setView('api')}
             profile={profile}
             onSaveProfile={setProfile}
           />
@@ -5511,7 +5525,6 @@ const AppContent = () => {
             key="tools"
             section="tools"
             onBack={() => setView('stories')}
-            onOpenApi={() => setView('api')}
             profile={profile}
             onSaveProfile={setProfile}
           />
@@ -5608,6 +5621,7 @@ const AppContent = () => {
           </motion.div>
         )}
       </AnimatePresence>
+      </div>
 
       <AIContinueStoryModal 
         isOpen={showAIContinueModal}

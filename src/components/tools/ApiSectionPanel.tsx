@@ -164,7 +164,7 @@ export function ApiSectionPanel({
           </div>
           <div>
             <h3 className="text-xl font-serif font-bold">Kết nối AI</h3>
-            <p className="text-sm text-slate-500">Tách rõ khóa API, mã đăng nhập Google, máy chủ AI riêng và trạm trung chuyển để không bị lẫn cách dùng.</p>
+            <p className="text-sm text-slate-500">Chọn cách kết nối phù hợp rồi lưu lại để dùng nhanh ở các lần sau.</p>
           </div>
         </div>
 

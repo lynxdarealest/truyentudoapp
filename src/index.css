@@ -253,6 +253,85 @@
   gap: 0.75rem;
 }
 
+.app-shell {
+  transition: background-color 220ms ease, color 220ms ease;
+}
+
+.app-shell__body {
+  min-height: 100vh;
+}
+
+@media (min-width: 900px) {
+  .app-shell--mobile {
+    width: min(430px, calc(100vw - 24px));
+    margin: 0 auto;
+    position: relative;
+    box-shadow: 0 24px 80px rgba(15, 23, 42, 0.18);
+    border-left: 1px solid rgba(148, 163, 184, 0.2);
+    border-right: 1px solid rgba(148, 163, 184, 0.2);
+  }
+
+  .app-shell--mobile .app-shell__quick-rail {
+    display: none;
+  }
+
+  .app-shell--mobile nav.fixed {
+    left: 50%;
+    right: auto;
+    width: min(430px, calc(100vw - 24px));
+    transform: translateX(-50%);
+    border-bottom-left-radius: 24px;
+    border-bottom-right-radius: 24px;
+  }
+
+  .app-shell--mobile .app-shell__body {
+    width: 100%;
+  }
+
+  .app-shell--mobile .max-w-7xl,
+  .app-shell--mobile .max-w-6xl,
+  .app-shell--mobile .max-w-4xl {
+    max-width: 100% !important;
+  }
+
+  .app-shell--mobile .px-6 {
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
+  }
+
+  .app-shell--mobile .pt-32 {
+    padding-top: 6rem !important;
+  }
+
+  .app-shell--mobile .text-5xl {
+    font-size: 2.25rem !important;
+    line-height: 1.1 !important;
+  }
+
+  .app-shell--mobile .hero-action {
+    width: 100%;
+  }
+
+  .app-shell--mobile .md\:flex-row,
+  .app-shell--mobile .md\:items-end,
+  .app-shell--mobile .md\:items-center,
+  .app-shell--mobile .md\:justify-between {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    justify-content: flex-start !important;
+  }
+
+  .app-shell--mobile .md\:grid-cols-2,
+  .app-shell--mobile .md\:grid-cols-3,
+  .app-shell--mobile .md\:grid-cols-4,
+  .app-shell--mobile .md\:grid-cols-\[1fr_auto\],
+  .app-shell--mobile .md\:grid-cols-\[1fr_1fr\],
+  .app-shell--mobile .md\:grid-cols-\[1\.1fr_auto\],
+  .app-shell--mobile .xl\:grid-cols-\[1\.05fr_1\.35fr\] {
+    grid-template-columns: 1fr !important;
+  }
+}
+
 @media (min-width: 1200px) {
   .phase1-layout {
     grid-template-columns: 320px minmax(0, 1fr) 360px;
