@@ -41,6 +41,15 @@ export function Navbar({
   onToggleViewportMode,
   profile,
 }: NavbarProps) {
+  const computeAspectTag = () => {
+    const w = window.innerWidth || 1;
+    const h = window.innerHeight || 1;
+    const ratio = Math.max(w, h) / Math.min(w, h);
+    if (ratio >= 2.15) return 'tall'; // 19.5:9, 20:9
+    if (ratio >= 1.95) return 'mid'; // 18:9
+    if (ratio >= 1.74) return 'wide'; // 16:9
+    return 'standard';
+  };
   const navRef = useRef<HTMLElement | null>(null);
   const leftRef = useRef<HTMLDivElement | null>(null);
   const rightRef = useRef<HTMLDivElement | null>(null);
@@ -113,6 +122,7 @@ export function Navbar({
       if (navWidth < 600 || slack < -40) next = 'tiny';
       setNavDensity(next);
       navRef.current.dataset.density = next;
+      navRef.current.dataset.aspect = computeAspectTag();
     };
 
     updateDensity();
