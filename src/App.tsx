@@ -5616,7 +5616,12 @@ const AppContent = () => {
         { responseMimeType: "application/json" },
       );
 
-      const analysis = JSON.parse(analysisTextRaw || '{}');
+      const analysisParsed = tryParseJson<any>(analysisTextRaw || '', 'object');
+      const analysis = {
+        summary: String(analysisParsed?.summary || '').trim() || stripJsonFence(analysisTextRaw || '').trim(),
+        genre: String(analysisParsed?.genre || '').trim() || 'Dịch thuật',
+        characters: Array.isArray(analysisParsed?.characters) ? analysisParsed.characters : [],
+      };
       
       // 2. Create the story record
       let storyRef: ReturnType<typeof doc> | null = null;
@@ -5668,7 +5673,7 @@ const AppContent = () => {
           NỘI DUNG CẦN DỊCH:
           ${chunk}
           
-          Trả về JSON:
+          Trả về JSON (không bọc ```):
           {
             "title": "Tiêu đề chương (dịch sang tiếng Việt)",
             "content": "Nội dung chương đã dịch (Markdown)"
@@ -5690,11 +5695,16 @@ const AppContent = () => {
           },
         );
 
-        const translated = JSON.parse(translateTextRaw || '{}');
+        const translatedParsed = tryParseJson<any>(translateTextRaw || '', 'object');
+        const fallbackText = stripJsonFence(translateTextRaw || '').trim();
+        const translated = translatedParsed || {
+          title: `Chương ${i + 1}`,
+          content: fallbackText,
+        };
         translatedChapters.push({
           id: `tr-${Date.now()}-${i}`,
           title: String(translated.title || `Chương ${i + 1}`),
-          content: String(translated.content || ''),
+          content: String(translated.content || fallbackText || ''),
           order: i + 1,
           createdAt: Timestamp.now()
         });
