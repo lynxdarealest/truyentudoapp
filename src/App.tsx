@@ -5673,7 +5673,7 @@ const AppContent = () => {
           NỘI DUNG CẦN DỊCH:
           ${chunk}
           
-          Trả về JSON (không bọc ```):
+          Trả về JSON (không bọc bằng dấu 3 backtick):
           {
             "title": "Tiêu đề chương (dịch sang tiếng Việt)",
             "content": "Nội dung chương đã dịch (Markdown)"
