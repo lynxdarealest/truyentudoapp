@@ -316,12 +316,10 @@ export function Navbar({
               'h-10 rounded-full border flex items-center justify-center gap-2 px-3 transition-all duration-300',
               utilityButtonClass,
             )}
-            title={viewportModeValue === 'mobile' ? 'Chuyển sang bố cục máy tính' : 'Chuyển sang bố cục điện thoại'}
+            title="Chuyển sang bố cục điện thoại"
           >
-            {viewportModeValue === 'mobile' ? <Monitor className="w-4 h-4" /> : <Smartphone className="w-4 h-4" />}
-            <span className="hidden lg:inline text-xs font-bold">
-              {viewportModeValue === 'mobile' ? 'Máy tính' : 'Điện thoại'}
-            </span>
+            <Smartphone className="w-4 h-4" />
+            <span className="hidden lg:inline text-xs font-bold">Điện thoại</span>
           </button>
           <button
             onClick={onToggleTheme}
