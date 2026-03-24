@@ -464,6 +464,70 @@ function tryParseJson<T = unknown>(raw: string, prefer: 'array' | 'object' | 'an
   return null;
 }
 
+function extractJsonContent(raw: string): { title?: string; content?: string } | null {
+  const parsed = tryParseJson<Record<string, unknown>>(raw, 'object');
+  if (parsed && (parsed.title || parsed.content)) {
+    return {
+      title: typeof parsed.title === 'string' ? parsed.title : undefined,
+      content: typeof parsed.content === 'string' ? parsed.content : undefined,
+    };
+  }
+  const text = stripJsonFence(raw);
+  const contentMatch = text.match(/"content"\s*:\s*"([\s\S]*?)"\s*(?:,|\})/);
+  const titleMatch = text.match(/"title"\s*:\s*"([\s\S]*?)"\s*(?:,|\})/);
+  if (contentMatch?.[1]) {
+    const unescapeJson = (value: string) =>
+      value
+        .replace(/\\n/g, '\n')
+        .replace(/\\r/g, '\r')
+        .replace(/\\t/g, '\t')
+        .replace(/\\"/g, '"')
+        .replace(/\\\\/g, '\\');
+    return {
+      title: titleMatch?.[1] ? unescapeJson(titleMatch[1]) : undefined,
+      content: unescapeJson(contentMatch[1]),
+    };
+  }
+  return null;
+}
+
+function normalizeAiJsonContent(raw: string, fallbackTitle: string): { title: string; content: string } {
+  const extracted = extractJsonContent(raw);
+  const fallbackText = stripJsonFence(raw).trim();
+  return {
+    title: String(extracted?.title || fallbackTitle).trim() || fallbackTitle,
+    content: String(extracted?.content || fallbackText || '').trim(),
+  };
+}
+
+function splitTextForTranslation(text: string, maxChars: number): string[] {
+  const normalized = String(text || '').replace(/\r\n/g, '\n').trim();
+  if (!normalized) return [];
+  const chapterRegex = /(?=^第[0-9一二三四五六七八九十百千]+[章节回]|^Chương\s+\d+|^Chapter\s+\d+)/gim;
+  let chunks = normalized
+    .split(chapterRegex)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (chunks.length <= 1 || chunks.some((c) => c.length > maxChars * 1.2)) {
+    chunks = [];
+    let buffer = '';
+    const parts = normalized.split(/\n{2,}/);
+    for (const part of parts) {
+      const trimmed = part.trim();
+      if (!trimmed) continue;
+      const next = buffer ? `${buffer}\n\n${trimmed}` : trimmed;
+      if (next.length > maxChars) {
+        if (buffer) chunks.push(buffer.trim());
+        buffer = trimmed;
+      } else {
+        buffer = next;
+      }
+    }
+    if (buffer.trim()) chunks.push(buffer.trim());
+  }
+  return chunks;
+}
+
 function buildFallbackChapters(raw: string, targetCount: number): Array<{ title: string; content: string }> {
   const cleaned = stripJsonFence(raw);
   if (!cleaned) return [];
