@@ -742,6 +742,29 @@ function splitTextForTranslation(text: string, maxChars: number): string[] {
   return units.map((unit) => `${unit.title}\n${unit.source}`.trim());
 }
 
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  if (!items.length) return [];
+  const safeConcurrency = Math.max(1, Math.min(concurrency, items.length));
+  const results: R[] = new Array(items.length);
+  let cursor = 0;
+
+  const worker = async () => {
+    while (true) {
+      const currentIndex = cursor;
+      cursor += 1;
+      if (currentIndex >= items.length) return;
+      results[currentIndex] = await mapper(items[currentIndex], currentIndex);
+    }
+  };
+
+  await Promise.all(Array.from({ length: safeConcurrency }, () => worker()));
+  return results;
+}
+
 function countWords(text: string): number {
   return String(text || '')
     .trim()
@@ -6199,6 +6222,7 @@ const AppContent = () => {
 
     try {
       const ai = createGeminiClient();
+      const translateStartedAt = Date.now();
       
       let dictionaryContext = "";
       if (options.useDictionary) {
@@ -6223,21 +6247,31 @@ const AppContent = () => {
         }
       }
 
+      const sourceWordCount = countWords(translateFileContent);
+      const turboMode = sourceWordCount >= 3200;
+      const segmentCharLimit = turboMode ? 5200 : 3200;
+      const translationKind: 'fast' | 'quality' = turboMode ? 'fast' : 'quality';
+      const analysisKind: 'fast' | 'quality' = turboMode ? 'fast' : 'quality';
+      const translationConcurrency = turboMode ? 2 : 1;
       const detectedSections = detectChapterSections(translateFileContent);
-      const translationUnits = buildChapterTranslationUnits(translateFileContent, 3200);
+      const translationUnits = buildChapterTranslationUnits(translateFileContent, segmentCharLimit);
       const effectiveUnits = translationUnits.length
         ? translationUnits
         : [{
             title: 'Chương 1',
             source: String(translateFileContent || '').trim(),
-            segments: splitLargeTextByParagraphs(String(translateFileContent || '').trim(), 3200),
+            segments: splitLargeTextByParagraphs(String(translateFileContent || '').trim(), segmentCharLimit),
           }];
       const totalSegments =
         effectiveUnits.reduce((acc, unit) => acc + unit.segments.filter((segment) => segment.trim().length >= 30).length, 0) ||
         effectiveUnits.length;
 
-      if (detectedSections.length >= 2) {
+      if (detectedSections.length >= 2 && turboMode) {
+        setAILoadingMessage(`Đã nhận diện ${effectiveUnits.length} chương. Bật chế độ dịch nhanh, đang phân tích nội dung...`);
+      } else if (detectedSections.length >= 2) {
         setAILoadingMessage(`Đã nhận diện ${effectiveUnits.length} chương. Đang phân tích nội dung gốc...`);
+      } else if (turboMode) {
+        setAILoadingMessage("File lớn nên hệ thống bật chế độ dịch nhanh và tự chia đoạn. Đang phân tích nội dung...");
       } else {
         setAILoadingMessage("Chưa thấy mốc chương rõ ràng, hệ thống sẽ tự chia đoạn. Đang phân tích nội dung...");
       }
@@ -6263,13 +6297,13 @@ const AppContent = () => {
 
       const analysisTextRaw = await generateGeminiText(
         ai,
-        'quality',
+        analysisKind,
         analysisPrompt,
         {
           responseMimeType: "application/json",
-          maxOutputTokens: 2600,
-          minOutputChars: 200,
-          maxRetries: 2,
+          maxOutputTokens: turboMode ? 1500 : 2600,
+          minOutputChars: turboMode ? 120 : 200,
+          maxRetries: turboMode ? 1 : 2,
         },
       );
 
@@ -6306,18 +6340,16 @@ const AppContent = () => {
 
       // 3. Split content into chapters/chunks and translate
       const maxTranslateChunks = effectiveUnits.length;
-      const translatedChapters: Chapter[] = [];
       let processedSegments = 0;
 
       const adultContentInstruction = options.isAdult 
         ? "CHẾ ĐỘ 18+ KHÔNG GIỚI HẠN: Bạn là một dịch giả chuyên nghiệp. Bạn ĐƯỢC PHÉP và NÊN dịch các nội dung nhạy cảm, bạo lực, tình dục một cách CHI TIẾT và TRẦN TRỤI. Tuyệt đối không được né tránh hoặc tóm tắt."
         : "CHẾ ĐỘ BÌNH THƯỜNG: Tuyệt đối không dịch nội dung khiêu dâm hoặc bạo lực cực đoan.";
 
-      for (let i = 0; i < maxTranslateChunks; i++) {
-        const unit = effectiveUnits[i];
+      const chapterResults = await mapWithConcurrency(effectiveUnits, translationConcurrency, async (unit, chapterIndex) => {
         const sourceSegments = unit.segments.length ? unit.segments : [unit.source];
         const translatedSegments: string[] = [];
-        let translatedTitle = String(unit.title || `Chương ${i + 1}`).trim() || `Chương ${i + 1}`;
+        let translatedTitle = String(unit.title || `Chương ${chapterIndex + 1}`).trim() || `Chương ${chapterIndex + 1}`;
 
         for (let segmentIndex = 0; segmentIndex < sourceSegments.length; segmentIndex++) {
           const segment = sourceSegments[segmentIndex];
@@ -6325,9 +6357,10 @@ const AppContent = () => {
           processedSegments += 1;
 
           setAILoadingMessage(
-            `Đang dịch chương ${i + 1}/${maxTranslateChunks} (${segmentIndex + 1}/${sourceSegments.length}) - tiến độ ${processedSegments}/${totalSegments}...`
+            `Đang dịch chương ${chapterIndex + 1}/${maxTranslateChunks} (${segmentIndex + 1}/${sourceSegments.length}) - tiến độ ${processedSegments}/${totalSegments}${turboMode ? ' [Turbo]' : ''}...`
           );
           
+          const includeTitleField = segmentIndex === 0;
           const translatePrompt = `
             Bạn là một dịch giả văn học cao cấp, chuyên dịch truyện từ tiếng Trung sang tiếng Việt.
             Hãy dịch toàn bộ đoạn sau sang tiếng Việt mượt mà, thuần Việt, giữ đúng nghĩa và phong thái bản gốc.
@@ -6343,22 +6376,26 @@ const AppContent = () => {
             
             Trả về JSON (không bọc bằng dấu 3 backtick):
             {
-              "title": "Tiêu đề chương (dịch sang tiếng Việt)",
+              ${includeTitleField ? '"title": "Tiêu đề chương (dịch sang tiếng Việt)",' : '"title": "",'}
               "content": "Nội dung phần đã dịch (Markdown)"
             }
           `;
 
-          const dynamicMaxTokens = Math.min(16384, Math.max(3200, Math.round(segment.length * 1.7)));
-          const dynamicMinChars = Math.max(240, Math.round(segment.length * 0.22));
+          const dynamicMaxTokens = turboMode
+            ? Math.min(10240, Math.max(2400, Math.round(segment.length * 1.2)))
+            : Math.min(16384, Math.max(3200, Math.round(segment.length * 1.7)));
+          const dynamicMinChars = turboMode
+            ? Math.max(160, Math.round(segment.length * 0.15))
+            : Math.max(240, Math.round(segment.length * 0.22));
           const translateTextRaw = await generateGeminiText(
             ai,
-            'quality',
+            translationKind,
             translatePrompt,
             { 
               responseMimeType: "application/json",
               maxOutputTokens: dynamicMaxTokens,
               minOutputChars: dynamicMinChars,
-              maxRetries: 2,
+              maxRetries: turboMode ? 1 : 2,
               safetySettings: [
                 { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
                 { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -6368,12 +6405,15 @@ const AppContent = () => {
             },
           );
 
-          let translated = normalizeAiJsonContent(translateTextRaw || '', translatedTitle || `Chương ${i + 1}`);
-          if (translated.content.length < Math.max(180, Math.round(dynamicMinChars * 0.7))) {
+          let translated = normalizeAiJsonContent(translateTextRaw || '', translatedTitle || `Chương ${chapterIndex + 1}`);
+          const shortThreshold = turboMode
+            ? Math.max(120, Math.round(dynamicMinChars * 0.55))
+            : Math.max(180, Math.round(dynamicMinChars * 0.7));
+          if (translated.content.length < shortThreshold) {
             const retryPrompt = `${translatePrompt}\n\nYÊU CẦU BẮT BUỘC: Bản dịch trước quá ngắn. Hãy dịch đầy đủ toàn bộ đoạn nguồn, không tóm tắt, không rút gọn.`;
-            const retryRaw = await generateGeminiText(ai, 'quality', retryPrompt, {
+            const retryRaw = await generateGeminiText(ai, turboMode ? 'quality' : translationKind, retryPrompt, {
               responseMimeType: "application/json",
-              maxOutputTokens: Math.min(16384, Math.round(dynamicMaxTokens * 1.4)),
+              maxOutputTokens: Math.min(16384, Math.round(dynamicMaxTokens * 1.35)),
               minOutputChars: Math.round(dynamicMinChars * 1.1),
               maxRetries: 1,
               safetySettings: [
@@ -6383,7 +6423,7 @@ const AppContent = () => {
                 { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE }
               ]
             });
-            const retried = normalizeAiJsonContent(retryRaw || '', translatedTitle || `Chương ${i + 1}`);
+            const retried = normalizeAiJsonContent(retryRaw || '', translatedTitle || `Chương ${chapterIndex + 1}`);
             if (retried.content.length > translated.content.length) translated = retried;
           }
 
@@ -6397,16 +6437,17 @@ const AppContent = () => {
         }
 
         const mergedChapterContent = translatedSegments.join('\n\n').trim();
-        if (!mergedChapterContent) continue;
+        if (!mergedChapterContent) return null;
 
-        translatedChapters.push({
-          id: `tr-${Date.now()}-${i}`,
+        return {
+          id: `tr-${Date.now()}-${chapterIndex}`,
           title: translatedTitle,
           content: mergedChapterContent,
-          order: i + 1,
+          order: chapterIndex + 1,
           createdAt: Timestamp.now()
-        });
-      }
+        } as Chapter;
+      });
+      const translatedChapters = chapterResults.filter((chapter): chapter is Chapter => Boolean(chapter));
 
       if (!translatedChapters.length) {
         throw new Error('Không thể nhận diện nội dung hợp lệ để dịch. Vui lòng kiểm tra lại file nguồn.');
@@ -6447,7 +6488,8 @@ const AppContent = () => {
       storage.saveStories([newStory, ...stories]);
       bumpStoriesVersion();
 
-      alert(`Đã dịch thành công ${translatedChapters.length} chương (${processedSegments} phân đoạn).`);
+      const elapsedSeconds = Math.max(1, Math.round((Date.now() - translateStartedAt) / 1000));
+      alert(`Đã dịch thành công ${translatedChapters.length} chương (${processedSegments} phân đoạn) trong ${elapsedSeconds}s${turboMode ? ' [Turbo]' : ''}.`);
       setView('stories');
     } catch (error) {
       console.error("Lỗi khi dịch truyện:", error);
