@@ -788,6 +788,35 @@ async function probeImageUrl(url: string, timeoutMs = 18000): Promise<boolean> {
   });
 }
 
+function buildFallbackCoverDataUrl(title: string, genre: string, prompt: string): string {
+  const safeTitle = String(title || 'Untitled Story').slice(0, 64);
+  const safeGenre = String(genre || 'Fiction').slice(0, 32);
+  const safeHint = String(prompt || '').replace(/\s+/g, ' ').slice(0, 78);
+  const svg = `
+<svg xmlns="http://www.w3.org/2000/svg" width="896" height="1344" viewBox="0 0 896 1344">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0f766e"/>
+      <stop offset="55%" stop-color="#1f2937"/>
+      <stop offset="100%" stop-color="#c2410c"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="rgba(255,255,255,0.25)"/>
+      <stop offset="100%" stop-color="rgba(255,255,255,0.05)"/>
+    </linearGradient>
+  </defs>
+  <rect width="896" height="1344" fill="url(#bg)"/>
+  <circle cx="760" cy="160" r="220" fill="rgba(255,255,255,0.14)"/>
+  <circle cx="130" cy="1140" r="250" fill="rgba(255,255,255,0.08)"/>
+  <rect x="70" y="70" width="756" height="1204" rx="38" fill="url(#glass)" stroke="rgba(255,255,255,0.35)" stroke-width="2"/>
+  <text x="110" y="220" fill="#ffffff" opacity="0.9" font-family="Georgia, serif" font-size="36" letter-spacing="4">${safeGenre.toUpperCase()}</text>
+  <text x="110" y="520" fill="#ffffff" font-family="Georgia, serif" font-weight="700" font-size="84">${safeTitle}</text>
+  <text x="110" y="1100" fill="#ffffff" opacity="0.85" font-family="Verdana, sans-serif" font-size="24">${safeHint}</text>
+</svg>`;
+  const encodedSvg = window.btoa(unescape(encodeURIComponent(svg)));
+  return `data:image/svg+xml;base64,${encodedSvg}`;
+}
+
 async function mapWithConcurrency<T, R>(
   items: T[],
   concurrency: number,
@@ -3989,23 +4018,78 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
         alert('Không đủ dữ liệu để tạo ảnh bìa.');
         return;
       }
-      const seed = Math.floor(Math.random() * 1000000000);
-      const encoded = encodeURIComponent(prompt);
-      const candidates = [
-        `https://image.pollinations.ai/prompt/${encoded}?width=896&height=1344&seed=${seed}&nologo=true&enhance=true&model=flux`,
-        `https://image.pollinations.ai/prompt/${encoded}?width=896&height=1344&seed=${seed}&nologo=true&enhance=true`,
-        `https://image.pollinations.ai/prompt/${encoded}?width=768&height=1152&seed=${seed}&nologo=true`,
-      ];
       let imageUrl = '';
-      for (const candidate of candidates) {
-        const ok = await probeImageUrl(candidate, 18000);
-        if (ok) {
-          imageUrl = candidate;
-          break;
+
+      // Try OpenAI image API first when user is configured with OpenAI/custom endpoint.
+      try {
+        const ai = createGeminiClient();
+        if ((ai.provider === 'openai' || ai.provider === 'custom') && ai.apiKey.trim()) {
+          const openAiBase = ai.baseUrl || getProviderBaseUrl(ai.provider === 'custom' ? 'custom' : 'openai');
+          const imageEndpoint = /\/images\/generations$/i.test(openAiBase)
+            ? openAiBase
+            : `${openAiBase.replace(/\/chat\/completions$/i, '').replace(/\/+$/, '')}/images/generations`;
+          const model = /gpt-image|dall-e/i.test(ai.model) ? ai.model : 'gpt-image-1';
+          const resp = await fetchWithTimeout(imageEndpoint, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${ai.apiKey}`,
+            },
+            body: JSON.stringify({
+              model,
+              prompt,
+              size: '1024x1536',
+            }),
+          }, 50000);
+          if (resp.ok) {
+            const data = await resp.json();
+            const url = String(data?.data?.[0]?.url || '').trim();
+            const b64 = String(data?.data?.[0]?.b64_json || '').trim();
+            if (url) {
+              imageUrl = url;
+            } else if (b64) {
+              imageUrl = `data:image/png;base64,${b64}`;
+            }
+          }
+        }
+      } catch (error) {
+        console.warn('OpenAI image generation not available, fallback to public image service.', error);
+      }
+
+      // Fallback to public AI image service.
+      if (!imageUrl) {
+        const seed = Math.floor(Math.random() * 1000000000);
+        const encoded = encodeURIComponent(prompt);
+        const buildCandidates = (offset: number) => ([
+          `https://image.pollinations.ai/prompt/${encoded}?width=896&height=1344&seed=${seed + offset}&nologo=true&enhance=true&model=flux`,
+          `https://image.pollinations.ai/prompt/${encoded}?width=896&height=1344&seed=${seed + offset}&nologo=true&enhance=true&model=turbo`,
+          `https://image.pollinations.ai/prompt/${encoded}?width=768&height=1152&seed=${seed + offset}&nologo=true&model=sdxl`,
+          `https://image.pollinations.ai/prompt/${encoded}?width=768&height=1152&seed=${seed + offset}&nologo=true`,
+        ]);
+
+        for (let attempt = 0; attempt < 3 && !imageUrl; attempt += 1) {
+          const candidates = buildCandidates(attempt * 97);
+          for (const candidate of candidates) {
+            const ok = await probeImageUrl(candidate, 45000);
+            if (ok) {
+              imageUrl = candidate;
+              break;
+            }
+          }
+          if (!imageUrl && attempt < 2) {
+            await sleepMs(1200 * (attempt + 1));
+          }
         }
       }
+
       if (!imageUrl) {
-        throw new Error('Dịch vụ ảnh AI đang bận hoặc tạm thời không phản hồi.');
+        const fallbackCover = buildFallbackCoverDataUrl(title, genre, prompt);
+        setCoverImageUrl(fallbackCover);
+        if (!coverPrompt.trim()) {
+          setCoverPrompt(prompt);
+        }
+        alert('Dịch vụ ảnh AI đang bận, hệ thống đã tạo bìa dự phòng để bạn dùng ngay. Bạn có thể bấm tạo lại sau 1-2 phút để lấy bìa AI.');
+        return;
       }
       setCoverImageUrl(imageUrl);
       if (!coverPrompt.trim()) {
