@@ -17,8 +17,14 @@ const normalizeChapters = (chapters: any[]) =>
     createdAt: normalizeDate(chapter?.createdAt),
   }));
 
+const normalizeCoverImageUrl = (value: any) => {
+  if (typeof value !== 'string') return '';
+  return value.trim();
+};
+
 const normalizeStory = (story: any) => ({
   ...story,
+  coverImageUrl: normalizeCoverImageUrl(story?.coverImageUrl),
   createdAt: normalizeDate(story?.createdAt),
   updatedAt: normalizeDate(story?.updatedAt),
   chapters: normalizeChapters(story?.chapters),

@@ -545,76 +545,201 @@ function normalizeAiJsonContent(raw: string, fallbackTitle: string): { title: st
   };
 }
 
-function splitTextForTranslation(text: string, maxChars: number): string[] {
+interface DetectedChapterSection {
+  title: string;
+  content: string;
+}
+
+interface ChapterTranslationUnit {
+  title: string;
+  source: string;
+  segments: string[];
+}
+
+const CHAPTER_HEADING_PATTERNS: RegExp[] = [
+  /^(?:#{1,6}\s*)?第\s*[0-9０-９一二三四五六七八九十百千万兩两零〇IVXLCDMivxlcdm]+\s*[章节回卷部集篇](?:\s*[:：\-—.．、]\s*.*)?$/,
+  /^(?:#{1,6}\s*)?(?:chương|chuong)\s*[0-9ivxlcdm]+(?:\s*[:：\-—.．、]\s*.*)?$/i,
+  /^(?:#{1,6}\s*)?chapter\s*[0-9ivxlcdm]+(?:\s*[:：\-—.．、]\s*.*)?$/i,
+  /^(?:#{1,6}\s*)?(?:quyển|quyen|volume|vol\.)\s*[0-9ivxlcdm]+(?:\s*[:：\-—.．、]\s*.*)?$/i,
+];
+
+function cleanChapterHeading(rawLine: string): string {
+  return String(rawLine || '')
+    .replace(/^#+\s*/, '')
+    .replace(/^[\[\(【「『]\s*/, '')
+    .replace(/\s*[\]\)】」』]\s*$/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isChapterHeadingLine(line: string): boolean {
+  const cleaned = cleanChapterHeading(line);
+  if (!cleaned || cleaned.length > 140) return false;
+  return CHAPTER_HEADING_PATTERNS.some((pattern) => pattern.test(cleaned));
+}
+
+function splitLargeTextByParagraphs(text: string, maxChars: number): string[] {
   const normalized = String(text || '').replace(/\r\n/g, '\n').trim();
   if (!normalized) return [];
-  const chapterRegex = /(?=^第[0-9一二三四五六七八九十百千]+[章节回]|^Chương\s+\d+|^Chapter\s+\d+)/gim;
-  let chunks = normalized
-    .split(chapterRegex)
-    .map((p) => p.trim())
-    .filter(Boolean);
-  if (chunks.length <= 1 || chunks.some((c) => c.length > maxChars * 1.2)) {
-    chunks = [];
-    let buffer = '';
-    const parts = normalized.split(/\n{2,}/);
-    const pushSegment = (segment: string) => {
-      const trimmed = segment.trim();
-      if (!trimmed) return;
-      if (trimmed.length <= maxChars) {
-        chunks.push(trimmed);
-        return;
-      }
-      const sentences = trimmed
-        .split(/(?<=[.!?。！？])\s+/)
-        .map((s) => s.trim())
-        .filter(Boolean);
-      if (!sentences.length) {
-        for (let i = 0; i < trimmed.length; i += maxChars) {
-          chunks.push(trimmed.slice(i, i + maxChars).trim());
-        }
-        return;
-      }
-      let sentenceBuffer = '';
-      for (const sentence of sentences) {
-        const nextSentence = sentenceBuffer ? `${sentenceBuffer} ${sentence}` : sentence;
-        if (nextSentence.length > maxChars) {
-          if (sentenceBuffer) chunks.push(sentenceBuffer.trim());
-          if (sentence.length > maxChars) {
-            for (let i = 0; i < sentence.length; i += maxChars) {
-              chunks.push(sentence.slice(i, i + maxChars).trim());
-            }
-            sentenceBuffer = '';
-          } else {
-            sentenceBuffer = sentence;
-          }
-        } else {
-          sentenceBuffer = nextSentence;
-        }
-      }
-      if (sentenceBuffer.trim()) chunks.push(sentenceBuffer.trim());
-    };
+  const chunks: string[] = [];
+  let buffer = '';
+  const parts = normalized.split(/\n{2,}/);
 
-    for (const part of parts) {
-      const trimmed = part.trim();
-      if (!trimmed) continue;
-      const next = buffer ? `${buffer}\n\n${trimmed}` : trimmed;
-      if (next.length > maxChars) {
-        if (buffer) {
-          chunks.push(buffer.trim());
-          buffer = '';
-        }
-        if (trimmed.length > maxChars) {
-          pushSegment(trimmed);
+  const pushSegment = (segment: string) => {
+    const trimmed = segment.trim();
+    if (!trimmed) return;
+    if (trimmed.length <= maxChars) {
+      chunks.push(trimmed);
+      return;
+    }
+
+    const sentences = trimmed
+      .split(/(?<=[.!?。！？])\s+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    if (!sentences.length) {
+      for (let i = 0; i < trimmed.length; i += maxChars) {
+        chunks.push(trimmed.slice(i, i + maxChars).trim());
+      }
+      return;
+    }
+
+    let sentenceBuffer = '';
+    for (const sentence of sentences) {
+      const nextSentence = sentenceBuffer ? `${sentenceBuffer} ${sentence}` : sentence;
+      if (nextSentence.length > maxChars) {
+        if (sentenceBuffer) chunks.push(sentenceBuffer.trim());
+        if (sentence.length > maxChars) {
+          for (let i = 0; i < sentence.length; i += maxChars) {
+            chunks.push(sentence.slice(i, i + maxChars).trim());
+          }
+          sentenceBuffer = '';
         } else {
-          buffer = trimmed;
+          sentenceBuffer = sentence;
         }
       } else {
-        buffer = next;
+        sentenceBuffer = nextSentence;
       }
     }
-    if (buffer.trim()) chunks.push(buffer.trim());
+    if (sentenceBuffer.trim()) chunks.push(sentenceBuffer.trim());
+  };
+
+  for (const part of parts) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    const next = buffer ? `${buffer}\n\n${trimmed}` : trimmed;
+    if (next.length > maxChars) {
+      if (buffer) {
+        chunks.push(buffer.trim());
+        buffer = '';
+      }
+      if (trimmed.length > maxChars) {
+        pushSegment(trimmed);
+      } else {
+        buffer = trimmed;
+      }
+    } else {
+      buffer = next;
+    }
   }
-  return chunks;
+  if (buffer.trim()) chunks.push(buffer.trim());
+  return chunks.filter(Boolean);
+}
+
+function detectChapterSections(text: string): DetectedChapterSection[] {
+  const normalized = String(text || '').replace(/\r\n/g, '\n').trim();
+  if (!normalized) return [];
+
+  const lines = normalized.split('\n');
+  const markers: Array<{ index: number; title: string }> = [];
+
+  lines.forEach((line, index) => {
+    if (!isChapterHeadingLine(line)) return;
+    const title = cleanChapterHeading(line);
+    if (!title) return;
+    const prev = markers[markers.length - 1];
+    if (prev && index - prev.index <= 1 && prev.title.toLowerCase() === title.toLowerCase()) return;
+    markers.push({ index, title });
+  });
+
+  if (!markers.length) return [];
+
+  const sections: DetectedChapterSection[] = [];
+  if (markers[0].index > 0) {
+    const intro = lines.slice(0, markers[0].index).join('\n').trim();
+    if (intro.length >= 180) {
+      sections.push({ title: 'Mở đầu', content: intro });
+    }
+  }
+
+  for (let i = 0; i < markers.length; i++) {
+    const current = markers[i];
+    const next = markers[i + 1];
+    const content = lines
+      .slice(current.index + 1, next ? next.index : lines.length)
+      .join('\n')
+      .trim();
+    if (!content) continue;
+    sections.push({
+      title: current.title || `Chương ${i + 1}`,
+      content,
+    });
+  }
+
+  if (!sections.length) {
+    const single = markers[0];
+    const content = lines.slice(single.index + 1).join('\n').trim();
+    return content ? [{ title: single.title || 'Chương 1', content }] : [];
+  }
+
+  const meaningfulSections = sections.filter((section) => section.content.length >= 80).length;
+  if (markers.length >= 2 && meaningfulSections < Math.max(1, Math.floor(markers.length * 0.5))) {
+    return [];
+  }
+
+  return sections;
+}
+
+function buildChapterTranslationUnits(sourceText: string, maxCharsPerSegment: number): ChapterTranslationUnit[] {
+  const normalizedSource = String(sourceText || '').replace(/\r\n/g, '\n').trim();
+  if (!normalizedSource) return [];
+
+  const detected = detectChapterSections(normalizedSource);
+  const baseSections: DetectedChapterSection[] = detected.length
+    ? detected
+    : [{ title: 'Chương 1', content: normalizedSource }];
+
+  return baseSections
+    .map((section, index) => {
+      const source = String(section.content || '').trim();
+      if (!source) return null;
+      const segments = splitLargeTextByParagraphs(source, maxCharsPerSegment);
+      return {
+        title: String(section.title || `Chương ${index + 1}`).trim() || `Chương ${index + 1}`,
+        source,
+        segments: (segments.length ? segments : [source]).filter((segment) => segment.trim().length >= 20),
+      };
+    })
+    .filter((unit): unit is ChapterTranslationUnit => Boolean(unit));
+}
+
+function buildAnalysisExcerpt(rawText: string, units: ChapterTranslationUnit[]): string {
+  if (!units.length) return String(rawText || '').substring(0, 14000);
+  const excerpt = units
+    .slice(0, 5)
+    .map((unit, idx) => {
+      const title = unit.title || `Chương ${idx + 1}`;
+      return `[${title}]\n${unit.source.substring(0, 2000)}`;
+    })
+    .join('\n\n');
+  return excerpt.substring(0, 14000);
+}
+
+function splitTextForTranslation(text: string, maxChars: number): string[] {
+  const units = buildChapterTranslationUnits(text, maxChars);
+  if (!units.length) return [];
+  return units.map((unit) => `${unit.title}\n${unit.source}`.trim());
 }
 
 function countWords(text: string): number {
@@ -1070,6 +1195,7 @@ interface Story {
   authorId: string;
   title: string;
   content: string;
+  coverImageUrl?: string;
   type?: 'original' | 'translated' | 'continued';
   genre?: string;
   introduction?: string;
@@ -3619,12 +3745,88 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
   const [genre, setGenre] = useState(story?.genre || '');
   const [introduction, setIntroduction] = useState(story?.introduction || '');
   const [content, setContent] = useState(story?.content || '');
+  const [coverImageUrl, setCoverImageUrl] = useState(story?.coverImageUrl || '');
+  const [coverPrompt, setCoverPrompt] = useState('');
   const [expectedChapters, setExpectedChapters] = useState(story?.expectedChapters || 0);
   const [expectedWordCount, setExpectedWordCount] = useState(story?.expectedWordCount || 0);
   const [isPublic, setIsPublic] = useState(story?.isPublic ?? false);
   const [isAdult, setIsAdult] = useState(story?.isAdult ?? false);
   const [preview, setPreview] = useState(false);
   const [isSuggesting, setIsSuggesting] = useState(false);
+  const [isGeneratingCover, setIsGeneratingCover] = useState(false);
+  const coverInputRef = useRef<HTMLInputElement>(null);
+
+  const buildCoverPrompt = () => {
+    const intro = String(introduction || '').replace(/\s+/g, ' ').trim().slice(0, 220);
+    const promptParts = [
+      title ? `Bìa truyện "${title}"` : 'Bìa truyện fantasy',
+      genre ? `thể loại ${genre}` : 'văn học hiện đại',
+      intro ? `bối cảnh: ${intro}` : '',
+      'illustration, cinematic, high detail, dramatic lighting, vertical book cover, no text, no watermark',
+    ];
+    return promptParts.filter(Boolean).join(', ');
+  };
+
+  const handlePickCoverFile = () => {
+    coverInputRef.current?.click();
+  };
+
+  const handleCoverFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      alert('Chỉ hỗ trợ file ảnh (png, jpg, webp...).');
+      event.target.value = '';
+      return;
+    }
+    const maxSize = 3 * 1024 * 1024;
+    if (file.size > maxSize) {
+      alert('Ảnh quá lớn. Vui lòng chọn ảnh nhỏ hơn 3MB.');
+      event.target.value = '';
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const value = String(reader.result || '').trim();
+      if (!value) {
+        alert('Không đọc được file ảnh.');
+        return;
+      }
+      setCoverImageUrl(value);
+    };
+    reader.onerror = () => {
+      alert('Đọc file ảnh thất bại.');
+    };
+    reader.readAsDataURL(file);
+    event.target.value = '';
+  };
+
+  const handleGenerateCover = async () => {
+    if (!title.trim()) {
+      alert('Hãy nhập tiêu đề truyện trước khi tạo ảnh bìa.');
+      return;
+    }
+    setIsGeneratingCover(true);
+    try {
+      const prompt = String(coverPrompt || buildCoverPrompt()).trim();
+      if (!prompt) {
+        alert('Không đủ dữ liệu để tạo ảnh bìa.');
+        return;
+      }
+      const seed = Math.floor(Math.random() * 1000000000);
+      const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=896&height=1344&seed=${seed}&nologo=true&enhance=true&model=flux`;
+      setCoverImageUrl(imageUrl);
+      if (!coverPrompt.trim()) {
+        setCoverPrompt(prompt);
+      }
+    } catch (error) {
+      console.error('Không thể tạo ảnh bìa AI', error);
+      alert('Tạo ảnh bìa thất bại, vui lòng thử lại.');
+    } finally {
+      setIsGeneratingCover(false);
+    }
+  };
 
   const handleSuggestIdeas = async () => {
     if (!title || !genre || !introduction) {
@@ -3713,7 +3915,7 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
             {isPublic ? 'Công khai' : 'Riêng tư'}
           </button>
           <button 
-            onClick={() => onSave({ title, genre, introduction, content, expectedChapters, expectedWordCount, isPublic, isAdult })}
+            onClick={() => onSave({ title, genre, introduction, content, coverImageUrl: coverImageUrl.trim() || undefined, expectedChapters, expectedWordCount, isPublic, isAdult })}
             disabled={!title}
             className="flex items-center gap-2 px-6 py-2 rounded-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white transition-colors text-sm font-medium shadow-md"
           >
@@ -3762,6 +3964,78 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
             </div>
           </div>
 
+          <div className="space-y-3">
+            <label className="text-xs font-bold text-slate-400 uppercase tracking-widest">Ảnh bìa truyện</label>
+            <input
+              ref={coverInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleCoverFileChange}
+              className="hidden"
+            />
+            <div className="rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="flex flex-col md:flex-row gap-4">
+                <div className="w-full md:w-40 aspect-[2/3] rounded-xl bg-slate-100 border border-slate-200 overflow-hidden flex items-center justify-center">
+                  {coverImageUrl ? (
+                    <img
+                      src={coverImageUrl}
+                      alt="Ảnh bìa truyện"
+                      className="w-full h-full object-cover"
+                      loading="lazy"
+                    />
+                  ) : (
+                    <div className="text-center text-slate-400 px-3">
+                      <ImagePlus className="w-6 h-6 mx-auto mb-2" />
+                      <p className="text-xs font-semibold">Chưa có ảnh bìa</p>
+                    </div>
+                  )}
+                </div>
+                <div className="flex-1 space-y-3">
+                  <input
+                    type="url"
+                    value={coverImageUrl}
+                    onChange={(e) => setCoverImageUrl(e.target.value)}
+                    placeholder="Dán URL ảnh bìa (https://...)"
+                    className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
+                  />
+                  <textarea
+                    value={coverPrompt}
+                    onChange={(e) => setCoverPrompt(e.target.value)}
+                    placeholder="Prompt ảnh bìa (tùy chọn). Bỏ trống để tự tạo từ tiêu đề/thể loại."
+                    className="w-full min-h-[88px] rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 resize-none"
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={handlePickCoverFile}
+                      className="px-4 py-2 rounded-xl border border-slate-200 text-sm font-semibold hover:bg-slate-50"
+                    >
+                      Tải ảnh lên
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleGenerateCover}
+                      disabled={isGeneratingCover}
+                      className="px-4 py-2 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 disabled:opacity-60 flex items-center gap-2"
+                    >
+                      {isGeneratingCover ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                      Tạo bìa bằng AI
+                    </button>
+                    {coverImageUrl && (
+                      <button
+                        type="button"
+                        onClick={() => setCoverImageUrl('')}
+                        className="px-4 py-2 rounded-xl border border-rose-200 text-rose-600 text-sm font-semibold hover:bg-rose-50"
+                      >
+                        Xóa ảnh bìa
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div className="space-y-2">
             <label className="text-xs font-bold text-slate-400 uppercase tracking-widest">Giới thiệu ngắn</label>
             <textarea 
@@ -3795,6 +4069,16 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
       ) : (
         <div className="prose prose-slate max-w-none">
           <div className="mb-8">
+            {coverImageUrl && (
+              <div className="mb-6 max-w-sm">
+                <img
+                  src={coverImageUrl}
+                  alt={`Bìa truyện ${title || ''}`}
+                  className="w-full aspect-[2/3] object-cover rounded-2xl border border-slate-200 shadow-sm"
+                  loading="lazy"
+                />
+              </div>
+            )}
             <span className="text-indigo-600 font-bold uppercase tracking-wider text-sm">{genre || 'Chưa phân loại'}</span>
             <h1 className="font-serif text-4xl mt-2 mb-4">{title || 'Chưa có tiêu đề'}</h1>
             <div className="markdown-body italic text-slate-500 border-l-4 border-slate-200 pl-4">
@@ -4131,26 +4415,40 @@ const StoryDetail = ({
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2 space-y-8">
           <div className="bg-white p-8 rounded-[32px] border border-slate-100 shadow-sm">
-            <div className="flex items-center gap-2 mb-4">
-              <span className="px-3 py-1 bg-indigo-50 text-indigo-600 text-xs font-bold rounded-full uppercase tracking-wider">
-                {story.genre || 'Chưa phân loại'}
-              </span>
-              {story.isAdult && (
-                <span className="px-3 py-1 bg-red-100 text-red-600 text-[10px] font-black rounded-full uppercase tracking-tighter flex items-center gap-1 border border-red-200">
-                  <AlertTriangle className="w-3 h-3" /> 18+
-                </span>
+            <div className="flex flex-col md:flex-row gap-6">
+              {story.coverImageUrl && (
+                <div className="w-full md:w-52 flex-shrink-0">
+                  <img
+                    src={story.coverImageUrl}
+                    alt={`Bìa truyện ${story.title}`}
+                    className="w-full aspect-[2/3] object-cover rounded-2xl border border-slate-200 shadow-sm"
+                    loading="lazy"
+                  />
+                </div>
               )}
-              <span className="text-slate-400 text-xs font-mono">
-                {story.chapters?.length || 0} / {story.expectedChapters || '?'} chương
-              </span>
-            </div>
-            <h1 className="text-4xl font-serif font-bold text-slate-900 mb-6">{story.title}</h1>
-            
-            <div className="space-y-6">
-              <div>
-                <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-3">Giới thiệu</h3>
-                <div className="markdown-body text-slate-600 leading-relaxed">
-                  <ReactMarkdown>{formatContent(story.introduction || '*Chưa có giới thiệu*')}</ReactMarkdown>
+              <div className="flex-1">
+                <div className="flex items-center gap-2 mb-4 flex-wrap">
+                  <span className="px-3 py-1 bg-indigo-50 text-indigo-600 text-xs font-bold rounded-full uppercase tracking-wider">
+                    {story.genre || 'Chưa phân loại'}
+                  </span>
+                  {story.isAdult && (
+                    <span className="px-3 py-1 bg-red-100 text-red-600 text-[10px] font-black rounded-full uppercase tracking-tighter flex items-center gap-1 border border-red-200">
+                      <AlertTriangle className="w-3 h-3" /> 18+
+                    </span>
+                  )}
+                  <span className="text-slate-400 text-xs font-mono">
+                    {story.chapters?.length || 0} / {story.expectedChapters || '?'} chương
+                  </span>
+                </div>
+                <h1 className="text-4xl font-serif font-bold text-slate-900 mb-6">{story.title}</h1>
+                
+                <div className="space-y-6">
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-3">Giới thiệu</h3>
+                    <div className="markdown-body text-slate-600 leading-relaxed">
+                      <ReactMarkdown>{formatContent(story.introduction || '*Chưa có giới thiệu*')}</ReactMarkdown>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -4341,7 +4639,7 @@ const StoryList = ({ onView, refreshKey }: { onView: (story: Story) => void; ref
                   initial={{ opacity: 0, scale: 0.95 }}
                   animate={{ opacity: 1, scale: 1 }}
                   onClick={() => onView(story)}
-                  className="group relative bg-white p-6 rounded-2xl border border-slate-200 hover:border-indigo-200 hover:shadow-xl hover:shadow-indigo-900/5 transition-all cursor-pointer flex flex-col h-64"
+                  className="group relative bg-white p-6 rounded-2xl border border-slate-200 hover:border-indigo-200 hover:shadow-xl hover:shadow-indigo-900/5 transition-all cursor-pointer flex flex-col min-h-[22rem]"
                 >
                   <div className="flex justify-between items-start mb-4">
                     <div className="flex gap-2">
@@ -4367,6 +4665,16 @@ const StoryList = ({ onView, refreshKey }: { onView: (story: Story) => void; ref
                       <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
+                  {story.coverImageUrl && (
+                    <div className="mb-4 rounded-xl overflow-hidden border border-slate-100 bg-slate-100 aspect-[16/9]">
+                      <img
+                        src={story.coverImageUrl}
+                        alt={`Bìa truyện ${story.title}`}
+                        className="w-full h-full object-cover"
+                        loading="lazy"
+                      />
+                    </div>
+                  )}
                   <h3 className="text-xl font-serif font-bold text-slate-900 mb-3 line-clamp-2">{story.title}</h3>
                   <p className="text-slate-500 text-sm line-clamp-3 flex-grow">{story.content}</p>
                   <div className="mt-4 pt-4 border-t border-slate-50 flex items-center justify-between text-[10px] text-slate-400 font-mono">
@@ -4612,6 +4920,7 @@ const TranslateStoryModal: React.FC<TranslateStoryModalProps> = ({ isOpen, onClo
           <div>
             <h2 className="text-3xl font-serif font-bold text-slate-900 tracking-tight">Dịch truyện bằng AI</h2>
             <p className="text-slate-500 mt-1 font-medium">File: {fileName}</p>
+            <p className="text-xs text-slate-400 mt-1">Hệ thống sẽ tự nhận diện mốc chương và tự chia phần nếu file quá dài.</p>
           </div>
           <button onClick={onClose} className="p-3 hover:bg-white rounded-2xl transition-colors shadow-sm">
             <X className="w-6 h-6 text-slate-400" />
@@ -5914,11 +6223,30 @@ const AppContent = () => {
         }
       }
 
+      const detectedSections = detectChapterSections(translateFileContent);
+      const translationUnits = buildChapterTranslationUnits(translateFileContent, 3200);
+      const effectiveUnits = translationUnits.length
+        ? translationUnits
+        : [{
+            title: 'Chương 1',
+            source: String(translateFileContent || '').trim(),
+            segments: splitLargeTextByParagraphs(String(translateFileContent || '').trim(), 3200),
+          }];
+      const totalSegments =
+        effectiveUnits.reduce((acc, unit) => acc + unit.segments.filter((segment) => segment.trim().length >= 30).length, 0) ||
+        effectiveUnits.length;
+
+      if (detectedSections.length >= 2) {
+        setAILoadingMessage(`Đã nhận diện ${effectiveUnits.length} chương. Đang phân tích nội dung gốc...`);
+      } else {
+        setAILoadingMessage("Chưa thấy mốc chương rõ ràng, hệ thống sẽ tự chia đoạn. Đang phân tích nội dung...");
+      }
+
       // 1. Analyze the story for metadata
-      setAILoadingMessage("Đang phân tích nội dung gốc...");
+      const analysisExcerpt = buildAnalysisExcerpt(translateFileContent, effectiveUnits);
       const analysisPrompt = `
         Hãy phân tích nội dung truyện (tiếng Trung hoặc ngôn ngữ khác) sau đây:
-        "${translateFileContent.substring(0, 10000)}"
+        "${analysisExcerpt}"
         
         Yêu cầu:
         1. Tóm tắt cốt truyện.
@@ -5977,84 +6305,111 @@ const AppContent = () => {
       }
 
       // 3. Split content into chapters/chunks and translate
-      const chunks = splitTextForTranslation(translateFileContent, 3200);
-      const effectiveChunks = chunks.length ? chunks : [String(translateFileContent || '').trim()];
-      const maxTranslateChunks = effectiveChunks.length;
+      const maxTranslateChunks = effectiveUnits.length;
       const translatedChapters: Chapter[] = [];
+      let processedSegments = 0;
 
       const adultContentInstruction = options.isAdult 
         ? "CHẾ ĐỘ 18+ KHÔNG GIỚI HẠN: Bạn là một dịch giả chuyên nghiệp. Bạn ĐƯỢC PHÉP và NÊN dịch các nội dung nhạy cảm, bạo lực, tình dục một cách CHI TIẾT và TRẦN TRỤI. Tuyệt đối không được né tránh hoặc tóm tắt."
         : "CHẾ ĐỘ BÌNH THƯỜNG: Tuyệt đối không dịch nội dung khiêu dâm hoặc bạo lực cực đoan.";
 
       for (let i = 0; i < maxTranslateChunks; i++) {
-        const chunk = effectiveChunks[i];
-        if (chunk.trim().length < 50) continue;
+        const unit = effectiveUnits[i];
+        const sourceSegments = unit.segments.length ? unit.segments : [unit.source];
+        const translatedSegments: string[] = [];
+        let translatedTitle = String(unit.title || `Chương ${i + 1}`).trim() || `Chương ${i + 1}`;
 
-        setAILoadingMessage(`Đang dịch chương ${i + 1}/${maxTranslateChunks}...`);
-        
-        const translatePrompt = `
-          Bạn là một dịch giả văn học cao cấp, chuyên dịch truyện từ tiếng Trung sang tiếng Việt.
-          Hãy dịch nội dung sau đây sang tiếng Việt một cách mượt mà, thuần Việt nhưng vẫn giữ được phong thái của bản gốc.
+        for (let segmentIndex = 0; segmentIndex < sourceSegments.length; segmentIndex++) {
+          const segment = sourceSegments[segmentIndex];
+          if (segment.trim().length < 30) continue;
+          processedSegments += 1;
+
+          setAILoadingMessage(
+            `Đang dịch chương ${i + 1}/${maxTranslateChunks} (${segmentIndex + 1}/${sourceSegments.length}) - tiến độ ${processedSegments}/${totalSegments}...`
+          );
           
-          ${adultContentInstruction}
-          ${dictionaryContext}
-          YÊU CẦU BỔ SUNG: ${options.additionalInstructions}
-          
-          NỘI DUNG CẦN DỊCH:
-          ${chunk}
-          
-          Trả về JSON (không bọc bằng dấu 3 backtick):
-          {
-            "title": "Tiêu đề chương (dịch sang tiếng Việt)",
-            "content": "Nội dung chương đã dịch (Markdown)"
+          const translatePrompt = `
+            Bạn là một dịch giả văn học cao cấp, chuyên dịch truyện từ tiếng Trung sang tiếng Việt.
+            Hãy dịch toàn bộ đoạn sau sang tiếng Việt mượt mà, thuần Việt, giữ đúng nghĩa và phong thái bản gốc.
+            ĐÂY LÀ PHẦN ${segmentIndex + 1}/${sourceSegments.length} CỦA "${unit.title}".
+            KHÔNG được tóm tắt, KHÔNG bỏ đoạn, KHÔNG rút gọn.
+            
+            ${adultContentInstruction}
+            ${dictionaryContext}
+            YÊU CẦU BỔ SUNG: ${options.additionalInstructions}
+            
+            NỘI DUNG CẦN DỊCH:
+            ${segment}
+            
+            Trả về JSON (không bọc bằng dấu 3 backtick):
+            {
+              "title": "Tiêu đề chương (dịch sang tiếng Việt)",
+              "content": "Nội dung phần đã dịch (Markdown)"
+            }
+          `;
+
+          const dynamicMaxTokens = Math.min(16384, Math.max(3200, Math.round(segment.length * 1.7)));
+          const dynamicMinChars = Math.max(240, Math.round(segment.length * 0.22));
+          const translateTextRaw = await generateGeminiText(
+            ai,
+            'quality',
+            translatePrompt,
+            { 
+              responseMimeType: "application/json",
+              maxOutputTokens: dynamicMaxTokens,
+              minOutputChars: dynamicMinChars,
+              maxRetries: 2,
+              safetySettings: [
+                { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+                { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+                { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+                { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE }
+              ]
+            },
+          );
+
+          let translated = normalizeAiJsonContent(translateTextRaw || '', translatedTitle || `Chương ${i + 1}`);
+          if (translated.content.length < Math.max(180, Math.round(dynamicMinChars * 0.7))) {
+            const retryPrompt = `${translatePrompt}\n\nYÊU CẦU BẮT BUỘC: Bản dịch trước quá ngắn. Hãy dịch đầy đủ toàn bộ đoạn nguồn, không tóm tắt, không rút gọn.`;
+            const retryRaw = await generateGeminiText(ai, 'quality', retryPrompt, {
+              responseMimeType: "application/json",
+              maxOutputTokens: Math.min(16384, Math.round(dynamicMaxTokens * 1.4)),
+              minOutputChars: Math.round(dynamicMinChars * 1.1),
+              maxRetries: 1,
+              safetySettings: [
+                { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+                { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+                { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+                { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE }
+              ]
+            });
+            const retried = normalizeAiJsonContent(retryRaw || '', translatedTitle || `Chương ${i + 1}`);
+            if (retried.content.length > translated.content.length) translated = retried;
           }
-        `;
 
-        const dynamicMaxTokens = Math.min(12288, Math.max(2600, Math.round(chunk.length * 1.35)));
-        const dynamicMinChars = Math.max(220, Math.round(chunk.length * 0.2));
-        const translateTextRaw = await generateGeminiText(
-          ai,
-          'quality',
-          translatePrompt,
-          { 
-            responseMimeType: "application/json",
-            maxOutputTokens: dynamicMaxTokens,
-            minOutputChars: dynamicMinChars,
-            maxRetries: 2,
-            safetySettings: [
-              { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-              { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-              { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-              { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE }
-            ]
-          },
-        );
-
-        let translated = normalizeAiJsonContent(translateTextRaw || '', `Chương ${i + 1}`);
-        if (translated.content.length < Math.max(180, Math.round(dynamicMinChars * 0.7))) {
-          const retryPrompt = `${translatePrompt}\n\nYÊU CẦU BẮT BUỘC: Bản dịch trước quá ngắn, hãy dịch đầy đủ toàn bộ đoạn nguồn, không tóm tắt, không rút gọn.`;
-          const retryRaw = await generateGeminiText(ai, 'quality', retryPrompt, {
-            responseMimeType: "application/json",
-            maxOutputTokens: Math.min(14336, Math.round(dynamicMaxTokens * 1.5)),
-            minOutputChars: Math.round(dynamicMinChars * 1.1),
-            maxRetries: 1,
-            safetySettings: [
-              { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-              { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-              { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-              { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE }
-            ]
-          });
-          const retried = normalizeAiJsonContent(retryRaw || '', `Chương ${i + 1}`);
-          if (retried.content.length > translated.content.length) translated = retried;
+          const parsedTitle = String(translated.title || '').trim();
+          if (parsedTitle && (segmentIndex === 0 || /^chương\s*\d+$/i.test(translatedTitle))) {
+            translatedTitle = parsedTitle;
+          }
+          if (translated.content.trim()) {
+            translatedSegments.push(translated.content.trim());
+          }
         }
+
+        const mergedChapterContent = translatedSegments.join('\n\n').trim();
+        if (!mergedChapterContent) continue;
+
         translatedChapters.push({
           id: `tr-${Date.now()}-${i}`,
-          title: String(translated.title || `Chương ${i + 1}`).trim(),
-          content: String(translated.content || '').trim(),
+          title: translatedTitle,
+          content: mergedChapterContent,
           order: i + 1,
           createdAt: Timestamp.now()
         });
+      }
+
+      if (!translatedChapters.length) {
+        throw new Error('Không thể nhận diện nội dung hợp lệ để dịch. Vui lòng kiểm tra lại file nguồn.');
       }
 
       if (storyRef) {
@@ -6092,7 +6447,7 @@ const AppContent = () => {
       storage.saveStories([newStory, ...stories]);
       bumpStoriesVersion();
 
-      alert(`Đã dịch thành công ${translatedChapters.length} chương!`);
+      alert(`Đã dịch thành công ${translatedChapters.length} chương (${processedSegments} phân đoạn).`);
       setView('stories');
     } catch (error) {
       console.error("Lỗi khi dịch truyện:", error);
