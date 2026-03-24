@@ -4949,7 +4949,7 @@ const StoryList = ({ onView, refreshKey }: { onView: (story: Story) => void; ref
                   initial={{ opacity: 0, scale: 0.95 }}
                   animate={{ opacity: 1, scale: 1 }}
                   onClick={() => onView(story)}
-                  className="group relative bg-white p-6 rounded-2xl border border-slate-200 hover:border-indigo-200 hover:shadow-xl hover:shadow-indigo-900/5 transition-all cursor-pointer flex flex-col min-h-[22rem]"
+                  className="group relative bg-white p-6 rounded-2xl border border-slate-200 hover:border-indigo-200 hover:shadow-xl hover:shadow-indigo-900/5 transition-all cursor-pointer flex flex-col min-h-[20rem]"
                 >
                   <div className="flex justify-between items-start mb-4">
                     <div className="flex gap-2">
@@ -4975,18 +4975,32 @@ const StoryList = ({ onView, refreshKey }: { onView: (story: Story) => void; ref
                       <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
-                  {story.coverImageUrl && (
-                    <div className="mb-4 rounded-xl overflow-hidden border border-slate-100 bg-slate-100 aspect-[2/3] max-w-[9rem] mx-auto">
-                      <img
-                        src={story.coverImageUrl}
-                        alt={`Bìa truyện ${story.title}`}
-                        className="w-full h-full object-contain"
-                        loading="lazy"
-                      />
+                  <div className={cn("mb-4 flex-grow", story.coverImageUrl ? "grid grid-cols-[6rem_1fr] gap-4 items-start" : "")}>
+                    {story.coverImageUrl && (
+                      <div className="rounded-xl overflow-hidden border border-slate-100 bg-slate-100 aspect-[2/3] w-24 sm:w-24">
+                        <img
+                          src={story.coverImageUrl}
+                          alt={`Bìa truyện ${story.title}`}
+                          className="w-full h-full object-cover object-center"
+                          loading="lazy"
+                        />
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      <h3
+                        className="text-xl font-serif font-bold text-slate-900 mb-3"
+                        style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
+                      >
+                        {story.title}
+                      </h3>
+                      <p
+                        className="text-slate-500 text-sm whitespace-pre-line"
+                        style={{ display: '-webkit-box', WebkitLineClamp: story.coverImageUrl ? 4 : 5, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
+                      >
+                        {story.content}
+                      </p>
                     </div>
-                  )}
-                  <h3 className="text-xl font-serif font-bold text-slate-900 mb-3 line-clamp-2">{story.title}</h3>
-                  <p className="text-slate-500 text-sm line-clamp-3 flex-grow">{story.content}</p>
+                  </div>
                   <div className="mt-4 pt-4 border-t border-slate-50 flex items-center justify-between text-[10px] text-slate-400 font-mono">
                     <span>Cập nhật: {story.updatedAt?.toDate ? story.updatedAt.toDate().toLocaleDateString('vi-VN') : new Date(story.updatedAt).toLocaleDateString('vi-VN')}</span>
                     <span className="flex items-center gap-1">
