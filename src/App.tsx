@@ -424,6 +424,58 @@ function quickHash(input: string): string {
   return `${h}`;
 }
 
+function stripJsonFence(raw: string): string {
+  const text = String(raw || '').trim();
+  if (!text) return '';
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence?.[1]) return fence[1].trim();
+  return text.replace(/```/g, '').trim();
+}
+
+function tryParseJson<T = unknown>(raw: string, prefer: 'array' | 'object' | 'any' = 'any'): T | null {
+  const text = String(raw || '').trim();
+  if (!text) return null;
+  const candidates: string[] = [];
+  const fenced = stripJsonFence(text);
+  if (fenced && fenced !== text) candidates.push(fenced);
+  if (prefer !== 'object') {
+    const arrayMatch = text.match(/\[[\s\S]*\]/);
+    if (arrayMatch?.[0]) candidates.push(arrayMatch[0]);
+  }
+  if (prefer !== 'array') {
+    const objMatch = text.match(/\{[\s\S]*\}/);
+    if (objMatch?.[0]) candidates.push(objMatch[0]);
+  }
+  candidates.push(text);
+
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate) as T;
+    } catch {
+      // Try next candidate
+    }
+  }
+  return null;
+}
+
+function buildFallbackChapters(raw: string, targetCount: number): Array<{ title: string; content: string }> {
+  const cleaned = stripJsonFence(raw);
+  if (!cleaned) return [];
+  const parts = cleaned
+    .split(/(?:^|\n)(?=Chương\s+\d+[:.\-]|#\s*Chương\s+\d+)/i)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (parts.length > 1) {
+    return parts.map((chunk, idx) => {
+      const firstLine = chunk.split('\n')[0] || `Chương mới ${idx + 1}`;
+      const title = firstLine.replace(/^#+\s*/g, '').trim() || `Chương mới ${idx + 1}`;
+      const content = chunk.replace(firstLine, '').trim() || chunk;
+      return { title, content };
+    });
+  }
+  return [{ title: `Chương mới ${Math.max(1, targetCount)}`, content: cleaned }];
+}
+
 function readMainAiUsage(): { requests: number; estTokens: number } {
   try {
     const raw = localStorage.getItem(MAIN_AI_USAGE_KEY);
@@ -5628,6 +5680,7 @@ const AppContent = () => {
           "characters": [{"name": "...", "personality": "..."}],
           "currentContext": "..."
         }
+        CHỈ TRẢ VỀ JSON thuần, KHÔNG bọc ``` và KHÔNG thêm giải thích.
       `;
 
       const analysisText = await generateGeminiText(
@@ -5636,8 +5689,13 @@ const AppContent = () => {
         analysisPrompt,
         { responseMimeType: "application/json" },
       ) || '{}';
-      const analysisMatch = analysisText.match(/\{[\s\S]*\}/);
-      const analysis = JSON.parse(analysisMatch ? analysisMatch[0] : analysisText);
+      const analysisParsed = tryParseJson<any>(analysisText, 'object') || {};
+      const analysis = {
+        summary: String(analysisParsed.summary || '').trim() || String(analysisText || '').trim(),
+        writingStyle: String(analysisParsed.writingStyle || '').trim(),
+        characters: Array.isArray(analysisParsed.characters) ? analysisParsed.characters : [],
+        currentContext: String(analysisParsed.currentContext || '').trim(),
+      };
       setAILoadingMessage("Đang lập kế hoạch các chương tiếp theo...");
 
       // 2. Plan next chapters
@@ -5654,6 +5712,7 @@ const AppContent = () => {
         {
           "chapters": [{"title": "...", "outline": "..."}]
         }
+        CHỈ TRẢ VỀ JSON thuần, KHÔNG bọc ``` và KHÔNG thêm giải thích.
       `;
 
       const planText = await generateGeminiText(
@@ -5662,8 +5721,17 @@ const AppContent = () => {
         planPrompt,
         { responseMimeType: "application/json" },
       ) || '{}';
-      const planMatch = planText.match(/\{[\s\S]*\}/);
-      const plan = JSON.parse(planMatch ? planMatch[0] : planText);
+      const planParsed = tryParseJson<any>(planText, 'object');
+      let plannedChapters = Array.isArray(planParsed?.chapters) ? planParsed.chapters : (Array.isArray(planParsed) ? planParsed : []);
+      if (!plannedChapters.length) {
+        plannedChapters = buildFallbackChapters(planText, options.chapterCount).map((c) => ({
+          title: c.title,
+          outline: c.content,
+        }));
+      }
+      if (!plannedChapters.length) {
+        throw new Error('AI không trả về kế hoạch chương hợp lệ.');
+      }
       
       // 3. Create the story
       const storyRef = await addDoc(collection(db, 'stories'), {
@@ -5682,9 +5750,9 @@ const AppContent = () => {
 
       // 4. Generate chapters
       const generatedChapters = [];
-      for (let i = 0; i < plan.chapters.length; i++) {
-        const ch = plan.chapters[i];
-        setAILoadingMessage(`Đang viết chương ${i + 1}/${plan.chapters.length}: ${ch.title}...`);
+      for (let i = 0; i < plannedChapters.length; i++) {
+        const ch = plannedChapters[i];
+        setAILoadingMessage(`Đang viết chương ${i + 1}/${plannedChapters.length}: ${ch.title}...`);
         
         const chapterPrompt = `
           Hãy viết chương "${ch.title}" cho truyện dựa trên các thông tin sau:
@@ -5898,6 +5966,7 @@ const AppContent = () => {
         [Trạng thái: Cô đơn]
         
         Trả về kết quả dưới dạng JSON array các chương: [ { "title": "Chương x: ...", "content": "..." }, ... ]
+        CHỈ TRẢ VỀ JSON thuần, KHÔNG bọc ``` và KHÔNG thêm giải thích.
         Nội dung nên được định dạng Markdown.`,
         {
           responseMimeType: "application/json",
@@ -5912,51 +5981,62 @@ const AppContent = () => {
       );
 
       const textResponse = generatedChapterBatchText || '[]';
-      const jsonMatch = textResponse.match(/\[[\s\S]*\]/);
-      const newChaptersData = JSON.parse(jsonMatch ? jsonMatch[0] : textResponse);
-
-      if (Array.isArray(newChaptersData)) {
-        const currentChapters = selectedStory.chapters || [];
-        const nextOrder = currentChapters.length + 1;
-        
-        const newChapters = newChaptersData.map((c, i) => {
-          const chapter: any = {
-            id: Math.random().toString(36).substr(2, 9),
-            title: String(c.title || `Chương mới ${i + 1}`),
-            content: String(c.content || '').replace(/\]\s*\[/g, ']\n\n['), // Tự động xuống dòng đôi giữa các ngoặc vuông để Markdown nhận diện
-            order: nextOrder + i,
-            createdAt: Timestamp.now(),
-          };
-          if (i === 0 && aiInstructions) chapter.aiInstructions = aiInstructions;
-          if (i === 0 && chapterScript) chapter.script = chapterScript;
-          return chapter;
-        });
-
-        const updatedChapters = [...currentChapters, ...newChapters];
-        
-        await updateDoc(doc(db, 'stories', selectedStory.id), {
-          chapters: updatedChapters,
-          updatedAt: Timestamp.now(),
-        });
-
-        // Save to local storage
-        const stories = storage.getStories();
-        const updatedStory = {
-          ...selectedStory,
-          chapters: normalizeChaptersForLocal(updatedChapters as Array<{ createdAt?: unknown } & Record<string, unknown>>),
-          updatedAt: new Date().toISOString(),
-        };
-        const newList = stories.map(s => s.id === selectedStory.id ? updatedStory : s);
-        storage.saveStories(newList);
-        bumpStoriesVersion();
-
-        setSelectedStory(updatedStory);
-
-        alert(`Đã tạo thành công ${newChapters.length} chương mới!`);
+      const parsed = tryParseJson<any>(textResponse, 'array');
+      let newChaptersData: Array<{ title?: string; content?: string }> = [];
+      if (Array.isArray(parsed)) {
+        newChaptersData = parsed;
+      } else if (parsed && typeof parsed === 'object') {
+        if (Array.isArray((parsed as any).chapters)) newChaptersData = (parsed as any).chapters;
+        if (Array.isArray((parsed as any).items) && !newChaptersData.length) newChaptersData = (parsed as any).items;
       }
+
+      if (!newChaptersData.length) {
+        newChaptersData = buildFallbackChapters(textResponse, chapterCount);
+      }
+      if (!newChaptersData.length) {
+        throw new Error("AI không trả về nội dung hợp lệ để tạo chương.");
+      }
+
+      const currentChapters = selectedStory.chapters || [];
+      const nextOrder = currentChapters.length + 1;
+      
+      const newChapters = newChaptersData.map((c, i) => {
+        const chapter: any = {
+          id: Math.random().toString(36).substr(2, 9),
+          title: String(c.title || `Chương mới ${i + 1}`),
+          content: String(c.content || '').replace(/\]\s*\[/g, ']\n\n['), // Tự động xuống dòng đôi giữa các ngoặc vuông để Markdown nhận diện
+          order: nextOrder + i,
+          createdAt: Timestamp.now(),
+        };
+        if (i === 0 && aiInstructions) chapter.aiInstructions = aiInstructions;
+        if (i === 0 && chapterScript) chapter.script = chapterScript;
+        return chapter;
+      });
+
+      const updatedChapters = [...currentChapters, ...newChapters];
+      
+      await updateDoc(doc(db, 'stories', selectedStory.id), {
+        chapters: updatedChapters,
+        updatedAt: Timestamp.now(),
+      });
+
+      // Save to local storage
+      const stories = storage.getStories();
+      const updatedStory = {
+        ...selectedStory,
+        chapters: normalizeChaptersForLocal(updatedChapters as Array<{ createdAt?: unknown } & Record<string, unknown>>),
+        updatedAt: new Date().toISOString(),
+      };
+      const newList = stories.map(s => s.id === selectedStory.id ? updatedStory : s);
+      storage.saveStories(newList);
+      bumpStoriesVersion();
+
+      setSelectedStory(updatedStory);
+
+      alert(`Đã tạo thành công ${newChapters.length} chương mới!`);
     } catch (error) {
       console.error("AI Generation Error:", error);
-      alert("Có lỗi xảy ra khi tạo chương bằng AI.");
+      alert(error instanceof Error ? error.message : "Có lỗi xảy ra khi tạo chương bằng AI.");
     } finally {
       setIsProcessingAI(false);
     }
