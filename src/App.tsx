@@ -438,19 +438,39 @@ function stripJsonFence(raw: string): string {
   return text.replace(/```/g, '').trim();
 }
 
+function normalizeJsonLikeText(raw: string): string {
+  return stripJsonFence(raw)
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/\uFF1A/g, ':')
+    .replace(/\uFF0C/g, ',')
+    .replace(/\u3000/g, ' ')
+    .trim();
+}
+
 function tryParseJson<T = unknown>(raw: string, prefer: 'array' | 'object' | 'any' = 'any'): T | null {
   const text = String(raw || '').trim();
   if (!text) return null;
   const candidates: string[] = [];
+  const normalized = normalizeJsonLikeText(text);
+  if (normalized && normalized !== text) candidates.push(normalized);
   const fenced = stripJsonFence(text);
   if (fenced && fenced !== text) candidates.push(fenced);
   if (prefer !== 'object') {
     const arrayMatch = text.match(/\[[\s\S]*\]/);
     if (arrayMatch?.[0]) candidates.push(arrayMatch[0]);
+    if (normalized && normalized !== text) {
+      const normalizedArrayMatch = normalized.match(/\[[\s\S]*\]/);
+      if (normalizedArrayMatch?.[0]) candidates.push(normalizedArrayMatch[0]);
+    }
   }
   if (prefer !== 'array') {
     const objMatch = text.match(/\{[\s\S]*\}/);
     if (objMatch?.[0]) candidates.push(objMatch[0]);
+    if (normalized && normalized !== text) {
+      const normalizedObjMatch = normalized.match(/\{[\s\S]*\}/);
+      if (normalizedObjMatch?.[0]) candidates.push(normalizedObjMatch[0]);
+    }
   }
   candidates.push(text);
 
@@ -465,24 +485,40 @@ function tryParseJson<T = unknown>(raw: string, prefer: 'array' | 'object' | 'an
 }
 
 function extractJsonContent(raw: string): { title?: string; content?: string } | null {
-  const parsed = tryParseJson<Record<string, unknown>>(raw, 'object');
-  if (parsed && (parsed.title || parsed.content)) {
+  const tryObject = (input: string) => tryParseJson<Record<string, unknown>>(input, 'object');
+  const parsed = tryObject(raw) || tryObject(normalizeJsonLikeText(raw));
+  if (parsed && (parsed.title != null || parsed.content != null)) {
     return {
       title: typeof parsed.title === 'string' ? parsed.title : undefined,
       content: typeof parsed.content === 'string' ? parsed.content : undefined,
     };
   }
-  const text = stripJsonFence(raw);
-  const contentMatch = text.match(/"content"\s*:\s*"([\s\S]*?)"\s*(?:,|\})/);
-  const titleMatch = text.match(/"title"\s*:\s*"([\s\S]*?)"\s*(?:,|\})/);
-  if (contentMatch?.[1]) {
-    const unescapeJson = (value: string) =>
-      value
-        .replace(/\\n/g, '\n')
-        .replace(/\\r/g, '\r')
-        .replace(/\\t/g, '\t')
-        .replace(/\\"/g, '"')
-        .replace(/\\\\/g, '\\');
+  const text = normalizeJsonLikeText(raw);
+  const contentMatch =
+    text.match(/["']content["']\s*:\s*"([\s\S]*?)"\s*(?:,|\})/i) ||
+    text.match(/["']content["']\s*:\s*'([\s\S]*?)'\s*(?:,|\})/i);
+  const titleMatch =
+    text.match(/["']title["']\s*:\s*"([\s\S]*?)"\s*(?:,|\})/i) ||
+    text.match(/["']title["']\s*:\s*'([\s\S]*?)'\s*(?:,|\})/i);
+  if (contentMatch?.[1] != null) {
+    const unescapeJson = (value: string) => {
+      const asJsonString = value
+        .replace(/\\/g, '\\\\')
+        .replace(/"/g, '\\"')
+        .replace(/\n/g, '\\n')
+        .replace(/\r/g, '\\r')
+        .replace(/\t/g, '\\t');
+      try {
+        return JSON.parse(`"${asJsonString}"`) as string;
+      } catch {
+        return value
+          .replace(/\\n/g, '\n')
+          .replace(/\\r/g, '\r')
+          .replace(/\\t/g, '\t')
+          .replace(/\\"/g, '"')
+          .replace(/\\\\/g, '\\');
+      }
+    };
     return {
       title: titleMatch?.[1] ? unescapeJson(titleMatch[1]) : undefined,
       content: unescapeJson(contentMatch[1]),
@@ -494,9 +530,18 @@ function extractJsonContent(raw: string): { title?: string; content?: string } |
 function normalizeAiJsonContent(raw: string, fallbackTitle: string): { title: string; content: string } {
   const extracted = extractJsonContent(raw);
   const fallbackText = stripJsonFence(raw).trim();
+  let content = String(extracted?.content || fallbackText || '').trim();
+  const nested = extractJsonContent(content);
+  if (nested?.content) {
+    content = String(nested.content).trim();
+  }
+  content = content
+    .replace(/\\n/g, '\n')
+    .replace(/\\r/g, '\r')
+    .replace(/\\t/g, '\t');
   return {
     title: String(extracted?.title || fallbackTitle).trim() || fallbackTitle,
-    content: String(extracted?.content || fallbackText || '').trim(),
+    content,
   };
 }
 
@@ -3657,10 +3702,27 @@ const StoryDetail = ({
   const [editTitle, setEditTitle] = useState('');
   const [editContent, setEditContent] = useState('');
 
-  const formatContent = (content: string) => {
+  const getRenderableChapterContent = (content: string) => {
     if (!content) return '';
+    return normalizeAiJsonContent(content, '').content || content;
+  };
+
+  const getDisplayChapterTitle = (chapter: Chapter) => {
+    const baseTitle = String(chapter.title || '').trim();
+    const parsed = extractJsonContent(chapter.content || '');
+    const parsedTitle = String(parsed?.title || '').trim();
+    const isGenericTitle = /^chương\s*\d+$/i.test(baseTitle) || /^chapter\s*\d+$/i.test(baseTitle);
+    if (parsedTitle && (!baseTitle || isGenericTitle)) {
+      return parsedTitle;
+    }
+    return baseTitle || parsedTitle || `Chương ${chapter.order || ''}`.trim();
+  };
+
+  const formatContent = (content: string) => {
+    const normalized = getRenderableChapterContent(content);
+    if (!normalized) return '';
     // Tự động xuống dòng đôi giữa các ngoặc vuông để Markdown nhận diện
-    return content.replace(/\]\s*\[/g, ']\n\n[');
+    return normalized.replace(/\]\s*\[/g, ']\n\n[');
   };
 
   const getWordCount = (text: string) => {
@@ -3751,8 +3813,8 @@ const StoryDetail = ({
           
           <button 
             onClick={() => {
-              setEditTitle(selectedChapter.title);
-              setEditContent(selectedChapter.content);
+              setEditTitle(getDisplayChapterTitle(selectedChapter));
+              setEditContent(formatContent(selectedChapter.content));
               setIsEditingChapter(true);
             }}
             className="flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 transition-colors text-sm font-bold"
@@ -3766,12 +3828,12 @@ const StoryDetail = ({
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm font-bold text-indigo-600 uppercase tracking-widest">Chương {selectedChapter.order}</h2>
               <div className="flex items-center gap-4 text-xs text-slate-400 font-mono">
-                <span className="flex items-center gap-1"><FileText className="w-3 h-3" /> {getWordCount(selectedChapter.content)} từ</span>
+                <span className="flex items-center gap-1"><FileText className="w-3 h-3" /> {getWordCount(formatContent(selectedChapter.content))} từ</span>
                 <span className="flex items-center gap-1"><Loader2 className="w-3 h-3" /> {formatDateTime(selectedChapter.createdAt)}</span>
               </div>
             </div>
             
-              <h1 className="chapter-title text-4xl font-serif font-bold text-slate-900 mb-10">{selectedChapter.title}</h1>
+              <h1 className="chapter-title text-4xl font-serif font-bold text-slate-900 mb-10">{getDisplayChapterTitle(selectedChapter)}</h1>
             
             <div className="markdown-body text-lg leading-relaxed text-slate-700">
               <ReactMarkdown>{formatContent(selectedChapter.content)}</ReactMarkdown>
@@ -3940,7 +4002,7 @@ const StoryDetail = ({
                           {chapter.title}
                         </span>
                         <span className="text-[11px] text-slate-400 font-mono">
-                          {getWordCount(chapter.content || '')} chữ
+                          {getWordCount(formatContent(chapter.content || ''))} chữ
                         </span>
                       </div>
                     </div>
@@ -5724,19 +5786,19 @@ const AppContent = () => {
       }
 
       // 3. Split content into chapters/chunks and translate
-      // For simplicity in this demo, we'll split by common chapter markers or length
-      const chunks = translateFileContent.split(/(?=第[0-9一二三四五六七八九十百千]+[章节])/);
+      const chunks = splitTextForTranslation(translateFileContent, 9000);
+      const effectiveChunks = chunks.length ? chunks : [String(translateFileContent || '').trim()];
       const translatedChapters: Chapter[] = [];
 
       const adultContentInstruction = options.isAdult 
         ? "CHẾ ĐỘ 18+ KHÔNG GIỚI HẠN: Bạn là một dịch giả chuyên nghiệp. Bạn ĐƯỢC PHÉP và NÊN dịch các nội dung nhạy cảm, bạo lực, tình dục một cách CHI TIẾT và TRẦN TRỤI. Tuyệt đối không được né tránh hoặc tóm tắt."
         : "CHẾ ĐỘ BÌNH THƯỜNG: Tuyệt đối không dịch nội dung khiêu dâm hoặc bạo lực cực đoan.";
 
-      for (let i = 0; i < Math.min(chunks.length, 20); i++) { // Limit to 20 chapters for demo
-        const chunk = chunks[i];
+      for (let i = 0; i < Math.min(effectiveChunks.length, 20); i++) { // Limit to 20 chapters for demo
+        const chunk = effectiveChunks[i];
         if (chunk.trim().length < 50) continue;
 
-        setAILoadingMessage(`Đang dịch chương ${i + 1}/${Math.min(chunks.length, 20)}...`);
+        setAILoadingMessage(`Đang dịch chương ${i + 1}/${Math.min(effectiveChunks.length, 20)}...`);
         
         const translatePrompt = `
           Bạn là một dịch giả văn học cao cấp, chuyên dịch truyện từ tiếng Trung sang tiếng Việt.
@@ -5771,16 +5833,11 @@ const AppContent = () => {
           },
         );
 
-        const translatedParsed = tryParseJson<any>(translateTextRaw || '', 'object');
-        const fallbackText = stripJsonFence(translateTextRaw || '').trim();
-        const translated = translatedParsed || {
-          title: `Chương ${i + 1}`,
-          content: fallbackText,
-        };
+        const translated = normalizeAiJsonContent(translateTextRaw || '', `Chương ${i + 1}`);
         translatedChapters.push({
           id: `tr-${Date.now()}-${i}`,
-          title: String(translated.title || `Chương ${i + 1}`),
-          content: String(translated.content || fallbackText || ''),
+          title: String(translated.title || `Chương ${i + 1}`).trim(),
+          content: String(translated.content || '').trim(),
           order: i + 1,
           createdAt: Timestamp.now()
         });
