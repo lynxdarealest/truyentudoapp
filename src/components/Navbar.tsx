@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { BookOpen, Users, Settings, Download, Upload, Info, Feather, Database, Sun, Moon, Menu, ChevronLeft, Zap, Plus, Monitor, Smartphone } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -41,6 +41,11 @@ export function Navbar({
   onToggleViewportMode,
   profile,
 }: NavbarProps) {
+  const navRef = useRef<HTMLElement | null>(null);
+  const leftRef = useRef<HTMLDivElement | null>(null);
+  const rightRef = useRef<HTMLDivElement | null>(null);
+  const segmentsRef = useRef<HTMLDivElement | null>(null);
+  const [navDensity, setNavDensity] = useState<'normal' | 'compact' | 'tiny'>('normal');
   const [showDataMenu, setShowDataMenu] = useState(false);
   const [showQuickActions, setShowQuickActions] = useState(false);
 
@@ -94,6 +99,34 @@ export function Navbar({
   const dividerClass = isDark ? 'bg-white/10' : 'bg-slate-200';
   const titleClass = isDark ? 'text-slate-100' : 'text-slate-900';
   const subTextClass = isDark ? 'text-slate-400' : 'text-slate-400';
+
+  useEffect(() => {
+    if (!navRef.current) return;
+    const updateDensity = () => {
+      if (!navRef.current || !leftRef.current || !rightRef.current) return;
+      const navWidth = navRef.current.clientWidth;
+      const leftWidth = leftRef.current.scrollWidth;
+      const rightWidth = rightRef.current.scrollWidth;
+      const slack = navWidth - (leftWidth + rightWidth + 24);
+      let next: 'normal' | 'compact' | 'tiny' = 'normal';
+      if (navWidth < 720 || slack < 40) next = 'compact';
+      if (navWidth < 600 || slack < -40) next = 'tiny';
+      setNavDensity(next);
+      navRef.current.dataset.density = next;
+    };
+
+    updateDensity();
+    const observer = new ResizeObserver(() => updateDensity());
+    observer.observe(navRef.current);
+    if (leftRef.current) observer.observe(leftRef.current);
+    if (rightRef.current) observer.observe(rightRef.current);
+    if (segmentsRef.current) observer.observe(segmentsRef.current);
+    window.addEventListener('orientationchange', updateDensity);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('orientationchange', updateDensity);
+    };
+  }, []);
 
   function handleExport() {
     storage.exportData();
@@ -186,8 +219,8 @@ export function Navbar({
         </button>
       </div>
 
-      <nav className={cn('app-navbar fixed top-0 left-0 right-0 z-50 flex h-20 items-center justify-between border-b px-6 backdrop-blur-xl navbar-appear', surfaceClass)}>
-        <div className="app-navbar__left flex items-center gap-5 lg:gap-8">
+      <nav ref={navRef} data-density={navDensity} className={cn('app-navbar fixed top-0 left-0 right-0 z-50 flex h-20 items-center justify-between border-b px-6 backdrop-blur-xl navbar-appear', surfaceClass)}>
+        <div ref={leftRef} className="app-navbar__left flex items-center gap-5 lg:gap-8">
           <div className="flex items-center gap-3 cursor-pointer group transition-all duration-300" onClick={onHome}>
             <div className="w-10 h-10 bg-gradient-to-br from-indigo-600 to-violet-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-900/30 group-hover:scale-110 group-hover:rotate-3 transition-all duration-300">
               <Feather className="w-6 h-6 text-white" />
@@ -195,7 +228,7 @@ export function Navbar({
             <span className={cn('text-xl font-serif font-bold tracking-tight hidden sm:block', titleClass)}>Truyện Tự Do</span>
           </div>
 
-          <div className={cn('app-navbar__segments flex items-center gap-1 p-1 rounded-2xl', segmentedClass)}>
+          <div ref={segmentsRef} className={cn('app-navbar__segments flex items-center gap-1 p-1 rounded-2xl', segmentedClass)}>
             {navItems.map(({ key, label, icon: Icon, action }) => (
               <button
                 key={key}
@@ -212,7 +245,7 @@ export function Navbar({
           </div>
         </div>
 
-        <div className="app-navbar__right flex items-center gap-3">
+        <div ref={rightRef} className="app-navbar__right flex items-center gap-3">
           <div className="relative">
             <button
               onClick={() => setShowDataMenu((v) => !v)}

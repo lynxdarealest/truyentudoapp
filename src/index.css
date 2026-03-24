@@ -802,6 +802,59 @@ body {
   display: none;
 }
 
+.app-navbar[data-density="compact"] {
+  padding-left: 0.75rem;
+  padding-right: 0.75rem;
+  height: 4.25rem;
+}
+
+.app-navbar[data-density="compact"] .app-navbar__segments button {
+  padding: 0.45rem 0.6rem;
+  font-size: 0.75rem;
+}
+
+.app-navbar[data-density="compact"] .app-navbar__right .text-xs {
+  display: none;
+}
+
+.app-navbar[data-density="compact"] .app-navbar__right .h-8.w-\\[1px\\] {
+  display: none;
+}
+
+.app-navbar[data-density="tiny"] {
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+  height: auto;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.app-navbar[data-density="tiny"] .app-navbar__left,
+.app-navbar[data-density="tiny"] .app-navbar__right {
+  width: 100%;
+}
+
+.app-navbar[data-density="tiny"] .app-navbar__segments {
+  flex-wrap: wrap;
+  justify-content: center;
+  row-gap: 0.25rem;
+}
+
+.app-navbar[data-density="tiny"] .app-navbar__segments button {
+  padding: 0.4rem 0.55rem;
+  font-size: 0.7rem;
+}
+
+.app-navbar[data-density="tiny"] .app-navbar__right {
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.app-navbar[data-density="tiny"] .app-navbar__right .text-xs,
+.app-navbar[data-density="tiny"] .app-navbar__right .h-8.w-\\[1px\\] {
+  display: none;
+}
+
 @media (max-width: 900px) {
   .story-detail {
     padding-left: 1rem;
