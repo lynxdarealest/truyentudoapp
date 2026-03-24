@@ -284,6 +284,28 @@ function saveApiRuntimeConfig(config: ApiRuntimeConfig): void {
   localStorage.setItem(API_RUNTIME_CONFIG_KEY, JSON.stringify(config));
 }
 
+function normalizeDateValue(value: unknown): string {
+  if (!value) return new Date().toISOString();
+  if (typeof value === 'string') {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? new Date().toISOString() : value;
+  }
+  if (typeof value === 'object' && value !== null && 'toDate' in value) {
+    const maybe = value as { toDate?: () => Date };
+    if (typeof maybe.toDate === 'function') {
+      return maybe.toDate().toISOString();
+    }
+  }
+  return new Date().toISOString();
+}
+
+function normalizeChaptersForLocal(chapters: Array<{ createdAt?: unknown } & Record<string, unknown>>) {
+  return chapters.map((chapter) => ({
+    ...chapter,
+    createdAt: normalizeDateValue(chapter.createdAt),
+  }));
+}
+
 function extractRelayPayload(rawMessage: string): { longId: string; codeId: string; token: string } {
   const text = String(rawMessage || '').trim();
   let longId = parseLongIdFromText(text);
@@ -1847,6 +1869,7 @@ const ToolsManager = ({
           if (newStories.length > 0) {
             const stories = storage.getStories();
             storage.saveStories([...newStories, ...stories]);
+            bumpStoriesVersion();
           }
 
           const newChars = [];
@@ -1892,6 +1915,7 @@ const ToolsManager = ({
           updatedAt: new Date().toISOString(),
           chapters: []
         }, ...stories]);
+        bumpStoriesVersion();
         alert("Nhập file .docx thành công!");
       } else if (fileName.endsWith('.txt')) {
         console.log("Xử lý file TXT...");
@@ -1918,6 +1942,7 @@ const ToolsManager = ({
           updatedAt: new Date().toISOString(),
           chapters: []
         }, ...stories]);
+        bumpStoriesVersion();
         alert("Nhập file .txt thành công!");
       } else {
         console.warn("Định dạng file không được hỗ trợ:", fileName);
@@ -2826,6 +2851,7 @@ const StoryDetail = ({
       const stories = storage.getStories();
       const newList = stories.map((s: Story) => s.id === story.id ? updatedStory : s);
       storage.saveStories(newList);
+      bumpStoriesVersion();
       
       onUpdateStory(updatedStory);
       setSelectedChapter({ ...selectedChapter, title: editTitle, content: editContent });
@@ -3100,7 +3126,7 @@ const StoryDetail = ({
 
 const PAGE_SIZE = 6;
 
-const StoryList = ({ onView }: { onView: (story: Story) => void }) => {
+const StoryList = ({ onView, refreshKey }: { onView: (story: Story) => void; refreshKey: number }) => {
   const { user } = useAuth();
   const [stories, setStories] = useState<Story[]>([]);
   const [loading, setLoading] = useState(true);
@@ -3115,7 +3141,7 @@ const StoryList = ({ onView }: { onView: (story: Story) => void }) => {
     const list = storage.getStories();
     setStories(list);
     setLoading(false);
-  }, []);
+  }, [refreshKey]);
 
   const handleDelete = async () => {
     if (!deleteId) return;
@@ -4633,8 +4659,10 @@ const AppContent = () => {
     };
   }, [isProcessingAI]);
   const [showAIGen, setShowAIGen] = useState(false);
+  const [storiesVersion, setStoriesVersion] = useState(0);
   const [view, setView] = useState<'stories' | 'characters' | 'tools' | 'api'>('stories');
   const [showHelp, setShowHelp] = useState(false);
+  const bumpStoriesVersion = () => setStoriesVersion((v) => v + 1);
   const [showAIStoryModal, setShowAIStoryModal] = useState(false);
   const [showAIContinueModal, setShowAIContinueModal] = useState(false);
   const [showTranslateModal, setShowTranslateModal] = useState(false);
@@ -4884,6 +4912,7 @@ const AppContent = () => {
       }
 
       // Save to local storage so it shows up in the UI
+      const localChapters = normalizeChaptersForLocal(translatedChapters as Array<{ createdAt?: unknown } & Record<string, unknown>>);
       const newStory = {
         id: storyRef ? storyRef.id : `local-${Date.now()}`,
         authorId: user.uid,
@@ -4896,10 +4925,11 @@ const AppContent = () => {
         isPublic: false,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-        chapters: translatedChapters
+        chapters: localChapters
       };
       const stories = storage.getStories();
       storage.saveStories([newStory, ...stories]);
+      bumpStoriesVersion();
 
       alert(`Đã dịch thành công ${translatedChapters.length} chương!`);
       setView('stories');
@@ -5061,6 +5091,7 @@ const AppContent = () => {
       });
 
       // Save to local storage so it shows up in the UI
+      const localChapters = normalizeChaptersForLocal(generatedChapters as Array<{ createdAt?: unknown } & Record<string, unknown>>);
       const newStory = {
         id: storyRef.id,
         authorId: user.uid,
@@ -5073,10 +5104,11 @@ const AppContent = () => {
         isPublic: false,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-        chapters: generatedChapters
+        chapters: localChapters
       };
       const stories = storage.getStories();
       storage.saveStories([newStory, ...stories]);
+      bumpStoriesVersion();
 
       alert(`Đã viết tiếp thành công ${options.chapterCount} chương!`);
       setView('stories');
@@ -5270,11 +5302,12 @@ const AppContent = () => {
         const stories = storage.getStories();
         const updatedStory = {
           ...selectedStory,
-          chapters: updatedChapters,
+          chapters: normalizeChaptersForLocal(updatedChapters as Array<{ createdAt?: unknown } & Record<string, unknown>>),
           updatedAt: new Date().toISOString(),
         };
         const newList = stories.map(s => s.id === selectedStory.id ? updatedStory : s);
         storage.saveStories(newList);
+        bumpStoriesVersion();
 
         setSelectedStory(updatedStory);
 
@@ -5298,6 +5331,7 @@ const AppContent = () => {
       const updatedStory: Story = {
         ...editingStory,
         ...data,
+        chapters: normalizeChaptersForLocal((data.chapters || editingStory.chapters || []) as Array<{ createdAt?: unknown } & Record<string, unknown>>),
         updatedAt: new Date().toISOString(),
       };
       newList = stories.map(s => s.id === editingStory.id ? updatedStory : s);
@@ -5309,7 +5343,7 @@ const AppContent = () => {
         content: data.content || '',
         introduction: data.introduction || '',
         genre: data.genre || 'Chưa phân loại',
-        chapters: data.chapters || [],
+        chapters: normalizeChaptersForLocal((data.chapters || []) as Array<{ createdAt?: unknown } & Record<string, unknown>>),
         isAdult: data.isAdult || false,
         isPublic: data.isPublic || false,
         createdAt: new Date().toISOString(),
@@ -5322,6 +5356,7 @@ const AppContent = () => {
     setEditingStory(null);
     setIsCreating(false);
     storage.saveStories(newList);
+    bumpStoriesVersion();
   };
 
   const handleAIStoryCreation = async (options: {
@@ -5450,6 +5485,7 @@ const AppContent = () => {
         };
         const stories = storage.getStories();
         storage.saveStories([newStory, ...stories]);
+        bumpStoriesVersion();
 
         alert("AI đã tạo truyện thành công từ file của bạn!");
       } else {
@@ -5654,7 +5690,7 @@ const AppContent = () => {
               </div>
             </div>
              
-            <StoryList onView={setSelectedStory} />
+            <StoryList refreshKey={storiesVersion} onView={setSelectedStory} />
           </motion.div>
         )}
       </AnimatePresence>

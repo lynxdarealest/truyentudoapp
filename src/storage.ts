@@ -1,8 +1,34 @@
 
+const normalizeDate = (value: any) => {
+  if (!value) return new Date().toISOString();
+  if (typeof value === 'string') {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? new Date().toISOString() : value;
+  }
+  if (typeof value === 'object' && typeof value.toDate === 'function') {
+    return value.toDate().toISOString();
+  }
+  return new Date().toISOString();
+};
+
+const normalizeChapters = (chapters: any[]) =>
+  (Array.isArray(chapters) ? chapters : []).map((chapter) => ({
+    ...chapter,
+    createdAt: normalizeDate(chapter?.createdAt),
+  }));
+
+const normalizeStory = (story: any) => ({
+  ...story,
+  createdAt: normalizeDate(story?.createdAt),
+  updatedAt: normalizeDate(story?.updatedAt),
+  chapters: normalizeChapters(story?.chapters),
+});
+
 export const storage = {
   getStories: () => {
     const data = localStorage.getItem('stories');
-    return data ? JSON.parse(data) : [];
+    const parsed = data ? JSON.parse(data) : [];
+    return Array.isArray(parsed) ? parsed.map(normalizeStory) : [];
   },
   saveStories: (stories: any[]) => {
     localStorage.setItem('stories', JSON.stringify(stories));
