@@ -6346,21 +6346,31 @@ const AppContent = () => {
       if (!resolvedTitle) resolvedTitle = 'Truyện mới';
 
       if (resolvedTitle && resolvedContent) {
-        const storyRef = await addDoc(collection(db, 'stories'), {
-          authorId: user.uid,
-          title: resolvedTitle.substring(0, 480),
-          content: resolvedContent.replace(/\]\s*\[/g, ']\n\n[').substring(0, 1999900), // Tự động xuống dòng đôi giữa các ngoặc vuông để Markdown nhận diện
-          genre: String(genre || 'Tự do').substring(0, 190),
-          isAdult: Boolean(isAdult),
-          isPublic: false,
-          isAI: true,
-          createdAt: Timestamp.now(),
-          updatedAt: Timestamp.now(),
-        });
+        let storyId = `local-${Date.now()}`;
+        try {
+          const storyRef = await addDoc(collection(db, 'stories'), {
+            authorId: user.uid,
+            title: resolvedTitle.substring(0, 480),
+            content: resolvedContent.replace(/\]\s*\[/g, ']\n\n[').substring(0, 1999900), // Tự động xuống dòng đôi giữa các ngoặc vuông để Markdown nhận diện
+            genre: String(genre || 'Tự do').substring(0, 190),
+            isAdult: Boolean(isAdult),
+            isPublic: false,
+            isAI: true,
+            createdAt: Timestamp.now(),
+            updatedAt: Timestamp.now(),
+          });
+          storyId = storyRef.id;
+        } catch (err) {
+          if (isFirestorePermissionError(err)) {
+            console.warn("Không có quyền Firestore, sẽ lưu cục bộ.", err);
+          } else {
+            throw err;
+          }
+        }
 
         // Save to local storage
         const newStory = {
-          id: storyRef.id,
+          id: storyId,
           authorId: user.uid,
           title: resolvedTitle.substring(0, 480),
           content: resolvedContent.replace(/\]\s*\[/g, ']\n\n[').substring(0, 1999900),
