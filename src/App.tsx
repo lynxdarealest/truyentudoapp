@@ -6175,6 +6175,9 @@ const AppContent = () => {
 
       const textResponse = aiStoryText || '';
       const parsed = tryParseJson<any>(textResponse, 'object');
+      if (parsed && typeof parsed === 'object' && (parsed as any).error?.message) {
+        throw new Error(`AI lỗi: ${(parsed as any).error.message}`);
+      }
       let resolvedTitle = parsed && typeof parsed === 'object' ? String(parsed.title || '').trim() : '';
       let resolvedContent = parsed && typeof parsed === 'object' ? String(parsed.content || '').trim() : '';
 
@@ -6185,6 +6188,48 @@ const AppContent = () => {
           resolvedTitle = lines[0].replace(/^#+\s*/g, '').trim();
         }
         resolvedContent = cleaned.trim();
+      }
+
+      if (!resolvedContent) {
+        const fallbackText = await generateGeminiText(
+          ai,
+          'quality',
+          `Hãy viết lại nội dung thành một truyện hoàn chỉnh, giàu chi tiết.
+          
+          THÔNG TIN YÊU CẦU:
+          - Thể loại: ${genre || 'Tự do'}
+          - Nhịp điệu: ${pacingDesc}
+          - Giọng văn: ${toneDesc}
+          - Góc nhìn: ${perspective === 'first-person' ? 'Ngôi thứ nhất (Tôi)' : perspective === 'omniscient' ? 'Ngôi thứ ba (Toàn tri)' : 'Ngôi thứ ba (Hắn/Cô ấy)'}
+          - Đối tượng độc giả: ${audience === 'teen' ? 'Thanh thiếu niên' : audience === 'adult' ? 'Người trưởng thành' : audience === 'hardcore' ? 'Độc giả lâu năm' : 'Đại chúng'}
+          - ${adultContentInstruction}
+          
+          ${styleReference ? `PHONG CÁCH VĂN MẪU (Hãy bắt chước giọng văn này):\n${styleReference}\n` : ""}
+
+          QUY TẮC TRẢ VỀ:
+          Trả theo định dạng văn bản:
+          TIÊU ĐỀ: ...
+          NỘI DUNG:
+          ...
+          
+          Nội dung gốc:
+          ${content}`,
+          {
+            responseMimeType: "text/plain",
+            maxOutputTokens: 8192,
+            safetySettings: [
+              { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+              { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+              { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+              { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+            ]
+          },
+        );
+        const fallbackClean = stripJsonFence(fallbackText || '');
+        const titleMatch = fallbackClean.match(/TIÊU\s*ĐỀ\s*:\s*(.+)/i);
+        const contentMatch = fallbackClean.match(/NỘI\s*DUNG\s*:\s*([\s\S]*)/i);
+        resolvedTitle = resolvedTitle || (titleMatch?.[1] || '').trim();
+        resolvedContent = (contentMatch?.[1] || '').trim() || fallbackClean.trim();
       }
 
       if (!resolvedTitle) resolvedTitle = 'Truyện mới';
