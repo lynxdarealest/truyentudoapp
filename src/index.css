@@ -797,3 +797,47 @@ body {
 .hero-action-warm {
   border-color: rgba(240, 161, 65, 0.42);
 }
+
+@media (max-width: 900px) {
+  .story-detail {
+    padding-left: 1rem;
+    padding-right: 1rem;
+    padding-top: 6rem;
+  }
+
+  .story-detail__header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.75rem;
+  }
+
+  .story-detail__actions {
+    width: 100%;
+    flex-direction: column;
+  }
+
+  .story-detail__actions button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .chapter-row {
+    padding: 0.75rem 1rem;
+  }
+
+  .chapter-title {
+    font-size: 1.85rem;
+    line-height: 1.2;
+    margin-bottom: 1.5rem;
+  }
+
+  .chapter-nav {
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .chapter-nav button {
+    width: 100%;
+    justify-content: center;
+  }
+}

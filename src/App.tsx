@@ -2907,7 +2907,7 @@ const StoryDetail = ({
               </div>
             </div>
             
-            <h1 className="text-4xl font-serif font-bold text-slate-900 mb-10">{selectedChapter.title}</h1>
+              <h1 className="chapter-title text-4xl font-serif font-bold text-slate-900 mb-10">{selectedChapter.title}</h1>
             
             <div className="markdown-body text-lg leading-relaxed text-slate-700">
               <ReactMarkdown>{formatContent(selectedChapter.content)}</ReactMarkdown>
@@ -2915,7 +2915,7 @@ const StoryDetail = ({
           </div>
         </div>
 
-        <div className="flex items-center justify-between max-w-2xl mx-auto">
+        <div className="chapter-nav flex items-center justify-between max-w-2xl mx-auto">
           <button 
             onClick={handlePrevChapter}
             disabled={!hasPrev}
@@ -2997,16 +2997,16 @@ const StoryDetail = ({
       initial={{ opacity: 0, x: 20 }}
       animate={{ opacity: 1, x: 0 }}
       exit={{ opacity: 0, x: -20 }}
-      className="max-w-5xl mx-auto pt-24 pb-12 px-6"
+      className="story-detail max-w-5xl mx-auto pt-24 pb-12 px-6"
     >
-      <div className="flex items-center justify-between mb-8">
+      <div className="story-detail__header flex items-center justify-between mb-8">
         <button 
           onClick={onBack}
           className="flex items-center gap-2 text-slate-500 hover:text-slate-900 transition-colors font-bold"
         >
           <ChevronLeft className="w-6 h-6" /> Quay lại thư viện
         </button>
-        <div className="flex gap-3">
+        <div className="story-detail__actions flex gap-3">
           <button 
             onClick={onEdit}
             className="flex items-center gap-2 px-6 py-2 rounded-full border border-slate-200 hover:bg-slate-50 transition-colors text-sm font-bold"
@@ -3051,24 +3051,34 @@ const StoryDetail = ({
           </div>
 
           <div className="bg-white p-8 rounded-[32px] border border-slate-100 shadow-sm">
-            <h3 className="text-xl font-serif font-bold text-slate-900 mb-6 flex items-center gap-3">
-              <List className="w-6 h-6 text-indigo-600" /> Mục lục
-            </h3>
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-xl font-serif font-bold text-slate-900 flex items-center gap-3">
+                <List className="w-6 h-6 text-indigo-600" /> Mục lục
+              </h3>
+              <span className="text-xs font-mono text-slate-400">
+                {totalWords.toLocaleString()} chữ
+              </span>
+            </div>
             <div className="space-y-2">
               {story.chapters && story.chapters.length > 0 ? (
                 story.chapters.sort((a, b) => a.order - b.order).map((chapter) => (
                   <button 
                     key={chapter.id}
                     onClick={() => setSelectedChapter(chapter)}
-                    className="w-full flex items-center justify-between p-4 rounded-2xl hover:bg-slate-50 transition-all text-left group"
+                    className="chapter-row w-full flex items-center justify-between p-4 rounded-2xl hover:bg-slate-50 transition-all text-left group"
                   >
                     <div className="flex items-center gap-4">
                       <span className="w-8 h-8 flex items-center justify-center rounded-full bg-slate-100 text-slate-500 text-xs font-bold group-hover:bg-indigo-100 group-hover:text-indigo-600 transition-colors">
                         {chapter.order}
                       </span>
-                      <span className="font-bold text-slate-700 group-hover:text-slate-900 transition-colors">
-                        {chapter.title}
-                      </span>
+                      <div className="flex flex-col">
+                        <span className="font-bold text-slate-700 group-hover:text-slate-900 transition-colors">
+                          {chapter.title}
+                        </span>
+                        <span className="text-[11px] text-slate-400 font-mono">
+                          {getWordCount(chapter.content || '')} chữ
+                        </span>
+                      </div>
                     </div>
                     <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-indigo-400 transition-colors" />
                   </button>
