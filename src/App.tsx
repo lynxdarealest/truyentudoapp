@@ -6326,8 +6326,13 @@ const AppContent = () => {
       }
 
       const sourceWordCount = countWords(translateFileContent);
-      const turboMode = sourceWordCount >= 3200;
-      const segmentCharLimit = turboMode ? 5200 : 3200;
+      const sourceCharCount = String(translateFileContent || '').length;
+      const sourceTokenEstimate = estimateTextTokens(translateFileContent);
+      const turboMode = sourceWordCount >= 3200 || sourceCharCount >= 45000 || sourceTokenEstimate >= 12000;
+      let segmentCharLimit = turboMode ? 5200 : 3200;
+      if ((ai.provider === 'gemini' || ai.provider === 'gcli') && sourceCharCount >= 45000) {
+        segmentCharLimit = 6800;
+      }
       const translationKind: 'fast' | 'quality' = turboMode ? 'fast' : 'quality';
       const analysisKind: 'fast' | 'quality' = turboMode ? 'fast' : 'quality';
       const translationConcurrency = turboMode ? 2 : 1;
@@ -6343,8 +6348,11 @@ const AppContent = () => {
       const totalSegments =
         effectiveUnits.reduce((acc, unit) => acc + unit.segments.filter((segment) => segment.trim().length >= 30).length, 0) ||
         effectiveUnits.length;
+      const lowQuotaMode = (ai.provider === 'gemini' || ai.provider === 'gcli') && totalSegments >= 14;
 
-      if (detectedSections.length >= 2 && turboMode) {
+      if (detectedSections.length >= 2 && turboMode && lowQuotaMode) {
+        setAILoadingMessage(`Đã nhận diện ${effectiveUnits.length} chương. Bật chế độ tiết kiệm quota + dịch nhanh...`);
+      } else if (detectedSections.length >= 2 && turboMode) {
         setAILoadingMessage(`Đã nhận diện ${effectiveUnits.length} chương. Bật chế độ dịch nhanh, đang phân tích nội dung...`);
       } else if (detectedSections.length >= 2) {
         setAILoadingMessage(`Đã nhận diện ${effectiveUnits.length} chương. Đang phân tích nội dung gốc...`);
@@ -6354,43 +6362,50 @@ const AppContent = () => {
         setAILoadingMessage("Chưa thấy mốc chương rõ ràng, hệ thống sẽ tự chia đoạn. Đang phân tích nội dung...");
       }
 
-      // 1. Analyze the story for metadata
-      const analysisExcerpt = buildAnalysisExcerpt(translateFileContent, effectiveUnits);
-      const analysisPrompt = `
-        Hãy phân tích nội dung truyện (tiếng Trung hoặc ngôn ngữ khác) sau đây:
-        "${analysisExcerpt}"
-        
-        Yêu cầu:
-        1. Tóm tắt cốt truyện.
-        2. Xác định thể loại.
-        3. Liệt kê các nhân vật chính.
-        
-        Trả về JSON:
-        {
-          "summary": "...",
-          "genre": "...",
-          "characters": ["..."]
-        }
-      `;
-
-      const analysisTextRaw = await generateGeminiText(
-        ai,
-        analysisKind,
-        analysisPrompt,
-        {
-          responseMimeType: "application/json",
-          maxOutputTokens: turboMode ? 1500 : 2600,
-          minOutputChars: turboMode ? 120 : 200,
-          maxRetries: turboMode ? 1 : 2,
-        },
-      );
-
-      const analysisParsed = tryParseJson<any>(analysisTextRaw || '', 'object');
-      const analysis = {
-        summary: String(analysisParsed?.summary || '').trim() || stripJsonFence(analysisTextRaw || '').trim(),
-        genre: String(analysisParsed?.genre || '').trim() || 'Dịch thuật',
-        characters: Array.isArray(analysisParsed?.characters) ? analysisParsed.characters : [],
+      // 1. Analyze the story for metadata (skip on low quota mode)
+      let analysis = {
+        summary: `Bản dịch tự động từ file "${String(translateFileName || "Truyện dịch").replace(/\.[^/.]+$/, "")}".`,
+        genre: 'Dịch thuật',
+        characters: [] as any[],
       };
+      if (!lowQuotaMode) {
+        const analysisExcerpt = buildAnalysisExcerpt(translateFileContent, effectiveUnits);
+        const analysisPrompt = `
+          Hãy phân tích nội dung truyện (tiếng Trung hoặc ngôn ngữ khác) sau đây:
+          "${analysisExcerpt}"
+          
+          Yêu cầu:
+          1. Tóm tắt cốt truyện.
+          2. Xác định thể loại.
+          3. Liệt kê các nhân vật chính.
+          
+          Trả về JSON:
+          {
+            "summary": "...",
+            "genre": "...",
+            "characters": ["..."]
+          }
+        `;
+
+        const analysisTextRaw = await generateGeminiText(
+          ai,
+          analysisKind,
+          analysisPrompt,
+          {
+            responseMimeType: "application/json",
+            maxOutputTokens: turboMode ? 1500 : 2600,
+            minOutputChars: turboMode ? 120 : 200,
+            maxRetries: turboMode ? 1 : 2,
+          },
+        );
+
+        const analysisParsed = tryParseJson<any>(analysisTextRaw || '', 'object');
+        analysis = {
+          summary: String(analysisParsed?.summary || '').trim() || stripJsonFence(analysisTextRaw || '').trim(),
+          genre: String(analysisParsed?.genre || '').trim() || 'Dịch thuật',
+          characters: Array.isArray(analysisParsed?.characters) ? analysisParsed.characters : [],
+        };
+      }
       
       // 2. Create the story record
       let storyRef: ReturnType<typeof doc> | null = null;
@@ -6423,6 +6438,7 @@ const AppContent = () => {
       const adultContentInstruction = options.isAdult 
         ? "CHẾ ĐỘ 18+ KHÔNG GIỚI HẠN: Bạn là một dịch giả chuyên nghiệp. Bạn ĐƯỢC PHÉP và NÊN dịch các nội dung nhạy cảm, bạo lực, tình dục một cách CHI TIẾT và TRẦN TRỤI. Tuyệt đối không được né tránh hoặc tóm tắt."
         : "CHẾ ĐỘ BÌNH THƯỜNG: Tuyệt đối không dịch nội dung khiêu dâm hoặc bạo lực cực đoan.";
+      const perSegmentRetries = lowQuotaMode ? 0 : (turboMode ? 1 : 2);
 
       const chapterResults = await mapWithConcurrency(effectiveUnits, translationConcurrency, async (unit, chapterIndex) => {
         const sourceSegments = unit.segments.length ? unit.segments : [unit.source];
@@ -6435,7 +6451,7 @@ const AppContent = () => {
           processedSegments += 1;
 
           setAILoadingMessage(
-            `Đang dịch chương ${chapterIndex + 1}/${maxTranslateChunks} (${segmentIndex + 1}/${sourceSegments.length}) - tiến độ ${processedSegments}/${totalSegments}${turboMode ? ' [Turbo]' : ''}...`
+            `Đang dịch chương ${chapterIndex + 1}/${maxTranslateChunks} (${segmentIndex + 1}/${sourceSegments.length}) - tiến độ ${processedSegments}/${totalSegments}${turboMode ? ' [Turbo]' : ''}${lowQuotaMode ? ' [Quota-safe]' : ''}...`
           );
           
           const includeTitleField = segmentIndex === 0;
@@ -6473,7 +6489,7 @@ const AppContent = () => {
               responseMimeType: "application/json",
               maxOutputTokens: dynamicMaxTokens,
               minOutputChars: dynamicMinChars,
-              maxRetries: turboMode ? 1 : 2,
+              maxRetries: perSegmentRetries,
               safetySettings: [
                 { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
                 { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -6487,7 +6503,7 @@ const AppContent = () => {
           const shortThreshold = turboMode
             ? Math.max(120, Math.round(dynamicMinChars * 0.55))
             : Math.max(180, Math.round(dynamicMinChars * 0.7));
-          if (translated.content.length < shortThreshold) {
+          if (perSegmentRetries > 0 && translated.content.length < shortThreshold) {
             const retryPrompt = `${translatePrompt}\n\nYÊU CẦU BẮT BUỘC: Bản dịch trước quá ngắn. Hãy dịch đầy đủ toàn bộ đoạn nguồn, không tóm tắt, không rút gọn.`;
             const retryRaw = await generateGeminiText(ai, turboMode ? 'quality' : translationKind, retryPrompt, {
               responseMimeType: "application/json",
