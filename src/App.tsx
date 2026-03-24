@@ -2404,7 +2404,13 @@ const ToolsManager = ({
     setIsCheckingAi(true);
     setAiCheckStatus('Đang kiểm tra...');
     try {
+      if (apiMode === 'relay' && relayStatus !== 'connected') {
+        setAiCheckStatus(`Relay chưa sẵn sàng: ${relayStatusText || 'Vui lòng kết nối lại.'}`);
+        return;
+      }
       const ai = createGeminiClient();
+      const runtime = getApiRuntimeConfig();
+      const providerLabel = runtime.mode === 'relay' ? 'Relay' : PROVIDER_LABELS[ai.provider];
       const tests: Array<{
         name: string;
         run: () => Promise<boolean>;
@@ -2462,22 +2468,31 @@ const ToolsManager = ({
       ];
 
       const results: Array<{ name: string; ok: boolean }> = [];
+      let failedReason = '';
+      let failedAt = '';
       for (const test of tests) {
         try {
           const ok = await test.run();
           results.push({ name: test.name, ok });
-        } catch {
+          if (!ok) {
+            failedAt = test.name;
+            break;
+          }
+        } catch (err) {
           results.push({ name: test.name, ok: false });
+          failedAt = test.name;
+          failedReason = err instanceof Error ? err.message : 'Lỗi không xác định';
+          break;
         }
       }
 
       const passed = results.filter(r => r.ok);
-      const failed = results.filter(r => !r.ok);
       setAiUsageStats(readMainAiUsage());
-      if (failed.length === 0) {
-        setAiCheckStatus(`Hoạt động tốt: ${passed.length}/${results.length} bước đạt · ${PROVIDER_LABELS[ai.provider]} / ${ai.model}`);
+      if (failedAt) {
+        const reasonText = failedReason ? ` (${failedReason})` : '';
+        setAiCheckStatus(`Dừng ở bước ${failedAt}${reasonText} · ${providerLabel} / ${ai.model}`);
       } else {
-        setAiCheckStatus(`Kiểm tra ${passed.length}/${results.length} bước đạt. Lỗi: ${failed.map(r => r.name).join(', ')} · ${PROVIDER_LABELS[ai.provider]} / ${ai.model}`);
+        setAiCheckStatus(`Hoạt động tốt: ${passed.length}/${tests.length} bước đạt · ${providerLabel} / ${ai.model}`);
       }
     } catch (error) {
       setAiCheckStatus(`Không dùng được AI: ${error instanceof Error ? error.message : 'quota, model hoặc key hiện tại chưa hợp lệ.'}`);
