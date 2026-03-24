@@ -40,6 +40,8 @@ interface ApiSectionPanelProps {
   relayUrl: string;
   relayMatchedLong: string;
   relayMaskedToken: string;
+  relayModel: string;
+  relayModelOptions: ApiModelOption[];
   relayWebBase: string;
   relaySocketBase: string;
   manualRelayTokenInput: string;
@@ -63,6 +65,7 @@ interface ApiSectionPanelProps {
   onConnectRelay: () => void;
   onDisconnectRelay: () => void;
   onRelayUrlChange: (value: string) => void;
+  onRelayModelChange: (value: string) => void;
   onManualRelayTokenInputChange: (value: string) => void;
   onSaveManualRelayToken: () => void;
   onCheckAiHealth: () => void;
@@ -97,6 +100,8 @@ export function ApiSectionPanel({
   relayUrl,
   relayMatchedLong,
   relayMaskedToken,
+  relayModel,
+  relayModelOptions,
   relayWebBase,
   relaySocketBase,
   manualRelayTokenInput,
@@ -120,6 +125,7 @@ export function ApiSectionPanel({
   onConnectRelay,
   onDisconnectRelay,
   onRelayUrlChange,
+  onRelayModelChange,
   onManualRelayTokenInputChange,
   onSaveManualRelayToken,
   onCheckAiHealth,
@@ -395,6 +401,20 @@ export function ApiSectionPanel({
                 className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
                 placeholder={`${relaySocketBase}18101412`}
               />
+              <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
+                <select
+                  value={relayModel}
+                  onChange={(e) => onRelayModelChange(e.target.value)}
+                  className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
+                >
+                  {relayModelOptions.map((item) => (
+                    <option key={item.value} value={item.value}>{item.label}</option>
+                  ))}
+                </select>
+                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs text-slate-500 flex items-center">
+                  Model qua relay
+                </div>
+              </div>
               <div className="rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-600 space-y-1">
                 <p><Link2 className="inline w-3 h-3 mr-1" /> Mã kết nối: <b>{relayUrl.match(/code=(\d{4,8})/)?.[1] || 'chưa có'}</b></p>
                 <p><Zap className="inline w-3 h-3 mr-1" /> Mã đã nhận diện: <b>{relayMatchedLong || 'chưa có'}</b></p>

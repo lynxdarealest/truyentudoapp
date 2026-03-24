@@ -2248,12 +2248,13 @@ const ToolsManager = ({
         }
         return false;
       });
+    const relayModel = selectedModel || getProfileModel('quality', 'gemini');
     persistRuntimeConfig({
       mode: 'relay',
       relayUrl: buildRelaySocketUrl(inferredCode),
       identityHint: relayUrl,
       selectedProvider: 'gemini',
-      selectedModel: getProfileModel('quality', 'gemini'),
+      selectedModel: relayModel,
       activeApiKeyId: '',
       aiProfile,
       enableCache: enablePromptCache,
@@ -2292,6 +2293,7 @@ const ToolsManager = ({
           setRelayMatchedLong(payload.longId || expectedLong);
           setRelayMaskedToken(maskSensitive(token));
           setRelayStatusText(`Đã nhận khóa truy cập (mã: ${payload.codeId || expectedCode || 'n/a'}).`);
+          const relayModel = selectedModel || getProfileModel('quality', 'gemini');
           persistRuntimeConfig({
             mode: 'relay',
             relayUrl: buildRelaySocketUrl(expectedCode || inferredCode),
@@ -2300,7 +2302,7 @@ const ToolsManager = ({
             relayToken: token,
             relayUpdatedAt: new Date().toISOString(),
             selectedProvider: 'gemini',
-            selectedModel: getProfileModel('quality', 'gemini'),
+            selectedModel: relayModel,
             activeApiKeyId: '',
             aiProfile,
             enableCache: enablePromptCache,
@@ -2384,13 +2386,14 @@ const ToolsManager = ({
     setManualRelayTokenInput('');
     setRelayStatus('connected');
     setRelayStatusText('Khóa thủ công đã được lưu.');
+    const relayModel = selectedModel || getProfileModel('quality', 'gemini');
     persistRuntimeConfig({
       mode: 'relay',
       relayUrl,
       relayToken: token,
       relayUpdatedAt: new Date().toISOString(),
       selectedProvider: 'gemini',
-      selectedModel: getProfileModel('quality', 'gemini'),
+      selectedModel: relayModel,
       activeApiKeyId: '',
       aiProfile,
       enableCache: enablePromptCache,
@@ -2555,6 +2558,15 @@ const ToolsManager = ({
     writeMainAiUsage({ requests: 0, estTokens: 0 });
     setAiUsageStats({ requests: 0, estTokens: 0 });
     setAiCheckStatus('Thống kê phiên đã được đặt lại.');
+  };
+
+  const handleRelayModelChange = (value: string) => {
+    const nextModel = value || getProfileModel('quality', 'gemini');
+    setSelectedModel(nextModel);
+    persistRuntimeConfig({
+      selectedModel: nextModel,
+      selectedProvider: 'gemini',
+    });
   };
 
   const handleExportJSON = async () => {
@@ -2841,7 +2853,7 @@ const ToolsManager = ({
           }}
           onSwitchToRelay={() => {
             setApiMode('relay');
-            persistRuntimeConfig({ mode: 'relay', selectedProvider: 'gemini' });
+            persistRuntimeConfig({ mode: 'relay', selectedProvider: 'gemini', selectedModel: selectedModel || getProfileModel('quality', 'gemini') });
           }}
           apiEntryName={apiEntryName}
           apiEntryText={apiEntryText}
@@ -2859,6 +2871,8 @@ const ToolsManager = ({
           relayUrl={relayUrl}
           relayMatchedLong={relayMatchedLong}
           relayMaskedToken={relayMaskedToken}
+          relayModel={selectedModel || getProfileModel('quality', 'gemini')}
+          relayModelOptions={PROVIDER_MODEL_OPTIONS.gemini}
           relayWebBase={RELAY_WEB_BASE}
           relaySocketBase={RELAY_SOCKET_BASE}
           manualRelayTokenInput={manualRelayTokenInput}
@@ -2884,8 +2898,9 @@ const ToolsManager = ({
           onRelayUrlChange={(value) => {
             setRelayUrl(value);
             setRelayIdentityHint(value);
-            persistRuntimeConfig({ relayUrl: value, identityHint: value, selectedProvider: 'gemini' });
+            persistRuntimeConfig({ relayUrl: value, identityHint: value, selectedProvider: 'gemini', selectedModel: selectedModel || getProfileModel('quality', 'gemini') });
           }}
+          onRelayModelChange={handleRelayModelChange}
           onManualRelayTokenInputChange={setManualRelayTokenInput}
           onSaveManualRelayToken={handleSaveManualRelayToken}
           onCheckAiHealth={handleCheckAiHealth}
