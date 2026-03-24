@@ -953,6 +953,26 @@ function isDailyQuotaExceededError(err: unknown): boolean {
   );
 }
 
+function isTransientAiServiceError(err: unknown): boolean {
+  const message = stringifyError(err).toLowerCase();
+  return (
+    message.includes('currently experiencing high demand') ||
+    message.includes('try again later') ||
+    message.includes('temporarily unavailable') ||
+    message.includes('service unavailable') ||
+    message.includes('resource unavailable') ||
+    message.includes('unavailable') ||
+    message.includes('overloaded') ||
+    message.includes('deadline exceeded') ||
+    message.includes('gateway timeout') ||
+    message.includes('timed out') ||
+    message.includes('networkerror') ||
+    message.includes('failed to fetch') ||
+    /\b503\b/.test(message) ||
+    /\b504\b/.test(message)
+  );
+}
+
 function getGeminiFallbackModels(baseModel: string, kind: 'fast' | 'quality'): string[] {
   const preferred = kind === 'fast'
     ? ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-3.1-pro-preview']
@@ -1029,7 +1049,8 @@ async function generateGeminiText(
     const expectedMinChars = calculateAdaptiveMinOutputChars(contents, kind, splitConfig.minOutputChars);
     let currentModelIndex = 0;
     let currentModel = modelCandidates[currentModelIndex] || initialModel;
-    const maxAttempts = splitConfig.maxRetries + Math.max(0, modelCandidates.length - 1);
+    const extraRecoveryRetries = (auth.provider === 'gemini' || auth.provider === 'gcli') ? 2 : 1;
+    const maxAttempts = splitConfig.maxRetries + Math.max(0, modelCandidates.length - 1) + extraRecoveryRetries;
 
     for (let attempt = 0; attempt <= maxAttempts; attempt += 1) {
       const timeoutMs = calculateAdaptiveTimeoutMs(
@@ -1155,7 +1176,9 @@ async function generateGeminiText(
           throw new Error('Nhà cung cấp hiện tại chưa được hỗ trợ.');
         }
       } catch (err) {
-        if (isQuotaOrRateLimitError(err)) {
+        const isQuotaError = isQuotaOrRateLimitError(err);
+        const isTransientError = isTransientAiServiceError(err);
+        if (isQuotaError || isTransientError) {
           const retryDelayMs = extractRetryDelayMs(err);
           if (currentModelIndex < modelCandidates.length - 1) {
             currentModelIndex += 1;
@@ -1163,12 +1186,17 @@ async function generateGeminiText(
             continue;
           }
           if (attempt < maxAttempts) {
-            const waitMs = retryDelayMs || Math.min(65000, 2000 * (attempt + 1));
+            const waitMs = retryDelayMs || (isQuotaError
+              ? Math.min(65000, 2000 * (attempt + 1))
+              : Math.min(30000, 1200 * (attempt + 1)));
             await sleepMs(waitMs);
             continue;
           }
-          if (isDailyQuotaExceededError(err)) {
+          if (isQuotaError && isDailyQuotaExceededError(err)) {
             throw new Error(`Đã chạm quota của model ${currentModel}. Hãy đổi model/API key hoặc chờ quota reset rồi thử lại.`);
+          }
+          if (isTransientError) {
+            throw new Error(`Model ${currentModel} đang quá tải (high demand/503). Hãy thử lại sau 1-2 phút hoặc đổi model.`);
           }
         }
         throw err;
@@ -6590,6 +6618,8 @@ const AppContent = () => {
       const rawMessage = error instanceof Error ? error.message : String(error || '');
       if (isQuotaOrRateLimitError(error)) {
         alert(`AI đang chạm giới hạn quota/rate limit.\n${rawMessage}\n\nBạn có thể đổi model trong phần API hoặc chờ quota reset rồi dịch lại.`);
+      } else if (isTransientAiServiceError(error)) {
+        alert(`Model AI đang quá tải tạm thời (503/high demand).\n${rawMessage}\n\nMình đã tự retry nhiều lần nhưng vẫn chưa ổn. Bạn thử lại sau 1-2 phút hoặc đổi model khác trong mục API.`);
       } else {
         alert(`Có lỗi xảy ra trong quá trình AI dịch truyện.\n${rawMessage.slice(0, 260)}`);
       }
