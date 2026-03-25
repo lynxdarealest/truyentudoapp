@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth, AuthProvider } from './AuthContext';
 import { supabase, hasSupabase } from './supabaseClient';
 import { storage } from './storage';
-import { db, auth, googleProvider, signInWithPopup } from './firebase';
+import { db } from './firebase';
 import { collection, addDoc, getDocs, query, where, getDocFromServer, doc, Timestamp, updateDoc, orderBy, onSnapshot } from 'firebase/firestore';
 import { 
   Plus, 
@@ -1674,7 +1674,7 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { has
 
 // --- Components ---
 
-const CharacterManager = ({ storyId, onBack }: { storyId?: string, onBack: () => void }) => {
+const CharacterManager = ({ storyId, onBack, onRequireAuth }: { storyId?: string, onBack: () => void, onRequireAuth: () => void }) => {
   const { user } = useAuth();
   const [characters, setCharacters] = useState<Character[]>([]);
   const [isAdding, setIsAdding] = useState(false);
@@ -1754,7 +1754,7 @@ const CharacterManager = ({ storyId, onBack }: { storyId?: string, onBack: () =>
           <h3 className="text-xl font-serif font-bold mb-2">Bạn chưa đăng nhập</h3>
           <p className="text-slate-500 mb-8">Vui lòng đăng nhập để quản lý danh sách nhân vật của bạn.</p>
           <button 
-            onClick={() => signInWithPopup(auth, googleProvider)}
+            onClick={onRequireAuth}
             className="px-8 py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-900/20"
           >
             Đăng nhập ngay
@@ -2621,11 +2621,13 @@ const SectionHeader = ({ title, subtitle }: { title: string; subtitle?: string }
 
 const ToolsManager = ({
   onBack,
+  onRequireAuth,
   profile,
   onSaveProfile,
   section = 'tools',
 }: {
   onBack: () => void;
+  onRequireAuth: () => void;
   profile: UiProfile;
   onSaveProfile: (next: UiProfile) => void;
   section?: 'tools' | 'api';
@@ -3633,7 +3635,7 @@ const ToolsManager = ({
           <h3 className="text-xl font-serif font-bold mb-2">Bạn chưa đăng nhập</h3>
           <p className="text-slate-500 mb-8">Vui lòng đăng nhập để sử dụng các công cụ nhập/xuất dữ liệu.</p>
           <button 
-            onClick={() => signInWithPopup(auth, googleProvider)}
+            onClick={onRequireAuth}
             className="px-8 py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-900/20"
           >
             Đăng nhập ngay
@@ -8299,12 +8301,13 @@ const AppContent = () => {
             onExportStory={handleOpenExportStory}
           />
         ) : view === 'characters' ? (
-          <CharacterManager key="characters" onBack={() => setView('stories')} />
+          <CharacterManager key="characters" onBack={() => setView('stories')} onRequireAuth={() => setShowAuthModal(true)} />
         ) : view === 'api' ? (
           <ToolsManager
             key="api"
             section="api"
             onBack={() => setView('stories')}
+            onRequireAuth={() => setShowAuthModal(true)}
             profile={profile}
             onSaveProfile={setProfile}
           />
@@ -8313,6 +8316,7 @@ const AppContent = () => {
             key="tools"
             section="tools"
             onBack={() => setView('stories')}
+            onRequireAuth={() => setShowAuthModal(true)}
             profile={profile}
             onSaveProfile={setProfile}
           />
