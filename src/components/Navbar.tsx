@@ -256,7 +256,7 @@ export function Navbar({
             <div className="w-10 h-10 bg-gradient-to-br from-indigo-600 to-violet-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-900/30 group-hover:scale-110 group-hover:rotate-3 transition-all duration-300">
               <Feather className="w-6 h-6 text-white" />
             </div>
-            <span className={cn('text-xl font-serif font-bold tracking-tight hidden sm:block', titleClass)}>Truyện Tự Do</span>
+            <span className={cn('text-xl font-serif font-bold tracking-tight hidden sm:block', titleClass)}>TruyenForge</span>
           </div>
 
           <div ref={segmentsRef} className={cn('app-navbar__segments relative grid grid-cols-4 gap-1 p-1 rounded-2xl overflow-hidden', segmentedClass)}>

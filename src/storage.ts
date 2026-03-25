@@ -100,7 +100,7 @@ export const storage = {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `truyen-tu-do-backup-${new Date().toISOString().split('T')[0]}.json`;
+    a.download = `truyenforge-backup-${new Date().toISOString().split('T')[0]}.json`;
     a.click();
     URL.revokeObjectURL(url);
   },
