@@ -53,7 +53,6 @@ import { Navbar } from './components/Navbar';
 import { loadBudgetState } from './finops';
 import { HelpModal } from './components/HelpModal';
 import { ApiSectionPanel } from './components/tools/ApiSectionPanel';
-import { ProfileSettingsPanel } from './components/tools/ProfileSettingsPanel';
 import { ToolsPage } from './features/tools/ToolsPage';
 import { PromptLibraryModal as PromptLibraryModalNew } from './features/prompt/PromptLibrary';
 
