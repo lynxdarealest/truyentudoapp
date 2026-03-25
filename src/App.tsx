@@ -262,24 +262,67 @@ interface UiProfile {
   avatarUrl: string;
 }
 
+const DEFAULT_PROFILE_AVATAR = 'https://api.dicebear.com/9.x/initials/svg?seed=User';
+
 function loadUiProfile(defaultName?: string, defaultAvatar?: string): UiProfile {
   try {
     const raw = localStorage.getItem(UI_PROFILE_KEY);
     const parsed = raw ? (JSON.parse(raw) as Partial<UiProfile>) : {};
     return {
       displayName: parsed.displayName || defaultName || 'Người dùng',
-      avatarUrl: parsed.avatarUrl || defaultAvatar || 'https://api.dicebear.com/9.x/initials/svg?seed=User',
+      avatarUrl: parsed.avatarUrl || defaultAvatar || DEFAULT_PROFILE_AVATAR,
     };
   } catch {
     return {
       displayName: defaultName || 'Người dùng',
-      avatarUrl: defaultAvatar || 'https://api.dicebear.com/9.x/initials/svg?seed=User',
+      avatarUrl: defaultAvatar || DEFAULT_PROFILE_AVATAR,
     };
   }
 }
 
 function saveUiProfile(profile: UiProfile): void {
   localStorage.setItem(UI_PROFILE_KEY, JSON.stringify(profile));
+}
+
+async function resizeAvatarFile(file: File): Promise<string> {
+  const maxBytes = 5 * 1024 * 1024;
+  if (file.size > maxBytes) {
+    throw new Error('Ảnh quá lớn. Vui lòng chọn ảnh nhỏ hơn 5MB.');
+  }
+
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('Không thể đọc file ảnh.'));
+    reader.readAsDataURL(file);
+  });
+
+  const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('File ảnh không hợp lệ.'));
+    img.src = dataUrl;
+  });
+
+  const maxSize = 320;
+  const scale = Math.min(1, maxSize / Math.max(image.width, image.height));
+  const width = Math.max(1, Math.round(image.width * scale));
+  const height = Math.max(1, Math.round(image.height * scale));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+
+  const context = canvas.getContext('2d');
+  if (!context) {
+    throw new Error('Trình duyệt không hỗ trợ xử lý ảnh.');
+  }
+
+  context.clearRect(0, 0, width, height);
+  context.drawImage(image, 0, 0, width, height);
+
+  const optimized = canvas.toDataURL('image/webp', 0.86);
+  return optimized.startsWith('data:image/') ? optimized : canvas.toDataURL('image/png');
 }
 
 function loadThemeMode(): ThemeMode {
@@ -6786,9 +6829,12 @@ const AppContent = () => {
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [profileNameDraft, setProfileNameDraft] = useState(profile.displayName);
   const [profileAvatarDraft, setProfileAvatarDraft] = useState(profile.avatarUrl);
+  const [profileAvatarError, setProfileAvatarError] = useState('');
+  const [isUploadingProfileAvatar, setIsUploadingProfileAvatar] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [isExportingStory, setIsExportingStory] = useState(false);
+  const profileAvatarInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -6806,6 +6852,7 @@ const AppContent = () => {
   useEffect(() => {
     setProfileNameDraft(profile.displayName);
     setProfileAvatarDraft(profile.avatarUrl);
+    setProfileAvatarError('');
   }, [profile.displayName, profile.avatarUrl]);
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -7060,6 +7107,45 @@ const AppContent = () => {
   useEffect(() => {
     saveUiProfile(profile);
   }, [profile]);
+
+  const handleProfileAvatarFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      setProfileAvatarError('Chỉ hỗ trợ file ảnh (png, jpg, webp...).');
+      return;
+    }
+
+    setIsUploadingProfileAvatar(true);
+    setProfileAvatarError('');
+    try {
+      const optimizedAvatar = await resizeAvatarFile(file);
+      setProfileAvatarDraft(optimizedAvatar);
+    } catch (error) {
+      setProfileAvatarError(error instanceof Error ? error.message : 'Không thể tải ảnh avatar.');
+    } finally {
+      setIsUploadingProfileAvatar(false);
+    }
+  };
+
+  const closeProfileModal = () => {
+    setShowProfileModal(false);
+    setProfileNameDraft(profile.displayName);
+    setProfileAvatarDraft(profile.avatarUrl);
+    setProfileAvatarError('');
+  };
+
+  const saveProfileDraft = () => {
+    const normalizedAvatar = profileAvatarDraft.trim() || user?.photoURL || DEFAULT_PROFILE_AVATAR;
+    setProfile({
+      displayName: profileNameDraft.trim() || 'Người dùng',
+      avatarUrl: normalizedAvatar,
+    });
+    setShowProfileModal(false);
+    setProfileAvatarError('');
+  };
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', themeMode);
@@ -8169,7 +8255,48 @@ const AppContent = () => {
           <div className="tf-modal-panel w-full max-w-lg tf-card p-6 space-y-4">
             <div className="flex items-center justify-between gap-3">
               <h3 className="text-lg font-bold">Thiết lập cá nhân</h3>
-              <button className="tf-btn tf-btn-ghost px-3 py-1" onClick={() => setShowProfileModal(false)}>Đóng</button>
+              <button className="tf-btn tf-btn-ghost px-3 py-1" onClick={closeProfileModal}>Đóng</button>
+            </div>
+            <div className="space-y-3">
+              <label className="text-sm text-slate-300">Avatar</label>
+              <input
+                ref={profileAvatarInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handleProfileAvatarFileChange}
+              />
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 rounded-2xl border border-white/10 bg-slate-900/40 p-4">
+                <img
+                  src={profileAvatarDraft || user?.photoURL || DEFAULT_PROFILE_AVATAR}
+                  alt="Avatar xem trước"
+                  className="h-24 w-24 rounded-full object-cover border border-white/10 bg-slate-800"
+                />
+                <div className="min-w-0 flex-1 space-y-2">
+                  <p className="text-xs text-slate-400 tf-break-long">Bạn có thể tải ảnh trực tiếp từ thiết bị hoặc dán URL như trước. Ảnh tải lên sẽ được tối ưu và lưu cục bộ trong trình duyệt này.</p>
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <button
+                      type="button"
+                      className="tf-btn tf-btn-primary"
+                      onClick={() => profileAvatarInputRef.current?.click()}
+                      disabled={isUploadingProfileAvatar}
+                    >
+                      {isUploadingProfileAvatar ? 'Đang xử lý ảnh...' : 'Tải ảnh từ thiết bị'}
+                    </button>
+                    <button
+                      type="button"
+                      className="tf-btn tf-btn-ghost"
+                      onClick={() => {
+                        setProfileAvatarDraft(user?.photoURL || DEFAULT_PROFILE_AVATAR);
+                        setProfileAvatarError('');
+                      }}
+                    >
+                      Dùng avatar mặc định
+                    </button>
+                  </div>
+                  {profileAvatarError ? <p className="text-sm text-rose-400 tf-break-long">{profileAvatarError}</p> : null}
+                </div>
+              </div>
             </div>
             <div className="space-y-2">
               <label className="text-sm text-slate-300">Tên hiển thị</label>
@@ -8184,17 +8311,18 @@ const AppContent = () => {
               <input
                 className="tf-input tf-break-all"
                 value={profileAvatarDraft}
-                onChange={(e) => setProfileAvatarDraft(e.target.value)}
+                onChange={(e) => {
+                  setProfileAvatarDraft(e.target.value);
+                  setProfileAvatarError('');
+                }}
+                placeholder="https://... hoặc data:image/..."
               />
             </div>
             <div className="flex justify-end gap-2 tf-modal-actions">
-              <button className="tf-btn tf-btn-ghost" onClick={() => setShowProfileModal(false)}>Hủy</button>
+              <button className="tf-btn tf-btn-ghost" onClick={closeProfileModal}>Hủy</button>
               <button
                 className="tf-btn tf-btn-primary"
-                onClick={() => {
-                  setProfile({ displayName: profileNameDraft, avatarUrl: profileAvatarDraft });
-                  setShowProfileModal(false);
-                }}
+                onClick={saveProfileDraft}
               >
                 Lưu
               </button>
