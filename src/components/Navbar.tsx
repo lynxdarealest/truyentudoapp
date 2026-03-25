@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { BookOpen, Users, Settings, Download, Upload, Info, Feather, Database, Sun, Moon, Menu, ChevronLeft, Zap, Plus, Monitor, Smartphone } from 'lucide-react';
+import { BookOpen, Users, Settings, Download, Upload, Info, Feather, Database, Sun, Moon, Menu, ChevronLeft, Zap, Plus, Monitor, Smartphone, Library } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { storage } from '../storage';
@@ -22,6 +22,7 @@ interface NavbarProps {
   onShowHelp: () => void;
   onHome: () => void;
   onCreateStory: () => void;
+  onOpenPromptManager: () => void;
   themeMode: ThemeMode;
   onToggleTheme: () => void;
   viewportMode: ViewportMode;
@@ -36,6 +37,7 @@ export function Navbar({
   onShowHelp,
   onHome,
   onCreateStory,
+  onOpenPromptManager,
   themeMode,
   onToggleTheme,
   viewportMode,
@@ -83,6 +85,7 @@ export function Navbar({
           ]
         : []),
       { key: 'create', label: 'Viết truyện mới', icon: Plus, action: onCreateStory, tone: 'brand' as const },
+      { key: 'prompt', label: 'Kho prompt', icon: Library, action: onOpenPromptManager, tone: 'neutral' as const },
       { key: 'api-settings', label: 'Mở thiết lập AI', icon: Zap, action: () => setView('api'), tone: 'neutral' as const },
       { key: 'help', label: 'Xem hướng dẫn', icon: Info, action: onShowHelp, tone: 'neutral' as const },
       { key: 'theme', label: isDark ? 'Chuyển nền sáng' : 'Chuyển nền tối', icon: isDark ? Sun : Moon, action: onToggleTheme, tone: 'neutral' as const },
@@ -90,7 +93,7 @@ export function Navbar({
       { key: 'backup', label: 'Sao lưu dữ liệu', icon: Download, action: handleExport, tone: 'neutral' as const },
       { key: 'restore', label: 'Khôi phục dữ liệu', icon: Upload, action: handleImport, tone: 'neutral' as const },
     ],
-    [handleExport, handleImport, isDark, isMobile, onCreateStory, onHome, onShowHelp, onToggleTheme, onToggleViewportMode, setView, viewportModeValue],
+    [handleExport, handleImport, isDark, isMobile, onCreateStory, onHome, onOpenPromptManager, onShowHelp, onToggleTheme, onToggleViewportMode, setView, viewportModeValue],
   );
 
   const surfaceClass = isDark
@@ -120,6 +123,11 @@ export function Navbar({
   const dividerClass = isDark ? 'bg-white/10' : 'bg-slate-200';
   const titleClass = isDark ? 'text-slate-100' : 'text-slate-900';
   const subTextClass = isDark ? 'text-slate-400' : 'text-slate-400';
+  const activeIndex = navItems.findIndex((item) => item.key === currentView);
+  const indicatorStyle = {
+    width: `${100 / navItems.length}%`,
+    transform: `translateX(${Math.max(0, activeIndex) * 100}%)`,
+  };
 
   useEffect(() => {
     if (!navRef.current) return;
@@ -251,16 +259,24 @@ export function Navbar({
             <span className={cn('text-xl font-serif font-bold tracking-tight hidden sm:block', titleClass)}>Truyện Tự Do</span>
           </div>
 
-          <div ref={segmentsRef} className={cn('app-navbar__segments flex items-center gap-1 p-1 rounded-2xl', segmentedClass)}>
+          <div ref={segmentsRef} className={cn('app-navbar__segments relative grid grid-cols-4 gap-1 p-1 rounded-2xl overflow-hidden', segmentedClass)}>
+            <div
+              className={cn(
+                'absolute top-1 bottom-1 left-1 rounded-xl transition-transform duration-300 ease-out pointer-events-none',
+                isDark ? 'bg-gradient-to-r from-cyan-500 to-blue-500 shadow-lg shadow-cyan-500/30' : 'bg-gradient-to-r from-indigo-600 to-violet-600 shadow-lg shadow-indigo-500/30',
+              )}
+              style={indicatorStyle}
+            />
             {navItems.map(({ key, label, icon: Icon, action }) => (
               <button
                 key={key}
                 onClick={action}
                 className={cn(
-                  'flex items-center gap-2 px-3 md:px-4 py-2 rounded-xl text-sm font-bold transition-all duration-300 transform-gpu hover:-translate-y-0.5',
-                  currentView === key ? activeButtonClass : inactiveButtonClass,
+                  'relative z-10 flex items-center justify-center gap-2 px-3 md:px-4 py-2 rounded-xl text-sm font-bold transition-all duration-300 transform-gpu hover:-translate-y-0.5',
+                  currentView === key ? 'text-white' : inactiveButtonClass,
                 )}
                 title={label}
+                aria-current={currentView === key}
               >
                 <Icon className="w-4 h-4" /> <span className="hidden sm:inline">{label}</span>
               </button>

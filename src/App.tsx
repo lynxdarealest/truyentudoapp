@@ -5122,53 +5122,146 @@ const AILoadingOverlay = ({ isVisible, message, timer }: { isVisible: boolean, m
   );
 };
 
-const PREDEFINED_PROMPTS = [
+type PromptGroup = 'translate' | 'write' | 'common';
+
+const PREDEFINED_PROMPTS: Array<{ group: PromptGroup, category: string, prompts: Array<{ title: string, content: string }> }> = [
+  // Translate prompts (Trung Quốc, Nhật Bản)
   {
-    category: 'Truyện Sắc (18+)',
+    group: 'translate',
+    category: 'Dịch · Tiên hiệp / Huyền huyễn (CN)',
     prompts: [
-      { title: 'Miêu tả chi tiết', content: 'Hãy miêu tả chi tiết các cảnh ân ái, tập trung vào cảm xúc, biểu cảm và hành động của nhân vật. Sử dụng ngôn từ gợi cảm nhưng không thô tục.' },
-      { title: 'Tập trung tâm lý', content: 'Khắc họa sâu sắc diễn biến tâm lý, sự giằng xé và khát khao của nhân vật trong các cảnh thân mật.' }
-    ]
+      { title: 'Tu chân chi tiết', content: 'Dịch sát nghĩa các khái niệm tu chân (cảnh giới, pháp bảo, linh căn, độ kiếp), giữ nguyên thuật ngữ phiên âm nếu không có tương đương Việt. Giữ mạch hành văn trang trọng, nhịp vừa.' },
+      { title: 'Độ kiếp & khí tượng', content: 'Miêu tả rõ thiên kiếp, dị tượng, âm thanh, mùi, áp lực tâm thần. Tránh lược bỏ các bước chuẩn bị đan dược, trận pháp, linh thạch.' },
+      { title: 'Tông môn & bối cảnh', content: 'Giữ nguyên tên tông môn, bí cảnh, gia tộc; thêm chú thích ngắn trong ngoặc nếu từ thuần Hán khó hiểu. Giữ giọng văn cổ điển, không hiện đại hóa.' },
+    ],
   },
   {
-    category: 'Kiếm Hiệp',
+    group: 'translate',
+    category: 'Dịch · Đô thị / Hệ thống (CN)',
     prompts: [
-      { title: 'Phong cách Kim Dung', content: 'Hành văn theo phong cách Kim Dung, miêu tả chi tiết các chiêu thức võ công, nội công tâm pháp, và khí chất của bậc hiệp khách.' },
-      { title: 'Ân oán giang hồ', content: 'Tập trung vào những ân oán tình thù trong giang hồ, các âm mưu tranh đoạt bí kíp võ công và minh chủ võ lâm.' }
-    ]
+      { title: 'Hệ thống nhiệm vụ', content: 'Giữ nguyên giao diện hệ thống, bảng thuộc tính, phần thưởng. Không tóm tắt log hệ thống; trình bày dạng danh sách rõ ràng. Giọng kể nhanh, dứt khoát.' },
+      { title: 'Trọng sinh báo thù', content: 'Nhấn mạnh cảm xúc “đạp đổ số phận”, sắc bén khi đối thoại. Giữ các mánh lới làm giàu/công nghệ ở hiện đại; dịch gọn, không văn vẻ cổ điển.' },
+      { title: 'Thương chiến & đầu tư', content: 'Giữ thuật ngữ tài chính/công nghệ; ưu tiên dịch sát nghĩa, có thể thêm chú giải ngắn khi cần. Giọng kể thực dụng, tốc độ nhanh.' },
+    ],
   },
   {
-    category: 'Tiên Hiệp',
+    group: 'translate',
+    category: 'Dịch · Cung đấu / Trạch đấu (CN)',
     prompts: [
-      { title: 'Tu chân lộ', content: 'Miêu tả chi tiết quá trình tu luyện, đột phá cảnh giới, độ kiếp, và các pháp bảo, đan dược, trận pháp.' },
-      { title: 'Thế giới rộng lớn', content: 'Xây dựng một thế giới tu chân rộng lớn với nhiều tông môn, bí cảnh, và các chủng tộc khác nhau (yêu thú, ma tộc...).' }
-    ]
+      { title: 'Âm mưu cung đình', content: 'Giữ lời thoại kính ngữ, xưng hô chuẩn cổ phong (bản cung, vi thần...). Miêu tả diễn biến tâm lý, ánh mắt, động tác nhỏ. Nhịp chậm, căng thẳng.' },
+      { title: 'Trạch đấu gia tộc', content: 'Nhấn mạnh quy tắc tông môn/ gia pháp, vai vế trong nhà. Giữ phép tắc lễ nghi, xưng hô chị-em-thím-cô chuẩn Việt.' },
+      { title: 'Mưu kế và phản đòn', content: 'Chuyển tải mưu kế theo trình tự: dàn cảnh → gài bẫy → phản đòn. Lời thoại sắc lạnh, ẩn ý; tránh tóm tắt.' },
+    ],
   },
   {
-    category: 'Linh Dị',
+    group: 'translate',
+    category: 'Dịch · Đam mỹ / Bách hợp (CN)',
     prompts: [
-      { title: 'Bầu không khí u ám', content: 'Tạo ra một bầu không khí u ám, rùng rợn, miêu tả chi tiết những hiện tượng siêu nhiên, ma quái gây ám ảnh.' },
-      { title: 'Trinh thám tâm linh', content: 'Kết hợp yếu tố trinh thám giải đố với các hiện tượng tâm linh, nhân vật chính sử dụng đạo thuật hoặc dị năng để phá án.' }
-    ]
+      { title: 'Cảm xúc tinh tế', content: 'Giữ chất giọng mềm, chú trọng nhịp thở, ánh mắt, cử chỉ. Dịch xưng hô phù hợp (hắn/y, y/nàng), tránh hiện đại hóa quá mức.' },
+      { title: 'CP động thái', content: 'Làm rõ vai trò công/thụ hoặc switch; tôn trọng thiết lập giới (abo/giới giả). Giữ cảnh thân mật trọn vẹn, không né tránh.' },
+      { title: 'Mâu thuẫn nội tâm', content: 'Đào sâu độc thoại nội tâm, day dứt, giằng xé. Giữ nguyên ẩn dụ/câu lửng của tác giả.' },
+    ],
   },
   {
-    category: 'Ngôn Tình',
+    group: 'translate',
+    category: 'Dịch · Light Novel / Isekai (JP)',
     prompts: [
-      { title: 'Ngọt ngào sủng ái', content: 'Tập trung vào những tương tác ngọt ngào, lãng mạn giữa nam nữ chính, nam chính cưng chiều nữ chính hết mực.' },
-      { title: 'Ngược luyến tàn tâm', content: 'Cốt truyện nhiều trắc trở, hiểu lầm, miêu tả sâu sắc nỗi đau khổ và dằn vặt nội tâm của các nhân vật trước khi đến được với nhau.' }
-    ]
+      { title: 'Isekai phiêu lưu', content: 'Giữ cách xưng “ore/atashi/boku” thành tôi/tớ phù hợp bối cảnh. Giữ nguyên skill/đòn đánh tiếng Anh/Nhật nếu là tên riêng. Nhịp nhanh, hài hước nhẹ.' },
+      { title: 'Slice of life học đường', content: 'Giữ không khí nhẹ nhàng, hội thoại đời thường. Xưng hô bạn/hậu bối/đàn anh; giữ honorifics (-san, -kun, -senpai) khi cần.' },
+      { title: 'Shounen/Seinen hành động', content: 'Miêu tả chi tiết combat, tốc độ cao; giữ tên tuyệt kỹ. Tránh lạm dụng từ Hán Việt, ưu tiên ngắn gọn.' },
+    ],
   },
   {
-    category: 'Đô Thị',
+    group: 'translate',
+    category: 'Dịch · Kinh dị / Linh dị (CN/JP)',
     prompts: [
-      { title: 'Trọng sinh làm lại', content: 'Nhân vật chính trọng sinh về quá khứ, sử dụng kiến thức tương lai để làm giàu, thay đổi số phận và vả mặt những kẻ từng khinh thường mình.' },
-      { title: 'Hệ thống sinh hoạt', content: 'Nhân vật chính nhận được hệ thống giúp thăng tiến trong công việc, cuộc sống thường ngày, mang yếu tố hài hước, nhẹ nhàng.' }
-    ]
-  }
+      { title: 'Không khí rùng rợn', content: 'Dịch giữ nhịp chậm, âm thanh, mùi, ánh sáng. Tránh giải thích thừa, để khoảng trống cho sự sợ hãi.' },
+      { title: 'Phong tục/đạo thuật', content: 'Giữ nguyên thuật ngữ phong thủy, trận pháp, bùa chú; thêm chú giải ngắn nếu cần. Giọng kể nghiêm, tiết chế hài hước.' },
+      { title: 'Điều tra siêu nhiên', content: 'Bố cục: hiện trường → manh mối → giả thuyết → đối chứng. Giữ chi tiết pháp y/logic điều tra.' },
+    ],
+  },
+  // Writing prompts
+  {
+    group: 'write',
+    category: 'Viết · Plot 3 hồi nhanh',
+    prompts: [
+      { title: 'Khởi động chương 1', content: 'Mở cảnh bằng mâu thuẫn lớn, thiết lập mục tiêu nhân vật và hook độc giả trong 120 từ. Giữ giọng nhất quán với outline đã có.' },
+      { title: 'Leo thang xung đột', content: 'Tăng stakes bằng biến cố không đảo ngược, cắt cảnh trên đỉnh điểm. Nhịp nhanh, câu ngắn.' },
+      { title: 'Kết chương hook', content: 'Đóng chương bằng câu hỏi mở/đe doạ/twist. Không giải thích dài dòng.' },
+    ],
+  },
+  {
+    group: 'write',
+    category: 'Viết · Cung đấu/Trạch đấu',
+    prompts: [
+      { title: 'Mưu kế lớp lang', content: 'Xây 3 tầng kế: bẫy lộ → bẫy mồi → bẫy ẩn. Giữ thoại sắc bén, cài ẩn ý trong phép tắc.' },
+      { title: 'Cảm xúc bị kìm nén', content: 'Miêu tả chi tiết ánh mắt, bàn tay, lễ nghi; cảm xúc giấu dưới lớp vỏ lễ độ.' },
+      { title: 'Tiết tấu chậm căng', content: 'Nhịp vừa/chậm, trọng miêu tả cảnh trí, trang phục, bối cảnh quyền lực.' },
+    ],
+  },
+  {
+    group: 'write',
+    category: 'Viết · Trinh thám/ly kỳ',
+    prompts: [
+      { title: 'Manh mối rải đều', content: 'Mỗi cảnh phải rải một clue hữu hình + một red herring. Giữ timeline logic, đánh số clue.' },
+      { title: 'Điểm nhìn điều tra', content: 'Giữ POV nhất quán (thám tử hoặc người kể khách quan), tránh all-knowing.' },
+      { title: 'Kịch tính cuối cảnh', content: 'Đóng cảnh bằng phát hiện bất ngờ hoặc mâu thuẫn mới để chuyển cảnh mượt.' },
+    ],
+  },
+  {
+    group: 'write',
+    category: 'Viết · Romance chậm burn / Đam mỹ',
+    prompts: [
+      { title: 'Chemistry tinh tế', content: 'Tập trung vào khoảng cách cơ thể, ánh mắt, im lặng ngắn. Ít thổ lộ trực diện, nhiều hành động ngầm.' },
+      { title: 'Nhịp cảm xúc', content: 'Lên xuống cảm xúc: căng → xả → căng. Giữ lời thoại ngắn, nhiều subtext.' },
+      { title: 'Bối cảnh đời thường', content: 'Đặt tương tác vào sinh hoạt nhỏ (nấu ăn, đi chợ, chăm sóc khi ốm) để tăng gần gũi.' },
+    ],
+  },
+  {
+    group: 'write',
+    category: 'Viết · Webnovel hệ thống / gamer',
+    prompts: [
+      { title: 'Bảng trạng thái', content: 'Luôn cập nhật bảng status sau mỗi milestone. Dùng bullet gọn. Tránh lặp dài dòng.' },
+      { title: 'Phần thưởng & lựa chọn', content: 'Đưa ra 2-3 lựa chọn phần thưởng, ghi rõ ưu/nhược, để nhân vật quyết định. Giữ giọng vui nhộn.' },
+      { title: 'Nhiệm vụ nhánh', content: 'Tạo side-quest ngắn tăng tốc độ, kết nối main quest. Giữ pacing nhanh.' },
+    ],
+  },
+  // Common prompts
+  {
+    group: 'common',
+    category: 'Chung · Glossary/Thuật ngữ',
+    prompts: [
+      { title: 'Khóa glossary', content: 'Trước khi viết/dịch, liệt kê và khóa tất cả thuật ngữ bắt buộc. Không tự ý đổi tên riêng. Nếu sai, tự sửa bằng regex fallback.' },
+      { title: 'Nhất quán xưng hô', content: 'Kiểm tra và chuẩn hóa xưng hô theo bảng quy ước; giữ consistent trong toàn chương.' },
+      { title: 'Kiểm lỗi nhanh', content: 'Quét lặp từ, câu quá dài, dấu câu bất thường; đề xuất sửa ngắn gọn.' },
+    ],
+  },
+  {
+    group: 'common',
+    category: 'Chung · Tóm tắt & Graph',
+    prompts: [
+      { title: 'Tóm tắt 3 tầng', content: 'Tạo 3 lớp tóm tắt: 1) 2 câu siêu ngắn, 2) 6 câu sự kiện chính, 3) trích dẫn dòng then chốt. Không vượt 220 từ.' },
+      { title: 'Graph quan hệ', content: 'Liệt kê nút (nhân vật/địa điểm/vật phẩm) và cạnh (quan hệ/giao dịch/xung đột) dạng JSON để nuôi GraphRAG.' },
+      { title: 'Timeline kiểm chứng', content: 'Xuất timeline chuẩn hóa yyyy-mm-dd hoặc mốc chương, nêu ai/tham gia gì. Dùng để đối chiếu consistency.' },
+    ],
+  },
+];
+
+const PROMPT_GROUP_TABS: Array<{ key: PromptGroup, label: string }> = [
+  { key: 'translate', label: 'Prompt dịch truyện' },
+  { key: 'write', label: 'Prompt viết truyện' },
+  { key: 'common', label: 'Prompt chung' },
 ];
 
 const PromptLibraryModal = ({ isOpen, onClose, onSelect }: { isOpen: boolean, onClose: () => void, onSelect: (prompt: string) => void }) => {
-  const [selectedCategory, setSelectedCategory] = useState(PREDEFINED_PROMPTS[0].category);
+  const [selectedGroup, setSelectedGroup] = useState<PromptGroup>('translate');
+  const filteredCategories = PREDEFINED_PROMPTS.filter((c) => c.group === selectedGroup);
+  const [selectedCategory, setSelectedCategory] = useState(filteredCategories[0]?.category || '');
+
+  useEffect(() => {
+    const first = PREDEFINED_PROMPTS.find((c) => c.group === selectedGroup);
+    if (first?.category) setSelectedCategory(first.category);
+  }, [selectedGroup]);
 
   if (!isOpen) return null;
 
@@ -5190,11 +5283,26 @@ const PromptLibraryModal = ({ isOpen, onClose, onSelect }: { isOpen: boolean, on
             <Plus className="w-6 h-6 rotate-45 text-slate-400" />
           </button>
         </div>
+
+        <div className="px-6 pt-3 bg-slate-50 border-b border-slate-100 flex flex-wrap gap-2">
+          {PROMPT_GROUP_TABS.map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => setSelectedGroup(tab.key)}
+              className={cn(
+                'px-3 py-2 rounded-xl text-xs font-bold tracking-wide transition-all',
+                selectedGroup === tab.key ? 'bg-indigo-600 text-white shadow' : 'bg-white text-slate-600 hover:bg-slate-100',
+              )}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
         
         <div className="flex flex-1 overflow-hidden min-h-[400px]">
           {/* Sidebar */}
           <div className="w-1/3 border-r border-slate-100 bg-slate-50/50 overflow-y-auto p-4 space-y-2">
-            {PREDEFINED_PROMPTS.map(cat => (
+            {filteredCategories.map(cat => (
               <button
                 key={cat.category}
                 onClick={() => setSelectedCategory(cat.category)}
@@ -6427,6 +6535,7 @@ const AppContent = () => {
   const [isProcessingAI, setIsProcessingAI] = useState(false);
   const [aiLoadingMessage, setAILoadingMessage] = useState('');
   const [aiTimer, setAiTimer] = useState(0);
+  const [showPromptManager, setShowPromptManager] = useState(false);
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -7605,6 +7714,19 @@ const AppContent = () => {
         </div>
       )}
 
+      <PromptLibraryModal
+        isOpen={showPromptManager}
+        onClose={() => setShowPromptManager(false)}
+        onSelect={(prompt) => {
+          try {
+            navigator.clipboard?.writeText(prompt);
+          } catch {
+            // ignore
+          }
+          alert('Đã sao chép prompt vào clipboard.');
+        }}
+      />
+
       <Navbar 
         currentView={view} 
         setView={(v) => {
@@ -7631,6 +7753,7 @@ const AppContent = () => {
         onToggleViewportMode={handleToggleViewportMode}
         profile={profile}
         finopsWarning={finopsWarning}
+        onOpenPromptManager={() => setShowPromptManager(true)}
       />
 
       <div className="app-shell__body">
