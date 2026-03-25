@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { motion } from 'motion/react';
 import { BookOpen, Users, Settings, Info, Feather, Sun, Moon, Menu, ChevronLeft, Zap, Plus, Library } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -130,8 +131,6 @@ export function Navbar({
   const activeIndex = navItems.findIndex((item) => item.key === currentView);
   const indicatorStyle = {
     width: `${100 / navItems.length}%`,
-    transform: `translateX(${Math.max(0, activeIndex) * 100}%)`,
-    transition: 'transform 320ms ease',
   };
 
   useEffect(() => {
@@ -333,12 +332,18 @@ export function Navbar({
           </div>
 
           <div ref={segmentsRef} className={cn('app-navbar__segments relative grid grid-cols-4 gap-1 p-1 rounded-2xl overflow-hidden', segmentedClass)}>
-            <div
+            <motion.div
+              layout
+              layoutId="navbar-indicator"
               className={cn(
-                'absolute top-1 bottom-1 left-1 rounded-xl transition-transform duration-300 ease-out pointer-events-none',
+                'absolute top-1 bottom-1 rounded-xl pointer-events-none',
                 isDark ? 'bg-gradient-to-r from-cyan-500 to-blue-500 shadow-lg shadow-cyan-500/30' : 'bg-gradient-to-r from-indigo-600 to-violet-600 shadow-lg shadow-indigo-500/30',
               )}
               style={indicatorStyle}
+              animate={{
+                left: `${Math.max(0, activeIndex) * (100 / navItems.length)}%`,
+              }}
+              transition={{ type: 'spring', stiffness: 320, damping: 32, mass: 0.6 }}
             />
             {navItems.map(({ key, label, icon: Icon, action }) => (
               <button
