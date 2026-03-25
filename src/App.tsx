@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth, AuthProvider } from './AuthContext';
+import { supabase, hasSupabase } from './supabaseClient';
 import { storage } from './storage';
 import { db, auth, googleProvider, signInWithPopup } from './firebase';
 import { collection, addDoc, getDocs, query, where, getDocFromServer, doc, Timestamp, updateDoc, orderBy, onSnapshot } from 'firebase/firestore';
@@ -5556,6 +5557,7 @@ const AuthModal = ({
   onEmailChange,
   onPasswordChange,
   onSubmit,
+  onForgotPassword,
   busy,
   error,
 }: {
@@ -5568,6 +5570,7 @@ const AuthModal = ({
   onEmailChange: (v: string) => void;
   onPasswordChange: (v: string) => void;
   onSubmit: () => void;
+  onForgotPassword: () => void;
   busy: boolean;
   error?: string;
 }) => {
@@ -5624,6 +5627,15 @@ const AuthModal = ({
               placeholder="Mật khẩu"
               className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500"
             />
+            {mode === 'login' ? (
+              <button
+                type="button"
+                className="text-xs font-semibold text-indigo-600 hover:underline"
+                onClick={onForgotPassword}
+              >
+                Quên mật khẩu?
+              </button>
+            ) : null}
             {error ? <p className="text-sm text-rose-600">{error}</p> : null}
           </div>
         </div>
@@ -6935,6 +6947,24 @@ const AppContent = () => {
     }
   };
 
+  const handleForgotPassword = async () => {
+    const email = authEmailInput.trim();
+    if (!email) {
+      setAuthError('Nhập email để gửi link đặt lại mật khẩu.');
+      return;
+    }
+    if (!hasSupabase || !supabase) {
+      setAuthError('Supabase chưa được cấu hình, không thể gửi email reset.');
+      return;
+    }
+    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin });
+    if (error) {
+      setAuthError(error.message);
+    } else {
+      setAuthError('Đã gửi email đặt lại mật khẩu (kiểm tra hộp thư/spam).');
+    }
+  };
+
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const handler = () => setStoriesVersion((v) => v + 1);
@@ -8106,6 +8136,7 @@ const AppContent = () => {
         onEmailChange={setAuthEmailInput}
         onPasswordChange={setAuthPasswordInput}
         onSubmit={handleAuthSubmit}
+        onForgotPassword={handleForgotPassword}
         busy={authBusy}
         error={authError}
       />
@@ -8139,6 +8170,7 @@ const AppContent = () => {
         authEmail={user?.email}
         onShowAuth={() => setShowAuthModal(true)}
         onLogout={logout}
+        onOpenProfile={() => setView('tools')}
         onOpenPromptManager={() => setShowPromptManager(true)}
       />
 

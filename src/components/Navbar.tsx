@@ -25,6 +25,7 @@ interface NavbarProps {
   onOpenPromptManager: () => void;
   onShowAuth: () => void;
   onLogout: () => void;
+  onOpenProfile: () => void;
   themeMode: ThemeMode;
   onToggleTheme: () => void;
   viewportMode: ViewportMode;
@@ -43,6 +44,7 @@ export function Navbar({
   onOpenPromptManager,
   onShowAuth,
   onLogout,
+  onOpenProfile,
   themeMode,
   onToggleTheme,
   viewportMode,
@@ -93,15 +95,11 @@ export function Navbar({
         : []),
       { key: 'create', label: 'Viết truyện mới', icon: Plus, action: onCreateStory, tone: 'brand' as const },
       { key: 'prompt', label: 'Kho prompt', icon: Library, action: onOpenPromptManager, tone: 'neutral' as const },
-      { key: 'api-settings', label: 'Mở thiết lập AI', icon: Zap, action: () => setView('api'), tone: 'neutral' as const },
       { key: 'auth', label: authEmail ? 'Đăng xuất' : 'Đăng nhập', icon: authEmail ? LogOut : LogIn, action: authEmail ? onLogout : onShowAuth, tone: 'neutral' as const },
       { key: 'help', label: 'Xem hướng dẫn', icon: Info, action: onShowHelp, tone: 'neutral' as const },
-      { key: 'theme', label: isDark ? 'Chuyển nền sáng' : 'Chuyển nền tối', icon: isDark ? Sun : Moon, action: onToggleTheme, tone: 'neutral' as const },
-      { key: 'viewport', label: viewportModeValue === 'mobile' ? 'Chế độ máy tính' : 'Chế độ điện thoại', icon: viewportModeValue === 'mobile' ? Monitor : Smartphone, action: onToggleViewportMode, tone: 'neutral' as const },
-      { key: 'backup', label: 'Sao lưu dữ liệu', icon: Download, action: handleExport, tone: 'neutral' as const },
-      { key: 'restore', label: 'Khôi phục dữ liệu', icon: Upload, action: handleImport, tone: 'neutral' as const },
+      { key: 'theme', label: isDark ? 'Nền sáng' : 'Nền tối', icon: isDark ? Sun : Moon, action: onToggleTheme, tone: 'neutral' as const },
     ],
-    [handleExport, handleImport, isDark, isMobile, onCreateStory, onHome, onOpenPromptManager, onShowHelp, onToggleTheme, onToggleViewportMode, setView, viewportModeValue],
+    [isDark, isMobile, onCreateStory, onHome, onOpenPromptManager, onShowHelp, onToggleTheme, authEmail, onLogout, onShowAuth, setView],
   );
 
   const surfaceClass = isDark
@@ -430,18 +428,18 @@ export function Navbar({
                       setShowProfileMenu(false);
                       handleImport();
                     }}
-                    className={cn('w-full text-left px-3 py-2 rounded-lg text-sm font-semibold transition-colors', isDark ? 'hover:bg-white/10' : 'hover:bg-slate-100')}
+                  className={cn('w-full text-left px-3 py-2 rounded-lg text-sm font-semibold transition-colors', isDark ? 'hover:bg-white/10' : 'hover:bg-slate-100')}
                   >
                     Nhập backup JSON
                   </button>
                   <button
                     onClick={() => {
                       setShowProfileMenu(false);
-                      onHome();
+                      onOpenProfile();
                     }}
                     className={cn('w-full text-left px-3 py-2 rounded-lg text-sm font-semibold transition-colors', isDark ? 'hover:bg-white/10' : 'hover:bg-slate-100')}
                   >
-                    Hồ sơ hiển thị
+                    Đổi tên / Avatar
                   </button>
                   {authEmail ? (
                     <button
