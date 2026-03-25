@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { BookOpen, Users, Settings, Info, Feather, Sun, Moon, Menu, ChevronLeft, Zap, Plus, Monitor, Smartphone, Library } from 'lucide-react';
+import { BookOpen, Users, Settings, Info, Feather, Sun, Moon, Menu, ChevronLeft, Zap, Plus, Library } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { storage } from '../storage';
@@ -55,8 +55,6 @@ export function Navbar({
 }: NavbarProps) {
   const viewportModeValue: ViewportMode = viewportMode;
   const isMobile = viewportModeValue === 'mobile';
-  const viewportToggleLabel = isMobile ? 'Chế độ Desktop' : 'Chế độ Mobile';
-  const ViewportIcon = isMobile ? Monitor : Smartphone;
   const computeAspectTag = () => {
     const w = window.innerWidth || 1;
     const h = window.innerHeight || 1;
@@ -94,7 +92,6 @@ export function Navbar({
             { key: 'tools', label: 'Công cụ', icon: Settings, action: () => setView('tools'), tone: 'neutral' as const },
           ]
         : []),
-      { key: 'viewport', label: viewportToggleLabel, icon: ViewportIcon, action: onToggleViewportMode, tone: 'neutral' as const },
       { key: 'create', label: 'Viết truyện mới', icon: Plus, action: onCreateStory, tone: 'brand' as const },
       { key: 'prompt', label: 'Kho prompt', icon: Library, action: onOpenPromptManager, tone: 'neutral' as const },
       { key: 'help', label: 'Xem hướng dẫn', icon: Info, action: onShowHelp, tone: 'neutral' as const },
@@ -377,17 +374,6 @@ export function Navbar({
             <Library className="w-4 h-4" /> Prompt
           </button>
           <div className={cn('app-navbar-divider h-8 w-[1px] mx-1 md:mx-2', dividerClass)} />
-          <button
-            onClick={onToggleViewportMode}
-            className={cn(
-              'h-10 rounded-full border flex items-center justify-center gap-2 px-3 transition-all duration-300',
-              utilityButtonClass,
-            )}
-            title="Chuyển sang bố cục điện thoại"
-          >
-            <Smartphone className="w-4 h-4" />
-            <span className="hidden lg:inline text-xs font-bold">Điện thoại</span>
-          </button>
           <button
             onClick={onToggleTheme}
             className={cn('w-10 h-10 rounded-full border flex items-center justify-center transition-all duration-300', utilityButtonClass)}

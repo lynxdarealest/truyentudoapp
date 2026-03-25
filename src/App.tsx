@@ -8282,15 +8282,6 @@ const AppContent = () => {
         onOpenPromptManager={() => setShowPromptManager(true)}
       />
 
-      {viewportMode === 'mobile' && (
-        <button
-          onClick={handleToggleViewportMode}
-          className="fixed right-3 bottom-3 z-[80] rounded-full bg-white shadow-lg border border-slate-200 px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
-        >
-          Chuyển chế độ máy tính
-        </button>
-      )}
-
       <div className="app-shell__body">
       <AnimatePresence mode="wait">
         {selectedStory ? (
@@ -8440,12 +8431,22 @@ const AppContent = () => {
 
       <footer className="mt-10 border-t border-slate-200 bg-white/95 px-6 py-10 text-sm text-slate-600">
         <div className="max-w-6xl mx-auto space-y-6">
-          <div className="space-y-2">
-            <div className="inline-flex items-center gap-2 rounded-full bg-indigo-600 px-3 py-1 text-white text-xs font-bold shadow">
-              TruyenForge
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <div className="space-y-2">
+              <div className="inline-flex items-center gap-2 rounded-full bg-indigo-600 px-3 py-1 text-white text-xs font-bold shadow">
+                TruyenForge
+              </div>
+              <p className="text-slate-700">Playground AI cho viết, dịch, QA, worldbuilding. Vận hành cá nhân nên ưu tiên minh bạch, bảo mật và FinOps rõ ràng.</p>
+              <p className="text-xs text-slate-500">© 2026 TruyenForge · Người vận hành: ductruong.lynx@gmail.com</p>
             </div>
-            <p className="text-slate-700">Playground AI cho viết, dịch, QA, worldbuilding. Vận hành cá nhân nên ưu tiên minh bạch, bảo mật và FinOps rõ ràng.</p>
-            <p className="text-xs text-slate-500">© 2026 TruyenForge · Người vận hành: ductruong.lynx@gmail.com</p>
+            <div className="shrink-0 flex items-center gap-2">
+              <button
+                onClick={handleToggleViewportMode}
+                className="inline-flex items-center gap-2 rounded-full border border-indigo-200 bg-white px-4 py-2 text-xs font-bold text-indigo-700 hover:border-indigo-300 hover:bg-indigo-50 transition-all"
+              >
+                {viewportMode === 'mobile' ? 'Chuyển sang Desktop' : 'Chuyển sang Mobile'}
+              </button>
+            </div>
           </div>
           <div className="space-y-3">
             {footerSections.map((section) => (
@@ -8465,6 +8466,12 @@ const AppContent = () => {
                 ) : null}
               </div>
             ))}
+          </div>
+          <div className="flex items-center justify-center pt-2">
+            <a href="//www.dmca.com/Protection/Status.aspx?ID=2b90d0c4-d934-44b2-a095-dd5eca05debc" title="DMCA.com Protection Status" className="dmca-badge">
+              <img src="https://images.dmca.com/Badges/dmca_protected_sml_120n.png?ID=2b90d0c4-d934-44b2-a095-dd5eca05debc" alt="DMCA.com Protection Status" />
+            </a>
+            <script src="https://images.dmca.com/Badges/DMCABadgeHelper.min.js"></script>
           </div>
         </div>
       </footer>
