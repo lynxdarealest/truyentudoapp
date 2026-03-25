@@ -5385,13 +5385,11 @@ const PREDEFINED_PROMPTS: Array<{ group: PromptGroup, category: string, prompts:
 
 const PROMPT_GROUP_TABS: Array<{ key: PromptGroup, label: string }> = [
   { key: 'common', label: 'Prompt chung (ưu tiên cao nhất)' },
-  { key: 'translate', label: 'Prompt dịch truyện' },
-  { key: 'write', label: 'Prompt viết truyện' },
   { key: 'tone_rules', label: 'Quy tắc thể loại' },
 ];
 
 const PromptLibraryModal = ({ isOpen, onClose, onSelect }: { isOpen: boolean, onClose: () => void, onSelect: (prompt: string) => void }) => {
-  const [selectedGroup, setSelectedGroup] = useState<PromptGroup>('translate');
+  const [selectedGroup, setSelectedGroup] = useState<PromptGroup>('common');
   const filteredCategories = PREDEFINED_PROMPTS.filter((c) => c.group === selectedGroup);
   const [selectedCategory, setSelectedCategory] = useState(filteredCategories[0]?.category || '');
 
