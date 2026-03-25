@@ -1178,21 +1178,48 @@ async function generateGeminiText(
             ],
             generationConfig: attemptConfig,
           };
-          const raw = await relayGenerateContent(currentModel, body, timeoutMs);
           try {
-            const parsed = JSON.parse(raw);
-            if (parsed?.error?.message) {
-              throw new Error(`AI lỗi: ${parsed.error.message}`);
+            const raw = await relayGenerateContent(currentModel, body, timeoutMs);
+            try {
+              const parsed = JSON.parse(raw);
+              if (parsed?.error?.message) {
+                throw new Error(`AI lỗi: ${parsed.error.message}`);
+              }
+              text = extractTextFromModelPayload(parsed) || '';
+              if (!text && typeof raw === 'string') {
+                text = raw;
+              }
+            } catch (err) {
+              if (err instanceof Error && /AI lỗi:/i.test(err.message)) {
+                throw err;
+              }
+              text = raw || '';
             }
-            text = extractTextFromModelPayload(parsed) || '';
-            if (!text && typeof raw === 'string') {
-              text = raw;
+          } catch (relayErr) {
+            const fallbackKey = getConfiguredGeminiApiKey();
+            const fallbackEndpoint = `${getProviderBaseUrl('gcli').replace(/\/+$/, '')}/models/${currentModel}:generateContent`;
+            const relayMsg = stringifyError(relayErr);
+            if (fallbackKey) {
+              const resp = await fetchWithTimeout(
+                fallbackEndpoint,
+                {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${fallbackKey}`,
+                  },
+                  body: JSON.stringify(body),
+                },
+                timeoutMs + 8000,
+              );
+              if (!resp.ok) {
+                throw new Error(`Relay timeout; fallback bearer error ${resp.status}: ${await resp.text()}`);
+              }
+              const data = await resp.json();
+              text = extractTextFromModelPayload(data) || '';
+            } else {
+              throw new Error(`Relay timeout. ${relayMsg} · Hãy kết nối lại Relay hoặc dán API key trực tiếp (Gemini).`);
             }
-          } catch (err) {
-            if (err instanceof Error && /AI lỗi:/i.test(err.message)) {
-              throw err;
-            }
-            text = raw || '';
           }
         } else if (auth.provider === 'gemini' && auth.isApiKey && auth.client) {
           const response = await auth.client.models.generateContent({

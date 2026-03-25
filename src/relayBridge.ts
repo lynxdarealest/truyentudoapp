@@ -50,7 +50,7 @@ export function handleRelayMessage(msg: any) {
   }
 }
 
-export async function relayGenerateContent(model: string, body: unknown, timeoutMs = 20000): Promise<string> {
+export async function relayGenerateContent(model: string, body: unknown, timeoutMs = 45000): Promise<string> {
   if (!relaySend) {
     throw new Error('Relay chưa sẵn sàng. Vui lòng kết nối lại.');
   }
