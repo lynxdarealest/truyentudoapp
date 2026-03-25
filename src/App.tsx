@@ -54,6 +54,8 @@ import { loadBudgetState } from './finops';
 import { HelpModal } from './components/HelpModal';
 import { ApiSectionPanel } from './components/tools/ApiSectionPanel';
 import { ProfileSettingsPanel } from './components/tools/ProfileSettingsPanel';
+import { ToolsPage } from './features/tools/ToolsPage';
+import { PromptLibraryModal as PromptLibraryModalNew } from './features/prompt/PromptLibrary';
 
 import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { handleRelayMessage, relayGenerateContent, setRelaySender, notifyRelayDisconnected } from './relayBridge';
@@ -6951,6 +6953,9 @@ const AppContent = () => {
   const [aiLoadingMessage, setAILoadingMessage] = useState('');
   const [aiTimer, setAiTimer] = useState(0);
   const [showPromptManager, setShowPromptManager] = useState(false);
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [profileNameDraft, setProfileNameDraft] = useState(profile.displayName);
+  const [profileAvatarDraft, setProfileAvatarDraft] = useState(profile.avatarUrl);
   const [isExporting, setIsExporting] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [isExportingStory, setIsExportingStory] = useState(false);
@@ -6967,6 +6972,11 @@ const AppContent = () => {
       if (interval) clearInterval(interval);
     };
   }, [isProcessingAI]);
+
+  useEffect(() => {
+    setProfileNameDraft(profile.displayName);
+    setProfileAvatarDraft(profile.avatarUrl);
+  }, [profile.displayName, profile.avatarUrl]);
   useEffect(() => {
     const timer = window.setInterval(() => {
       const budget = loadBudgetState();
@@ -8299,7 +8309,7 @@ const AppContent = () => {
         </div>
       )}
 
-      <PromptLibraryModal
+      <PromptLibraryModalNew
         isOpen={showPromptManager}
         onClose={() => setShowPromptManager(false)}
         onSelect={(prompt) => {
@@ -8323,6 +8333,45 @@ const AppContent = () => {
         busy={isExportingStory}
         storyTitle={exportStory?.title || ''}
       />
+
+      {showProfileModal && (
+        <div className="fixed inset-0 z-[260] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-lg tf-card p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-bold">Thiết lập cá nhân</h3>
+              <button className="tf-btn tf-btn-ghost px-3 py-1" onClick={() => setShowProfileModal(false)}>Đóng</button>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm text-slate-300">Tên hiển thị</label>
+              <input
+                className="tf-input"
+                value={profileNameDraft}
+                onChange={(e) => setProfileNameDraft(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm text-slate-300">Avatar URL</label>
+              <input
+                className="tf-input"
+                value={profileAvatarDraft}
+                onChange={(e) => setProfileAvatarDraft(e.target.value)}
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <button className="tf-btn tf-btn-ghost" onClick={() => setShowProfileModal(false)}>Hủy</button>
+              <button
+                className="tf-btn tf-btn-primary"
+                onClick={() => {
+                  setProfile({ displayName: profileNameDraft, avatarUrl: profileAvatarDraft });
+                  setShowProfileModal(false);
+                }}
+              >
+                Lưu
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <AuthModal
         isOpen={showAuthModal}
         onClose={() => setShowAuthModal(false)}
@@ -8366,9 +8415,9 @@ const AppContent = () => {
         profile={profile}
         finopsWarning={finopsWarning}
         authEmail={user?.email}
-        onShowAuth={() => setShowAuthModal(true)}
+        onShowAuth={() => setShowAuthModal(true)} 
         onLogout={logout}
-        onOpenProfile={() => setView('tools')}
+        onOpenProfile={() => setShowProfileModal(true)} 
         onOpenPromptManager={() => setShowPromptManager(true)}
       />
 
