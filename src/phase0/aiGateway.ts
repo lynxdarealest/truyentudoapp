@@ -1,4 +1,5 @@
 export type AiProvider = 'gemini' | 'openai' | 'anthropic' | 'mock';
+import { canSpend, chargeBudget, estimateCostUsd } from '../finops';
 
 export interface GlossaryTerm {
   source: string;
@@ -320,6 +321,14 @@ function buildPrompt(input: TranslateRequest): string {
     .join('\n\n');
 }
 
+function estimatePromptChars(input: TranslateRequest): number {
+  const glossaryText = mergeGlossary(input.glossary)
+    .map((t) => `${t.source}=>${t.target}`)
+    .join(',');
+  const toneText = input.tone || '';
+  return (input.sourceText?.length || 0) + glossaryText.length + toneText.length + 120;
+}
+
 function estimateTokens(text: string): number {
   return Math.max(1, Math.round(text.length / 4));
 }
@@ -605,6 +614,8 @@ export async function translateSegment(input: TranslateRequest): Promise<Transla
   const candidates = selectCandidatesByOrder(runtime, loadCandidates(runtime));
   const failoverTrail: string[] = [];
   const cacheKey = makeTranslateCacheKey(input, runtime);
+  const promptChars = estimatePromptChars(input);
+  const expectedOutputChars = Math.max(400, Math.round(input.sourceText.length * 1.2));
   const cached = getCachedTranslation(cacheKey);
   if (cached?.alternatives?.length) {
     return {
@@ -631,6 +642,11 @@ export async function translateSegment(input: TranslateRequest): Promise<Transla
     const settled = await Promise.allSettled(
       selected.map(async (candidate) => {
         const model = chooseModel(candidate.provider, input);
+        const estCost = estimateCostUsd(candidate.provider, model, promptChars, expectedOutputChars);
+        const spendCheck = canSpend(estCost);
+        if (!spendCheck.allowed) {
+          throw new Error(`budget_exhausted:${estCost.toFixed(3)}/${spendCheck.remaining.toFixed(3)}`);
+        }
         const started = performance.now();
         const options = await runProvider(candidate, input, model);
         const latencyMs = Math.max(1, Math.round(performance.now() - started));
@@ -640,12 +656,13 @@ export async function translateSegment(input: TranslateRequest): Promise<Transla
           alternatives: options,
           latencyMs,
           keyName: candidate.keyName,
+          estCost,
         };
       }),
     );
 
     const comparisons: ProviderComparison[] = [];
-    let chosen: { provider: AiProvider; model: string; alternatives: string[]; latencyMs: number } | null = null;
+    let chosen: { provider: AiProvider; model: string; alternatives: string[]; latencyMs: number; estCost: number } | null = null;
 
     settled.forEach((result) => {
       if (result.status === 'fulfilled') {
@@ -665,6 +682,7 @@ export async function translateSegment(input: TranslateRequest): Promise<Transla
             model: result.value.model,
             alternatives: result.value.alternatives,
             latencyMs: result.value.latencyMs,
+            estCost: result.value.estCost,
           };
         }
       } else {
@@ -674,6 +692,7 @@ export async function translateSegment(input: TranslateRequest): Promise<Transla
 
     if (chosen) {
       const alternatives = chosen.alternatives.slice(0, 3);
+      chargeBudget(chosen.estCost, `translate:${chosen.provider}:${chosen.model}`);
       setCachedTranslation(cacheKey, {
         provider: chosen.provider,
         alternatives,
@@ -692,11 +711,18 @@ export async function translateSegment(input: TranslateRequest): Promise<Transla
 
   for (const candidate of candidates) {
     const model = chooseModel(candidate.provider, input);
+    const estCost = estimateCostUsd(candidate.provider, model, promptChars, expectedOutputChars);
+    const spendCheck = canSpend(estCost);
+    if (!spendCheck.allowed) {
+      failoverTrail.push(`budget_exhausted:${candidate.provider}(${model}) need ${estCost.toFixed(3)} remaining ${spendCheck.remaining.toFixed(3)}`);
+      continue;
+    }
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
         const alternatives = await runProvider(candidate, input, model);
         if (alternatives.length >= 1) {
           const topAlternatives = alternatives.slice(0, 3);
+          chargeBudget(estCost, `translate:${candidate.provider}:${model}`);
           setCachedTranslation(cacheKey, {
             provider: candidate.provider,
             alternatives: topAlternatives,

@@ -27,6 +27,7 @@ import type {
   WriterVariant,
   WriterWorkspaceState,
 } from './types';
+import { loadBudgetState, saveBudgetState } from '../finops';
 
 type TaskMeta = {
   provider: string;
@@ -89,6 +90,10 @@ export default function Phase3App() {
   const [contextResult, setContextResult] = useState<ContextAnswer | null>(null);
   const [wikiResult, setWikiResult] = useState<WikiExtractionResult | null>(null);
   const [notice, setNotice] = useState('');
+  const [budget, setBudget] = useState(() => loadBudgetState());
+  const [budgetMonthly, setBudgetMonthly] = useState<number>(() => loadBudgetState().monthlyBudgetUsd);
+  const [graphContext, setGraphContext] = useState<string[]>([]);
+  const [bundleContext, setBundleContext] = useState('');
 
   useEffect(() => {
     saveWriterWorkspaceState(workspace);
@@ -97,6 +102,15 @@ export default function Phase3App() {
   useEffect(() => {
     saveUniverseWikiState(wikiStore);
   }, [wikiStore]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setBudget(loadBudgetState()), 2000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    setBudgetMonthly(budget.monthlyBudgetUsd);
+  }, [budget.monthlyBudgetUsd]);
 
   const contextBundlePreview = useMemo(() => {
     const sections = [
@@ -126,11 +140,15 @@ export default function Phase3App() {
         chapterObjective: workspace.chapterObjective,
         styleProfile: workspace.styleProfile,
         recentChapterSummaries: workspace.recentChapterSummaries,
+        timelineNotes: workspace.timelineNotes,
         glossaryTerms: workspace.glossaryTerms,
         draftText: workspace.draftText,
         desiredWords,
+        universe: wikiStore,
       });
       setAutocompleteResult(result.payload.variants);
+      setGraphContext(result.graphContext || []);
+      setBundleContext(result.bundleContext || '');
       applyMeta({
         provider: result.provider,
         model: result.model,
@@ -150,8 +168,11 @@ export default function Phase3App() {
         chapterObjective: workspace.chapterObjective,
         recentChapterSummaries: workspace.recentChapterSummaries,
         timelineNotes: workspace.timelineNotes,
+        universe: wikiStore,
       });
       setPlotResult(result.payload);
+      setGraphContext(result.graphContext || []);
+      setBundleContext(result.bundleContext || '');
       applyMeta({
         provider: result.provider,
         model: result.model,
@@ -192,8 +213,10 @@ export default function Phase3App() {
         recentChapterSummaries: workspace.recentChapterSummaries,
         timelineNotes: workspace.timelineNotes,
         glossaryTerms: workspace.glossaryTerms,
+        universe: wikiStore,
       });
       setContextResult(result.payload);
+      setGraphContext(result.graphContext || []);
       applyMeta({
         provider: result.provider,
         model: result.model,
@@ -230,6 +253,36 @@ export default function Phase3App() {
     setNotice('Da luu ket qua trich xuat vao Universe Wiki local store.');
   };
 
+  const updateBudgetMonthly = () => {
+    const monthly = Math.max(1, Number(budgetMonthly) || 0);
+    const next = {
+      ...budget,
+      monthlyBudgetUsd: monthly,
+      isExhausted: budget.currentSpendUsd >= monthly,
+      lastChargeNote: 'manual_budget_update',
+    };
+    setBudget(next);
+    saveBudgetState(next);
+    setNotice('Da cap nhat han muc FinOps (local).');
+  };
+
+  const resetBudgetCycle = () => {
+    const now = new Date();
+    const next = {
+      ...budget,
+      currentSpendUsd: 0,
+      billingCycleStart: now.toISOString(),
+      billingCycleEnd: new Date(now.getTime() + 28 * 24 * 3600 * 1000).toISOString(),
+      isExhausted: false,
+      lastChargeUsd: 0,
+      lastChargeAt: '',
+      lastChargeNote: 'reset_cycle',
+    };
+    setBudget(next);
+    saveBudgetState(next);
+    setNotice('Da reset chu ky FinOps 28 ngay (mock).');
+  };
+
   return (
     <div className="min-h-screen bg-[#F6F7F4] text-[#1F2933] p-4 md:p-6">
       <div className="mx-auto max-w-[1500px] space-y-4">
@@ -245,6 +298,44 @@ export default function Phase3App() {
               </span>
               <span className="rounded-full border border-[#D9E2EC] px-3 py-1 bg-[#FFF4ED] text-[#C2410C]">
                 Timeline events: {wikiStore.timeline.length}
+              </span>
+              <span className="rounded-full border border-[#D9E2EC] px-3 py-1 bg-white text-[#52606D]">
+                Budget ${budget.monthlyBudgetUsd.toFixed(2)} · Remain ${Math.max(0, budget.monthlyBudgetUsd - budget.currentSpendUsd).toFixed(2)}
+              </span>
+              {budget.isExhausted ? (
+                <span className="rounded-full border border-rose-300 bg-rose-50 px-3 py-1 text-rose-700 font-semibold">
+                  Budget exhausted (fallback)
+                </span>
+              ) : null}
+            </div>
+          </div>
+          <div className="mt-3 grid gap-2 md:grid-cols-[1.2fr_1fr] text-xs text-[#52606D]">
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="font-semibold">Hạn mức tháng (USD)</label>
+              <input
+                className="rounded border border-[#D9E2EC] px-2 py-1 w-24"
+                type="number"
+                min={1}
+                value={budgetMonthly}
+                onChange={(e) => setBudgetMonthly(Number(e.target.value) || 0)}
+              />
+              <button
+                onClick={updateBudgetMonthly}
+                className="rounded bg-[#0F766E] px-3 py-1 font-semibold text-white disabled:opacity-60"
+              >
+                Lưu hạn mức
+              </button>
+              <button
+                onClick={resetBudgetCycle}
+                className="rounded border border-[#D9E2EC] px-3 py-1 font-semibold text-[#52606D]"
+              >
+                Reset chu kỳ 28 ngày
+              </button>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 justify-end">
+              <span>Cycle: {new Date(budget.billingCycleStart).toLocaleDateString()} → {new Date(budget.billingCycleEnd).toLocaleDateString()}</span>
+              <span className="rounded-full bg-white border border-[#D9E2EC] px-2 py-1">
+                Last charge: ${budget.lastChargeUsd.toFixed(3)} {budget.lastChargeNote ? `(${budget.lastChargeNote})` : ''}
               </span>
             </div>
           </div>
@@ -573,6 +664,20 @@ export default function Phase3App() {
                 {taskMeta.failoverTrail.slice(-8).map((row, idx) => <p key={`f-${idx}`}>- {row}</p>)}
               </div>
             ) : null}
+            {bundleContext ? (
+              <div className="rounded-xl border border-[#D9E2EC] bg-[#F6F7F4] p-3 text-xs text-[#52606D]">
+                <p className="font-semibold mb-1">Hierarchical Context Used</p>
+                <pre className="whitespace-pre-wrap text-[11px] leading-4">{bundleContext}</pre>
+              </div>
+            ) : null}
+            {graphContext.length ? (
+              <div className="rounded-xl border border-[#D9E2EC] bg-white p-3 text-xs text-[#52606D]">
+                <p className="font-semibold mb-1">GraphRAG nodes/edges</p>
+                <ul className="list-disc pl-4 space-y-1">
+                  {graphContext.slice(0, 10).map((row, idx) => <li key={`g-${idx}`}>{row}</li>)}
+                </ul>
+              </div>
+            ) : null}
             <div className="rounded-xl border border-[#D9E2EC] bg-[#F6F7F4] p-3 text-xs text-[#52606D]">
               <p className="font-semibold">Universe Wiki Snapshot</p>
               <p>Characters: {wikiStore.characters.length}</p>
@@ -587,4 +692,3 @@ export default function Phase3App() {
     </div>
   );
 }
-

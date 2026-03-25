@@ -1,4 +1,4 @@
-# Phase 3-5 Implementation Notes
+# Phase 2-5 Implementation Notes
 
 This document summarizes what has been implemented after Phase 1-2 optimization.
 
@@ -7,6 +7,7 @@ This document summarizes what has been implemented after Phase 1-2 optimization.
 - Main app: `/`
 - Phase 0 demo: `/?phase0=1`
 - Phase 1 translator MVP: `/?phase1=1`
+- Phase 2 QA & hậu kỳ: `/?phase2=1`
 - Phase 3 writer pro: `/?phase3=1`
 - Phase 4 scale & PWA: `/?phase4=1`
 - Phase 5 release hardening: `/?phase5=1`
@@ -21,6 +22,23 @@ This document summarizes what has been implemented after Phase 1-2 optimization.
   - `src/components/Navbar.tsx`
   - `src/index.css`
 - Applied route-level lazy loading in `src/main.tsx`.
+
+## Phase 2 (QA & Hậu kỳ)
+
+Implemented in:
+
+- `src/phase2/Phase2App.tsx`
+- `src/phase2/qaEngine.ts`
+- `src/phase2/storage.ts`
+- `src/phase2/types.ts`
+
+Features:
+
+- AI/rule-backed proofreader scan for spelling, grammar, repetition, and phrasing issues.
+- Consistency scan for glossary lock, pronoun drift, duplicate target segments, and timeline conflicts.
+- Quality Center workflow with assignment, resolve/reject state, and one-click suggested fix apply.
+- Chapter approval pipeline: `DRAFT -> IN_REVIEW -> REVIEWED -> PUBLISHED`.
+- Local KPI proxy for post-edit time reduction tracking.
 
 ## Phase 3 (Writer Pro)
 
@@ -39,6 +57,8 @@ Features:
 - Context query with references.
 - Wiki extraction (characters, locations, items, timeline).
 - Local universe store merge/save for extracted entities.
+- GraphRAG-style context blending (characters/locations/items/timeline) + hierarchical summaries injected into all Writer tasks.
+- FinOps quick controls (update monthly budget, reset cycle, show last charge) surfaced in Phase 3 header.
 
 ## Phase 4 (Scale & PWA Baseline)
 
@@ -79,4 +99,3 @@ Features:
 - `npm run lint` passed.
 - `npm run build` passed.
 - Bundle is split by route-level lazy loading; legacy `App` chunk remains large and can be split further in a next optimization pass.
-

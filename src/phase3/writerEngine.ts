@@ -4,11 +4,13 @@ import type {
   PlotSuggestion,
   TonePreset,
   ToneShiftResult,
+  UniverseWikiState,
   WikiEntity,
   WikiExtractionResult,
   WriterVariant,
   WriterVariantMode,
 } from './types';
+import { canSpend, chargeBudget, estimateCostUsd } from '../finops';
 
 type AiProvider = 'openai' | 'anthropic' | 'gemini' | 'mock';
 
@@ -47,11 +49,14 @@ interface TaskRunResult<T> {
   payload: T;
   fromCache: boolean;
   failoverTrail: string[];
+  graphContext?: string[];
+  bundleContext?: string;
 }
 
 const TASK_CACHE_KEY = 'phase3_writer_task_cache_v1';
 const TASK_CACHE_TTL_MS = 1000 * 60 * 20;
 const TASK_CACHE_LIMIT = 200;
+const GRAPH_CONTEXT_LIMIT = 12;
 
 function readText(value: unknown): string {
   return String(value || '').trim();
@@ -260,6 +265,89 @@ function setTaskCacheEntry(cacheKey: string, entry: Omit<TaskCacheEntry, 'cached
   saveTaskCache(compactTaskCache(cache));
 }
 
+function tokenize(input: string): string[] {
+  return readText(input)
+    .toLowerCase()
+    .split(/[^a-z0-9\u00C0-\u1EF9]+/i)
+    .filter((w) => w.length >= 3)
+    .slice(0, 120);
+}
+
+function scoreByTokens(text: string, tokens: string[]): number {
+  const lower = readText(text).toLowerCase();
+  if (!tokens.length) return 0;
+  return tokens.reduce((acc, token) => (lower.includes(token) ? acc + 1 : acc), 0);
+}
+
+function formatEntity(kind: string, row: WikiEntity): string {
+  const alias = row.aliases?.length ? ` · aka ${row.aliases.slice(0, 2).join(', ')}` : '';
+  return `${kind}: ${row.name}${alias}${row.description ? ` — ${row.description}` : ''}`;
+}
+
+function buildGraphContext(seed: string, wiki: UniverseWikiState): string[] {
+  const tokens = tokenize(seed);
+  const pickTop = (entities: WikiEntity[], label: string, limit: number): string[] => {
+    const scored = entities.map((row) => ({
+      row,
+      score: scoreByTokens(`${row.name} ${row.description} ${(row.aliases || []).join(' ')}`, tokens),
+    }));
+    scored.sort((a, b) => b.score - a.score || a.row.name.localeCompare(b.row.name));
+    const slice = scored.slice(0, limit).filter((row, idx) => tokens.length === 0 || row.score > 0 || idx < 2);
+    return slice.map((row) => formatEntity(label, row.row));
+  };
+
+  const timelineLines = (wiki.timeline || [])
+    .map((row) => ({
+      row,
+      score: scoreByTokens(`${row.title} ${row.detail} ${row.when}`, tokens),
+    }))
+    .sort((a, b) => b.score - a.score || a.row.title.localeCompare(b.row.title))
+    .slice(0, 4)
+    .filter((row, idx) => tokens.length === 0 || row.score > 0 || idx < 2)
+    .map((row) => `Edge[timeline]: ${row.row.title}${row.row.when ? ` @ ${row.row.when}` : ''}${row.row.detail ? ` — ${row.row.detail}` : ''}`);
+
+  const nodes = [
+    ...pickTop(wiki.characters || [], 'Node[character]', 4),
+    ...pickTop(wiki.locations || [], 'Node[location]', 3),
+    ...pickTop(wiki.items || [], 'Node[item]', 3),
+  ].slice(0, GRAPH_CONTEXT_LIMIT);
+
+  const merged = [...nodes, ...timelineLines].slice(0, GRAPH_CONTEXT_LIMIT);
+  if (!merged.length) return ['(empty graph context)'];
+  return merged;
+}
+
+function trimText(input: string, limit: number): string {
+  const clean = readText(input);
+  if (clean.length <= limit) return clean;
+  return `${clean.slice(0, limit - 3)}...`;
+}
+
+function buildHierarchicalContext(input: {
+  chapterObjective: string;
+  styleProfile: string;
+  recentChapterSummaries: string;
+  timelineNotes: string;
+  glossaryTerms?: string;
+}): string {
+  const paragraphs = readText(input.recentChapterSummaries)
+    .split(/\n{2,}/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  const tier1 = trimText(paragraphs.slice(0, 2).join(' '), 380);
+  const tier2 = trimText(paragraphs.slice(-2).join(' ') || input.recentChapterSummaries, 520);
+  const timeline = trimText(input.timelineNotes, 260);
+  const glossary = trimText(readText(input.glossaryTerms || ''), 260);
+  return [
+    `Tier1 summary: ${tier1 || '(none)'}`,
+    `Tier2 (recent focus): ${tier2 || '(none)'}`,
+    `Timeline cues: ${timeline || '(none)'}`,
+    glossary ? `Glossary lock: ${glossary}` : 'Glossary lock: (empty)',
+    `Objective: ${trimText(input.chapterObjective, 220)}`,
+    `Style: ${trimText(input.styleProfile, 160)}`,
+  ].join('\n');
+}
+
 async function runProviderJson(
   candidate: ProviderCandidate,
   model: string,
@@ -391,12 +479,20 @@ async function runTaskWithFallback<T>(input: {
   for (const candidate of candidates) {
     const model = pickTaskModel(candidate.provider, Boolean(input.preferStrongModel));
     try {
+      const promptChars = (input.systemPrompt?.length || 0) + (input.userPrompt?.length || 0);
+      const estCost = estimateCostUsd(candidate.provider as 'openai', model, promptChars, 900);
+      const spendCheck = canSpend(estCost);
+      if (!spendCheck.allowed) {
+        failoverTrail.push(`budget_exhausted:${candidate.provider}(${model}) need ${estCost.toFixed(3)} remaining ${spendCheck.remaining.toFixed(3)}`);
+        continue;
+      }
       const raw = await runProviderJson(candidate, model, input.systemPrompt, input.userPrompt);
       const normalized = input.normalize(raw);
       if (!normalized) {
         failoverTrail.push(`${candidate.provider}(${model}) returned invalid JSON payload`);
         continue;
       }
+      chargeBudget(estCost, `writer:${input.taskKey}`);
       setTaskCacheEntry(cacheKey, {
         provider: candidate.provider,
         model,
@@ -674,11 +770,24 @@ export async function generateAutocomplete(input: {
   chapterObjective: string;
   styleProfile: string;
   recentChapterSummaries: string;
+  timelineNotes: string;
   glossaryTerms: string;
   draftText: string;
   desiredWords: 50 | 100 | 200;
+  universe: UniverseWikiState;
 }): Promise<TaskRunResult<{ variants: WriterVariant[] }>> {
-  return runTaskWithFallback({
+  const bundleContext = buildHierarchicalContext({
+    chapterObjective: input.chapterObjective,
+    styleProfile: input.styleProfile,
+    recentChapterSummaries: input.recentChapterSummaries,
+    timelineNotes: input.timelineNotes,
+    glossaryTerms: input.glossaryTerms,
+  });
+  const graphContext = buildGraphContext(
+    [input.chapterObjective, input.recentChapterSummaries, input.draftText, input.timelineNotes].join(' '),
+    input.universe,
+  );
+  const result = await runTaskWithFallback({
     taskKey: 'autocomplete',
     preferStrongModel: false,
     systemPrompt: [
@@ -691,8 +800,9 @@ export async function generateAutocomplete(input: {
       `Desired words: ${input.desiredWords}`,
       `Chapter objective:\n${readText(input.chapterObjective)}`,
       `Style profile:\n${readText(input.styleProfile)}`,
-      `Recent chapter summaries:\n${readText(input.recentChapterSummaries)}`,
-      `Must-use glossary terms:\n${readText(input.glossaryTerms)}`,
+      `Hierarchical context (da rut gon nhieu cap):\n${bundleContext}`,
+      `GraphRAG nodes/edges:\n${graphContext.join('\n')}`,
+      `Must-use glossary terms (se giu nguyen trong dau ra):\n${readText(input.glossaryTerms)}`,
       `Current draft context:\n${readText(input.draftText)}`,
     ].join('\n\n'),
     normalize: normalizeVariants,
@@ -703,14 +813,30 @@ export async function generateAutocomplete(input: {
         desiredWords: input.desiredWords,
       }),
   });
+  return {
+    ...result,
+    graphContext,
+    bundleContext,
+  };
 }
 
 export async function generatePlotSuggestions(input: {
   chapterObjective: string;
   recentChapterSummaries: string;
   timelineNotes: string;
+  universe: UniverseWikiState;
 }): Promise<TaskRunResult<PlotSuggestion>> {
-  return runTaskWithFallback({
+  const bundleContext = buildHierarchicalContext({
+    chapterObjective: input.chapterObjective,
+    styleProfile: '',
+    recentChapterSummaries: input.recentChapterSummaries,
+    timelineNotes: input.timelineNotes,
+  });
+  const graphContext = buildGraphContext(
+    [input.chapterObjective, input.recentChapterSummaries, input.timelineNotes].join(' '),
+    input.universe,
+  );
+  const result = await runTaskWithFallback({
     taskKey: 'plot',
     preferStrongModel: true,
     systemPrompt: [
@@ -720,8 +846,9 @@ export async function generatePlotSuggestions(input: {
     ].join('\n'),
     userPrompt: [
       `Chapter objective:\n${readText(input.chapterObjective)}`,
-      `Recent chapter summaries:\n${readText(input.recentChapterSummaries)}`,
+      `Hierarchical context (rut gon):\n${bundleContext}`,
       `Timeline notes:\n${readText(input.timelineNotes)}`,
+      `GraphRAG nodes/edges:\n${graphContext.join('\n')}`,
     ].join('\n\n'),
     normalize: normalizePlot,
     fallback: () =>
@@ -730,6 +857,11 @@ export async function generatePlotSuggestions(input: {
         recentSummary: input.recentChapterSummaries,
       }),
   });
+  return {
+    ...result,
+    graphContext,
+    bundleContext,
+  };
 }
 
 export async function rewriteTone(input: {
@@ -762,8 +894,13 @@ export async function runContextQuery(input: {
   recentChapterSummaries: string;
   timelineNotes: string;
   glossaryTerms: string;
+  universe: UniverseWikiState;
 }): Promise<TaskRunResult<ContextAnswer>> {
-  return runTaskWithFallback({
+  const graphContext = buildGraphContext(
+    [input.question, input.recentChapterSummaries, input.timelineNotes, input.glossaryTerms].join(' '),
+    input.universe,
+  );
+  const result = await runTaskWithFallback({
     taskKey: 'context_query',
     preferStrongModel: true,
     systemPrompt: [
@@ -776,6 +913,7 @@ export async function runContextQuery(input: {
       `Recent chapter summaries:\n${readText(input.recentChapterSummaries)}`,
       `Timeline notes:\n${readText(input.timelineNotes)}`,
       `Glossary terms:\n${readText(input.glossaryTerms)}`,
+      `GraphRAG nodes/edges tu Universe:\n${graphContext.join('\n')}`,
     ].join('\n\n'),
     normalize: normalizeContext,
     fallback: () =>
@@ -785,6 +923,10 @@ export async function runContextQuery(input: {
         timeline: input.timelineNotes,
       }),
   });
+  return {
+    ...result,
+    graphContext,
+  };
 }
 
 export async function extractWiki(input: {
@@ -807,4 +949,3 @@ export async function extractWiki(input: {
       }),
   });
 }
-

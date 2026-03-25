@@ -27,6 +27,7 @@ interface NavbarProps {
   viewportMode: ViewportMode;
   onToggleViewportMode: () => void;
   profile: UiProfile;
+  finopsWarning?: string;
 }
 
 export function Navbar({
@@ -40,6 +41,7 @@ export function Navbar({
   viewportMode,
   onToggleViewportMode,
   profile,
+  finopsWarning,
 }: NavbarProps) {
   const viewportModeValue: ViewportMode = viewportMode;
   const isMobile = viewportModeValue === 'mobile';
@@ -267,6 +269,11 @@ export function Navbar({
         </div>
 
         <div ref={rightRef} className="app-navbar__right flex items-center gap-3">
+          {finopsWarning ? (
+            <span className="hidden lg:inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-700">
+              {finopsWarning}
+            </span>
+          ) : null}
           <div className="relative">
             <button
               onClick={() => setShowDataMenu((v) => !v)}

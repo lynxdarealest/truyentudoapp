@@ -49,6 +49,7 @@ import ReactMarkdown from 'react-markdown';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { Navbar } from './components/Navbar';
+import { loadBudgetState } from './finops';
 import { HelpModal } from './components/HelpModal';
 import { ApiSectionPanel } from './components/tools/ApiSectionPanel';
 import { ProfileSettingsPanel } from './components/tools/ProfileSettingsPanel';
@@ -6391,6 +6392,7 @@ const AppContent = () => {
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => loadThemeMode());
   const [viewportMode, setViewportMode] = useState<ViewportMode>(() => loadViewportMode());
   const [profile, setProfile] = useState<UiProfile>(() => loadUiProfile(user?.displayName || undefined, user?.photoURL || undefined));
+  const [finopsWarning, setFinopsWarning] = useState<string | undefined>(undefined);
 
   const [editingStory, setEditingStory] = useState<Story | null>(null);
   const [selectedStory, setSelectedStory] = useState<Story | null>(null);
@@ -6411,6 +6413,20 @@ const AppContent = () => {
       if (interval) clearInterval(interval);
     };
   }, [isProcessingAI]);
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const budget = loadBudgetState();
+      const remaining = Math.max(0, budget.monthlyBudgetUsd - budget.currentSpendUsd);
+      if (budget.isExhausted) {
+        setFinopsWarning('Hết budget · fallback model');
+      } else if (remaining < budget.monthlyBudgetUsd * 0.15) {
+        setFinopsWarning(`Còn $${remaining.toFixed(2)} budget`);
+      } else {
+        setFinopsWarning(undefined);
+      }
+    }, 1800);
+    return () => window.clearInterval(timer);
+  }, []);
   const [showAIGen, setShowAIGen] = useState(false);
   const [storiesVersion, setStoriesVersion] = useState(0);
   const [view, setView] = useState<'stories' | 'characters' | 'tools' | 'api'>('stories');
@@ -7587,6 +7603,7 @@ const AppContent = () => {
         viewportMode={viewportMode}
         onToggleViewportMode={handleToggleViewportMode}
         profile={profile}
+        finopsWarning={finopsWarning}
       />
 
       <div className="app-shell__body">

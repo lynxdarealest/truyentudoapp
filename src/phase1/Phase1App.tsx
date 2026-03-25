@@ -36,6 +36,7 @@ import {
 } from './translatorEngine';
 import { loadPhase1ApiConfig, maskKey, reorderProviders, savePhase1ApiConfig, type ApiKeyProfile } from './apiConfig';
 import { detectApiProvider, getUsageSnapshot, testApiConnection, type AiProvider } from '../phase0/aiGateway';
+import { loadBudgetState, saveBudgetState, type BudgetState } from '../finops';
 
 function newGlossaryRow(): Phase1GlossaryEntry {
   return {
@@ -63,6 +64,7 @@ export default function Phase1App() {
   const [parallelComparisons, setParallelComparisons] = useState<Array<{ provider: string; model: string; text: string; latencyMs: number }>>([]);
   const [failoverTrail, setFailoverTrail] = useState<string[]>([]);
   const [usage, setUsage] = useState(() => getUsageSnapshot());
+  const [budget, setBudget] = useState<BudgetState>(() => loadBudgetState());
   const [connectionStatus, setConnectionStatus] = useState<{ state: 'idle' | 'testing' | 'live' | 'dead'; message: string }>({
     state: 'idle',
     message: 'Chưa test kết nối',
@@ -74,6 +76,7 @@ export default function Phase1App() {
   const [profileModel, setProfileModel] = useState('');
   const [profilePros, setProfilePros] = useState('');
   const [profileCons, setProfileCons] = useState('');
+  const [budgetMonthly, setBudgetMonthly] = useState<number>(() => loadBudgetState().monthlyBudgetUsd);
 
   const [storyContext, setStoryContext] = useState(() => localStorage.getItem(STORY_CONTEXT_KEY) || '');
   const [globalGlossaryText, setGlobalGlossaryText] = useState(() => {
@@ -118,6 +121,7 @@ export default function Phase1App() {
   useEffect(() => {
     const timer = window.setInterval(() => {
       setUsage(getUsageSnapshot());
+      setBudget(loadBudgetState());
     }, 1200);
     return () => window.clearInterval(timer);
   }, []);
@@ -595,12 +599,12 @@ export default function Phase1App() {
           </main>
 
           <aside className="space-y-3">
-            <section className="phase1-card p-3">
-              <div className="mb-2 flex items-center justify-between">
-                <h2 className="phase1-section-title">API Control Panel</h2>
-                <span className="text-xs text-slate-500">Smart routing + failover</span>
-              </div>
-              <div className="space-y-2">
+    <section className="phase1-card p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <h2 className="phase1-section-title">API Control Panel</h2>
+        <span className="text-xs text-slate-500">Smart routing + failover + FinOps</span>
+      </div>
+      <div className="space-y-2">
                 <label className="text-xs font-semibold text-slate-600">Relay Socket URL</label>
                 <input
                   className="phase1-input"
@@ -641,6 +645,60 @@ export default function Phase1App() {
                   <p>Requests: {usage.sessionRequests}</p>
                   <p>Estimated Tokens: {usage.estimatedTokens}</p>
                   <p>By Provider: {Object.entries(usage.byProvider).map(([k, v]) => `${k}=${v}`).join(' | ') || 'N/A'}</p>
+                </div>
+                <div className="phase1-box text-xs text-slate-700">
+                  <p><b>Budget (FinOps)</b></p>
+                  <p>Monthly: ${budget.monthlyBudgetUsd.toFixed(2)}</p>
+                  <p>Spent: ${budget.currentSpendUsd.toFixed(3)}</p>
+                  <p>Remaining: ${Math.max(0, budget.monthlyBudgetUsd - budget.currentSpendUsd).toFixed(3)}</p>
+                  <p>Status: {budget.isExhausted ? 'Exhausted (fallback to mock)' : 'Active'}</p>
+                  {budget.lastChargeUsd > 0 ? (
+                    <p>Last charge: ${budget.lastChargeUsd.toFixed(3)} @ {budget.lastChargeAt || 'n/a'}</p>
+                  ) : null}
+                </div>
+                <div className="phase1-box text-xs text-slate-700 space-y-2">
+                  <p className="font-semibold text-slate-800">Chỉnh ngân sách</p>
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={budgetMonthly}
+                    onChange={(e) => setBudgetMonthly(Number(e.target.value) || 0)}
+                    className="phase1-input"
+                    placeholder="Monthly budget (USD)"
+                  />
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      className="phase1-ghost-btn"
+                      onClick={() => {
+                        const next = {
+                          ...budget,
+                          monthlyBudgetUsd: Math.max(1, budgetMonthly),
+                          isExhausted: budget.currentSpendUsd >= Math.max(1, budgetMonthly),
+                        };
+                        setBudget(next);
+                        saveBudgetState(next);
+                      }}
+                    >
+                      Save budget
+                    </button>
+                    <button
+                      className="phase1-ghost-btn"
+                      onClick={() => {
+                        const next = {
+                          ...budget,
+                          currentSpendUsd: 0,
+                          isExhausted: false,
+                          billingCycleStart: new Date().toISOString(),
+                          billingCycleEnd: new Date(Date.now() + 28 * 24 * 3600 * 1000).toISOString(),
+                        };
+                        setBudget(next);
+                        saveBudgetState(next);
+                      }}
+                    >
+                      Reset cycle
+                    </button>
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-1 gap-2">
