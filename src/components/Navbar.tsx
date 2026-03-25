@@ -294,8 +294,8 @@ export function Navbar({
                     'flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-semibold transition-all duration-300 hover:-translate-y-0.5',
                     tone === 'brand'
                       ? isDark
-                        ? 'bg-gradient-to-r from-emerald-500 to-green-500 text-slate-950 shadow-lg shadow-emerald-500/25 hover:shadow-emerald-400/35'
-                        : 'bg-gradient-to-r from-emerald-500 to-green-500 text-white shadow-lg shadow-emerald-400/25 hover:shadow-emerald-300/35'
+                        ? 'bg-purple-500/20 text-white border border-purple-400/50 shadow-purple-500/25'
+                        : 'bg-purple-50 text-purple-700 border border-purple-200 shadow-purple-100 hover:border-purple-300 hover:bg-purple-100'
                       : key === currentView
                         ? (isDark
                             ? 'bg-emerald-500/20 text-white border border-emerald-400/40 shadow-emerald-500/20'
