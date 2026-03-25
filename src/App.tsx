@@ -8320,6 +8320,35 @@ const AppContent = () => {
         message={aiLoadingMessage}
         timer={aiTimer}
       />
+
+      <footer className="mt-10 border-t border-slate-200 bg-white/90 px-6 py-8 text-sm text-slate-600">
+        <div className="max-w-6xl mx-auto grid gap-6 md:grid-cols-3">
+          <div className="space-y-2">
+            <h3 className="text-base font-bold text-slate-900">Liên hệ</h3>
+            <p>Email: <a className="text-indigo-600 font-semibold" href="mailto:ductruong.lynx@gmail.com">ductruong.lynx@gmail.com</a></p>
+            <p>Phản hồi bug, yêu cầu tính năng hoặc hỗ trợ tài khoản.</p>
+          </div>
+          <div className="space-y-2">
+            <h3 className="text-base font-bold text-slate-900">Cam kết & An toàn</h3>
+            <ul className="list-disc pl-4 space-y-1">
+              <li>Không lưu nội dung người dùng trên server mặc định; API key nằm phía client/Supabase.</li>
+              <li>Cảnh báo hạn mức FinOps khi gần hết ngân sách.</li>
+              <li>Ưu tiên bảo mật: không dùng dữ liệu để huấn luyện mô hình bên thứ ba.</li>
+            </ul>
+          </div>
+          <div className="space-y-2">
+            <h3 className="text-base font-bold text-slate-900">Miễn trừ trách nhiệm</h3>
+            <ul className="list-disc pl-4 space-y-1">
+              <li>Nội dung AI chỉ mang tính tham khảo, bạn chịu trách nhiệm biên tập và kiểm duyệt.</li>
+              <li>Không chịu trách nhiệm về vi phạm bản quyền hoặc dữ liệu nhạy cảm do người dùng nhập.</li>
+              <li>Vui lòng tuân thủ pháp luật và điều khoản nền tảng khi sử dụng.</li>
+            </ul>
+          </div>
+        </div>
+        <div className="mt-6 text-center text-xs text-slate-500">
+          © 2026 TruyenForge. All rights reserved.
+        </div>
+      </footer>
     </div>
   );
 };
