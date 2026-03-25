@@ -1,28 +1,31 @@
 <svg width="320" height="320" viewBox="0 0 320 320" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="tf" x1="70" y1="260" x2="250" y2="70" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#10B981"/>
-      <stop offset="0.5" stop-color="#06B6D4"/>
-      <stop offset="1" stop-color="#6366F1"/>
+    <linearGradient id="metal" x1="60" y1="260" x2="260" y2="60" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#C08A52"/>
+      <stop offset="1" stop-color="#A36A32"/>
     </linearGradient>
-    <linearGradient id="shadow" x1="60" y1="250" x2="240" y2="90" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#0B1220" stop-opacity="0.35"/>
+    <linearGradient id="shadow" x1="70" y1="250" x2="250" y2="80" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0B1220" stop-opacity="0.32"/>
       <stop offset="1" stop-color="#0B1220" stop-opacity="0.12"/>
     </linearGradient>
   </defs>
-  <rect x="18" y="18" width="284" height="284" rx="64" fill="#0F172A"/>
-  <rect x="30" y="30" width="260" height="260" rx="56" fill="url(#shadow)"/>
+  <rect x="16" y="16" width="288" height="288" rx="60" fill="#0F172A"/>
+  <rect x="28" y="28" width="264" height="264" rx="56" fill="url(#shadow)"/>
 
-  <!-- Monogram TF with saw edge on F -->
-  <!-- T stem and top bar -->
-  <path d="M90 92c0-6.6 5.4-12 12-12h116c6.6 0 12 5.4 12 12s-5.4 12-12 12h-46v126c0 6.6-5.4 12-12 12h-12c-6.6 0-12-5.4-12-12V104H102c-6.6 0-12-5.4-12-12Z" fill="url(#tf)"/>
+  <!-- Shield frame -->
+  <path d="M80 78c-4.4 0-8 3.6-8 8v92c0 20 11 38 28 47l56 30 56-30c17-9 28-27 28-47V86c0-4.4-3.6-8-8-8H80Z" fill="url(#metal)"/>
+  <path d="M96 94c-3.3 0-6 2.7-6 6v76c0 14.6 8 27.9 21 34.8l49 26.1 49-26.1c13-6.9 21-20.2 21-34.8v-76c0-3.3-2.7-6-6-6H96Z" fill="#0F172A"/>
 
-  <!-- F arm with saw teeth -->
-  <path d="M160 138c0-5 4-9 9-9h41c5 0 9 4 9 9s-4 9-9 9h-32v22h27c5 0 9 4 9 9s-4 9-9 9h-36c-5 0-9-4-9-9v-40Z" fill="url(#tf)"/>
+  <!-- Left gear half -->
+  <path d="M96 110l18-4 4 12-10 8 6 10-8 10 6 10-6 10 10 10-4 12-18-4c-8-18-8-38 2-58Z" fill="url(#metal)"/>
+  <!-- Right hammer head hint -->
+  <path d="M222 110c12 18 14 38 4 58l-16 4-4-12 8-10-8-10 8-10-8-10 6-10-4-10 14-4Z" fill="url(#metal)"/>
 
-  <!-- Saw blade arc on outer right -->
-  <path d="M214 110c28 10 46 34 46 64 0 17-6 33-16 45l-14-10 14-10-14-10 14-10-14-10 14-10-14-10 14-10-14-10 14-10-14-10 14-10-14-10Z" fill="url(#tf)"/>
+  <!-- Book + monogram -->
+  <path d="M133 120c-4.4 0-8 3.6-8 8v70c0 2.2 1.8 4 4 4h24l4-6 4 6h24c2.2 0 4-1.8 4-4v-70c0-4.4-3.6-8-8-8h-52Z" fill="url(#metal)"/>
+  <path d="M144 134c0-2.2 1.8-4 4-4h24c2.2 0 4 1.8 4 4v42c0 2.2-1.8 4-4 4h-24c-2.2 0-4-1.8-4-4v-42Z" fill="#0F172A"/>
+  <path d="M154 144c0-2.2 1.8-4 4-4h14c3.3 0 6 2.7 6 6 0 3.3-2.7 6-6 6h-10v6h8c3.3 0 6 2.7 6 6s-2.7 6-6 6h-14c-2.2 0-4-1.8-4-4v-22Z" fill="url(#metal)"/>
 
-  <!-- Spark/dot -->
-  <circle cx="246" cy="160" r="10" fill="url(#tf)"/>
+  <!-- Spark dot -->
+  <circle cx="220" cy="162" r="8" fill="url(#metal)"/>
 </svg>
