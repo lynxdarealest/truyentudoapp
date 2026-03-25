@@ -1929,14 +1929,14 @@ const TranslationNameDictionary = () => {
   };
 
   return (
-    <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm">
-      <div className="flex items-center justify-between mb-8">
-        <div className="flex items-center gap-3">
+    <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+      <div className="flex items-center justify-between mb-8 flex-wrap gap-4">
+        <div className="flex items-center gap-3 flex-wrap">
           <div className="p-3 bg-amber-50 rounded-2xl">
             <Languages className="w-6 h-6 text-amber-600" />
           </div>
           <div>
-            <h3 className="text-xl font-serif font-bold">Từ điển tên dịch</h3>
+            <h3 className="text-xl font-serif font-bold">Khi Name</h3>
             <p className="text-xs text-slate-500 font-medium">Tự động thay thế tên khi dịch truyện</p>
           </div>
         </div>
@@ -1955,25 +1955,25 @@ const TranslationNameDictionary = () => {
         </div>
       </div>
 
-      <form onSubmit={handleAdd} className="flex gap-3 mb-8">
+      <form onSubmit={handleAdd} className="flex flex-col md:flex-row gap-3 mb-8">
         <input 
           type="text" 
           placeholder="Tên gốc (VD: 林凡)" 
           value={newOriginal}
           onChange={e => setNewOriginal(e.target.value)}
-          className="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-amber-500 outline-none transition-all"
+          className="flex-1 w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-amber-500 outline-none transition-all"
         />
         <input 
           type="text" 
           placeholder="Tên dịch (VD: Lâm Phàm)" 
           value={newTranslation}
           onChange={e => setNewTranslation(e.target.value)}
-          className="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-amber-500 outline-none transition-all"
+          className="flex-1 w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-amber-500 outline-none transition-all"
         />
         <button 
           type="submit"
           disabled={isAdding}
-          className="px-6 py-3 bg-amber-600 text-white rounded-xl font-bold hover:bg-amber-700 transition-all disabled:opacity-50"
+          className="w-full md:w-auto px-6 py-3 bg-amber-600 text-white rounded-xl font-bold hover:bg-amber-700 transition-all disabled:opacity-50"
         >
           {isAdding ? '...' : <Plus className="w-5 h-5" />}
         </button>
@@ -8435,20 +8435,30 @@ const AppContent = () => {
         timer={aiTimer}
       />
 
-      <footer className="mt-10 border-t border-slate-200 bg-white/95 px-6 py-10 text-sm text-slate-600">
+      <footer className={cn(
+        "mt-10 border-t px-6 py-10 text-sm",
+        themeMode === 'dark'
+          ? 'border-slate-800 bg-slate-900 text-slate-200'
+          : 'border-slate-200 bg-white/95 text-slate-600'
+      )}>
         <div className="max-w-6xl mx-auto space-y-6">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
             <div className="space-y-2">
               <div className="inline-flex items-center gap-2 rounded-full bg-indigo-600 px-3 py-1 text-white text-xs font-bold shadow">
                 TruyenForge
               </div>
-              <p className="text-slate-700">Playground AI cho viết, dịch, QA, worldbuilding. Vận hành cá nhân nên ưu tiên minh bạch, bảo mật và FinOps rõ ràng.</p>
-              <p className="text-xs text-slate-500">© 2026 TruyenForge · Người vận hành: ductruong.lynx@gmail.com</p>
+              <p className={themeMode === 'dark' ? 'text-slate-200' : 'text-slate-700'}>Playground AI cho viết, dịch, QA, worldbuilding. Vận hành cá nhân nên ưu tiên minh bạch, bảo mật và FinOps rõ ràng.</p>
+              <p className={themeMode === 'dark' ? 'text-slate-400' : 'text-xs text-slate-500'}>© 2026 TruyenForge · Người vận hành: ductruong.lynx@gmail.com</p>
             </div>
             <div className="shrink-0 flex items-center gap-2">
               <button
                 onClick={handleToggleViewportMode}
-                className="inline-flex items-center gap-2 rounded-full border border-indigo-200 bg-white px-4 py-2 text-xs font-bold text-indigo-700 hover:border-indigo-300 hover:bg-indigo-50 transition-all"
+                className={cn(
+                  "inline-flex items-center gap-2 rounded-full px-4 py-2 text-xs font-bold transition-all",
+                  themeMode === 'dark'
+                    ? 'border border-slate-700 bg-slate-800 text-slate-100 hover:border-indigo-400 hover:bg-slate-700'
+                    : 'border border-indigo-200 bg-white text-indigo-700 hover:border-indigo-300 hover:bg-indigo-50'
+                )}
               >
                 {viewportMode === 'mobile' ? 'Chuyển sang Desktop' : 'Chuyển sang Mobile'}
               </button>
@@ -8456,17 +8466,26 @@ const AppContent = () => {
           </div>
           <div className="space-y-3">
             {footerSections.map((section) => (
-              <div key={section.id} className="border border-slate-200 rounded-2xl bg-white/90 shadow-sm">
+              <div key={section.id} className={cn(
+                "border rounded-2xl shadow-sm",
+                themeMode === 'dark' ? 'border-slate-800 bg-slate-900/60' : 'border-slate-200 bg-white/90'
+              )}>
                 <button
                   onClick={() => setFooterOpen((prev) => ({ ...prev, [section.id]: !prev[section.id] }))}
-                  className="w-full flex items-center justify-between px-4 py-3 text-left font-semibold text-slate-800"
+                  className={cn(
+                    "w-full flex items-center justify-between px-4 py-3 text-left font-semibold",
+                    themeMode === 'dark' ? 'text-slate-100' : 'text-slate-800'
+                  )}
                   aria-expanded={footerOpen[section.id]}
                 >
                   <span>{section.title}</span>
-                  <ChevronRight className={cn('w-5 h-5 text-slate-400 transition-transform', footerOpen[section.id] ? 'rotate-90 text-indigo-600' : '')} />
+                  <ChevronRight className={cn('w-5 h-5 transition-transform', themeMode === 'dark' ? 'text-slate-500' : 'text-slate-400', footerOpen[section.id] ? 'rotate-90 text-indigo-500' : '')} />
                 </button>
                 {footerOpen[section.id] ? (
-                  <div className="px-4 pb-4 pt-1 text-sm text-slate-600 space-y-3">
+                  <div className={cn(
+                    "px-4 pb-4 pt-1 text-sm space-y-3",
+                    themeMode === 'dark' ? 'text-slate-300' : 'text-slate-600'
+                  )}>
                     {section.content}
                   </div>
                 ) : null}
