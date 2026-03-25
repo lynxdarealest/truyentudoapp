@@ -335,9 +335,9 @@ export function Navbar({
         <div ref={leftRef} className="app-navbar__left flex items-center gap-5 lg:gap-8">
           <div className="flex items-center gap-3 cursor-pointer group transition-all duration-300" onClick={onHome}>
             <img
-              src={themeMode === 'dark' ? '/logo-dark.svg' : '/logo-light.svg'}
+              src={themeMode === 'dark' ? '/logo-dark.jpg' : '/logo-light.jpg'}
               alt="TruyenForge"
-              className="w-11 h-11 rounded-2xl shadow-lg shadow-indigo-900/40 group-hover:scale-105 transition-transform duration-300"
+              className="w-11 h-11 rounded-2xl shadow-lg shadow-indigo-900/40 group-hover:scale-105 transition-transform duration-300 object-cover"
             />
             <span className={cn('text-xl font-serif font-bold tracking-tight hidden sm:block', titleClass)}>TruyenForge</span>
           </div>
