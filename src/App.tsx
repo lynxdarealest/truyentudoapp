@@ -2618,34 +2618,21 @@ const PromptVaultPanel = () => {
   );
 };
 
-const SectionHeader = ({ title, subtitle }: { title: string; subtitle?: string }) => (
-  <div className="flex items-center justify-between">
-    <div>
-      <h2 className="text-2xl font-serif font-bold text-slate-900">{title}</h2>
-      {subtitle && <p className="text-sm text-slate-500 mt-1">{subtitle}</p>}
-    </div>
-  </div>
-);
-
 const ToolsManager = ({
   onBack,
   onRequireAuth,
   profile,
-  onSaveProfile,
   section = 'tools',
 }: {
   onBack: () => void;
   onRequireAuth: () => void;
   profile: UiProfile;
-  onSaveProfile: (next: UiProfile) => void;
   section?: 'tools' | 'api';
 }) => {
   const { user } = useAuth();
   const isApiSection = section === 'api';
   const [isExporting, setIsExporting] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
-  const [profileName, setProfileName] = useState(profile.displayName);
-  const [profileAvatar, setProfileAvatar] = useState(profile.avatarUrl);
   const [maskedGeminiKey, setMaskedGeminiKey] = useState('');
   const [apiMode, setApiMode] = useState<ApiMode>('manual');
   const [relayUrl, setRelayUrl] = useState(buildRelaySocketUrl(''));
@@ -2677,12 +2664,6 @@ const ToolsManager = ({
   const relayReconnectRef = useRef<number | null>(null);
   const relayShouldReconnectRef = useRef(false);
   const relayRequestReadyRef = useRef(false);
-  const avatarUploadInputRef = useRef<HTMLInputElement | null>(null);
-
-  useEffect(() => {
-    setProfileName(profile.displayName);
-    setProfileAvatar(profile.avatarUrl);
-  }, [profile.displayName, profile.avatarUrl]);
 
   useEffect(() => {
     const runtime = getApiRuntimeConfig();
@@ -3530,51 +3511,6 @@ const ToolsManager = ({
     }
   };
 
-  const handleSaveProfileInfo = () => {
-    const cleanedName = profileName.trim() || 'Người dùng';
-    const cleanedAvatar = profileAvatar.trim() || `https://api.dicebear.com/9.x/initials/svg?seed=${encodeURIComponent(cleanedName)}`;
-    onSaveProfile({
-      displayName: cleanedName,
-      avatarUrl: cleanedAvatar,
-    });
-    alert('Đã lưu hồ sơ hiển thị.');
-  };
-
-  const handlePickAvatarFile = () => {
-    avatarUploadInputRef.current?.click();
-  };
-
-  const handleAvatarFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      alert('Chỉ hỗ trợ file ảnh (png, jpg, webp...).');
-      event.target.value = '';
-      return;
-    }
-    const maxSize = 2 * 1024 * 1024;
-    if (file.size > maxSize) {
-      alert('Ảnh quá lớn. Vui lòng chọn ảnh nhỏ hơn 2MB.');
-      event.target.value = '';
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      const nextAvatar = String(reader.result || '').trim();
-      if (!nextAvatar) {
-        alert('Không đọc được file ảnh.');
-        return;
-      }
-      setProfileAvatar(nextAvatar);
-    };
-    reader.onerror = () => {
-      alert('Đọc file ảnh thất bại.');
-    };
-    reader.readAsDataURL(file);
-    event.target.value = '';
-  };
-
   if (!user && !isApiSection) {
     return (
       <motion.div 
@@ -3586,68 +3522,24 @@ const ToolsManager = ({
           <button onClick={onBack} className="p-2 rounded-full hover:bg-slate-100 transition-colors"><ChevronLeft /></button>
           <h2 className="text-3xl font-serif font-bold">Công cụ & Thiết lập</h2>
         </div>
-        <div className="mb-8 bg-white p-8 rounded-3xl border border-slate-200 shadow-sm">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="p-3 bg-violet-50 rounded-2xl">
-              <ImagePlus className="w-6 h-6 text-violet-600" />
+        <div className="tf-card p-8 space-y-4">
+          <div className="flex items-center gap-3">
+            <div className="p-3 rounded-xl bg-indigo-500/20 text-indigo-200">
+              <Settings className="w-6 h-6" />
             </div>
             <div>
-              <h3 className="text-xl font-serif font-bold">Hồ sơ hiển thị</h3>
-              <p className="text-sm text-slate-500">Bạn vẫn có thể đổi tên và avatar kể cả khi chưa đăng nhập.</p>
+              <h3 className="text-xl font-semibold text-white">Yêu cầu đăng nhập</h3>
+              <p className="tf-body">Đăng nhập để dùng Công cụ (dịch, viết, kho prompt). Nút đăng nhập/đăng xuất nằm trong avatar góc phải.</p>
             </div>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-3">
-            <input
-              value={profileName}
-              onChange={(e) => setProfileName(e.target.value)}
-              className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-violet-500"
-              placeholder="Tên hiển thị"
-            />
-            <input
-              value={profileAvatar}
-              onChange={(e) => setProfileAvatar(e.target.value)}
-              className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-violet-500"
-              placeholder="Link ảnh đại diện (https://...)"
-            />
-            <button
-              onClick={handleSaveProfileInfo}
-              className="px-6 py-3 rounded-2xl bg-violet-600 text-white font-bold hover:bg-violet-700"
+          <div className="flex justify-end">
+            <button 
+              onClick={onRequireAuth}
+              className="tf-btn tf-btn-primary"
             >
-              Lưu hồ sơ
+              Đăng nhập
             </button>
           </div>
-          <div className="mt-3 flex flex-wrap items-center gap-3">
-            <input
-              ref={avatarUploadInputRef}
-              type="file"
-              accept="image/*"
-              onChange={handleAvatarFileChange}
-              className="hidden"
-            />
-            <button
-              type="button"
-              onClick={handlePickAvatarFile}
-              className="px-4 py-2 rounded-xl border border-violet-200 text-violet-700 bg-violet-50 hover:bg-violet-100 text-sm font-semibold"
-            >
-              Tải ảnh từ thiết bị
-            </button>
-            <p className="text-xs text-slate-500">
-              Có thể dán URL hoặc tải ảnh từ máy (khuyến nghị dưới 2MB).
-            </p>
-          </div>
-        </div>
-        <div className="bg-white p-12 rounded-[32px] border border-slate-200 text-center">
-          <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-6">
-            <Settings className="w-8 h-8 text-slate-400" />
-          </div>
-          <h3 className="text-xl font-serif font-bold mb-2">Bạn chưa đăng nhập</h3>
-          <p className="text-slate-500 mb-8">Vui lòng đăng nhập để sử dụng các công cụ nhập/xuất dữ liệu.</p>
-          <button 
-            onClick={onRequireAuth}
-            className="px-8 py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-900/20"
-          >
-            Đăng nhập ngay
-          </button>
         </div>
       </motion.div>
     );
@@ -3736,53 +3628,9 @@ const ToolsManager = ({
     <motion.div 
       initial={{ opacity: 0, x: 20 }}
       animate={{ opacity: 1, x: 0 }}
-      className="max-w-4xl mx-auto pt-24 pb-12 px-6"
+      className="max-w-5xl mx-auto pt-24 pb-12 px-6"
     >
-      <div className="flex items-center gap-4 mb-8">
-        <button onClick={onBack} className="p-2 rounded-full hover:bg-slate-100 transition-colors"><ChevronLeft /></button>
-        <h2 className="text-3xl font-serif font-bold">Công cụ & Thiết lập</h2>
-      </div>
-
-      <div className="space-y-12">
-        <div className="space-y-6">
-          <SectionHeader
-            title="Kho prompt"
-            subtitle="Lưu và quản lý prompt dùng chung cho viết và dịch."
-          />
-          <PromptVaultPanel />
-        </div>
-
-        <div className="space-y-6">
-          <SectionHeader
-            title="Hỗ trợ dịch"
-            subtitle="Công cụ dành riêng cho dịch thuật và hậu kỳ."
-          />
-          <TranslationNameDictionary />
-          <QualityCenter onRun={handleRunQa} />
-        </div>
-
-        <div className="space-y-6">
-          <SectionHeader
-            title="Hỗ trợ viết truyện"
-            subtitle="Co-writer, văn mẫu, quy tắc AI và công cụ sáng tác."
-          />
-          <WriterProPanel />
-          <AIRulesManager />
-          <StyleReferenceLibrary />
-        </div>
-
-        <div className="p-8 bg-slate-50 rounded-3xl border border-dashed border-slate-200">
-          <div className="flex items-center gap-3 mb-4">
-            <FileText className="w-5 h-5 text-slate-400" />
-            <h4 className="font-bold text-slate-700">Lưu ý về định dạng</h4>
-          </div>
-          <ul className="text-sm text-slate-500 space-y-2 list-disc pl-5">
-            <li>File <b>.docx</b> và <b>.txt</b> sẽ được nhập dưới dạng một truyện mới.</li>
-            <li>Hãy dùng tệp sao lưu được tạo từ ứng dụng này để đảm bảo khôi phục đầy đủ.</li>
-            <li>Tiến trình nhập có thể mất vài giây tùy thuộc vào dung lượng file.</li>
-          </ul>
-        </div>
-      </div>
+      <ToolsPage onBack={onBack} onRequireAuth={onRequireAuth} />
     </motion.div>
   );
 };
@@ -5496,7 +5344,7 @@ const PromptLibraryModal = ({ isOpen, onClose, onSelect }: { isOpen: boolean, on
               placeholder={selectedGroup === 'common'
                 ? '- Ghi rõ quy tắc bắt buộc...\n- ...'
                 : '- Giọng văn: ...\n- Xưng hô: ...\n- Từ vựng: ...\n- Cấm: ...'}
-              className="w-full min-h-[260px] rounded-2xl border border-slate-800 bg-slate-900 text-slate-100 p-4 text-sm leading-relaxed focus:border-indigo-400 focus:ring-1 focus:ring-indigo-500 outline-none resize-vertical"
+            className="w-full min-h-[260px] rounded-2xl border border-slate-800 bg-slate-900 text-slate-100 p-4 text-sm leading-relaxed focus:border-indigo-400 focus:ring-1 focus:ring-indigo-500 outline-none resize-y"
             />
             <div className="flex justify-end gap-3 mt-4">
               <button
@@ -8426,17 +8274,22 @@ const AppContent = () => {
             onBack={() => setView('stories')}
             onRequireAuth={() => setShowAuthModal(true)}
             profile={profile}
-            onSaveProfile={setProfile}
           />
         ) : view === 'tools' ? (
-          <ToolsManager
-            key="tools"
-            section="tools"
-            onBack={() => setView('stories')}
-            onRequireAuth={() => setShowAuthModal(true)}
-            profile={profile}
-            onSaveProfile={setProfile}
-          />
+          user ? (
+            <ToolsPage
+              onBack={() => setView('stories')}
+              onRequireAuth={() => setShowAuthModal(true)}
+            />
+          ) : (
+            <ToolsManager
+              key="tools"
+              section="tools"
+              onBack={() => setView('stories')}
+              onRequireAuth={() => setShowAuthModal(true)}
+              profile={profile}
+            />
+          )
         ) : (isCreating || editingStory) ? (
           <StoryEditor 
             key="editor"

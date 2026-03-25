@@ -62,7 +62,7 @@
   @apply w-full rounded-md border border-white/10 bg-slate-900/50 text-slate-100 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500;
 }
 .tf-textarea {
-  @apply w-full rounded-md border border-white/10 bg-slate-900/50 text-slate-100 px-3 py-3 leading-relaxed min-h-[140px] focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-vertical;
+  @apply w-full rounded-md border border-white/10 bg-slate-900/50 text-slate-100 px-3 py-3 leading-relaxed min-h-[140px] focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-y;
 }
 .tf-pill-tabs {
   @apply flex gap-2 bg-slate-900/70 p-1 rounded-lg border border-white/10 w-fit;
@@ -107,7 +107,7 @@
 }
 
 .tf-textarea {
-  @apply w-full rounded-md border border-white/10 bg-slate-900/50 text-slate-100 px-3 py-3 leading-relaxed min-h-[140px] focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-vertical;
+  @apply w-full rounded-md border border-white/10 bg-slate-900/50 text-slate-100 px-3 py-3 leading-relaxed min-h-[140px] focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-y;
 }
 
 .tf-pill-tabs {
