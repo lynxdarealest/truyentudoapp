@@ -161,6 +161,7 @@ export function ApiSectionPanel({
   onSaveManualRelayToken,
 }: ApiSectionPanelProps) {
   const [relayCode, setRelayCode] = useState('');
+  const lastSyncedRelayUrlCodeRef = React.useRef('');
 
   useEffect(() => {
     try {
@@ -180,8 +181,14 @@ export function ApiSectionPanel({
   useEffect(() => {
     if (relayUrl) {
       const match = relayUrl.match(CODE_REGEX);
-      if (match && match[1] && match[1] !== relayCode) {
-        setRelayCode(match[1]);
+      const nextCode = match?.[1] || '';
+      if (!nextCode) {
+        lastSyncedRelayUrlCodeRef.current = '';
+        return;
+      }
+      if (nextCode !== lastSyncedRelayUrlCodeRef.current && nextCode !== relayCode) {
+        lastSyncedRelayUrlCodeRef.current = nextCode;
+        setRelayCode(nextCode);
       }
     }
   }, [relayUrl, relayCode]);
