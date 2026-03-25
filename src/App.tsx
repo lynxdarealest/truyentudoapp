@@ -58,6 +58,7 @@ import { DataManagementPanels } from './components/tools/DataManagementPanels';
 import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { handleRelayMessage, relayGenerateContent, setRelaySender, notifyRelayDisconnected } from './relayBridge';
 import { QualityCenter, type QaIssue } from './components/QualityCenter';
+import JSZip from 'jszip';
 import {
   type ApiProvider,
   type AiProfileMode,
@@ -81,6 +82,14 @@ let mammothModulePromise: Promise<any> | null = null;
 let pdfjsModulePromise: Promise<any> | null = null;
 let epubModulePromise: Promise<any> | null = null;
 let pdfWorkerConfigured = false;
+const downloadBlob = (blob: Blob, filename: string) => {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+};
 
 async function loadMammothModule(): Promise<any> {
   if (!mammothModulePromise) {
@@ -116,11 +125,110 @@ async function loadEpubFactory(): Promise<(input: ArrayBuffer) => any> {
   return (module?.default || module) as (input: ArrayBuffer) => any;
 }
 
+function sanitizeFilename(name: string): string {
+  return name.replace(/[<>:"/\\|?*]+/g, '').trim() || 'truyen';
+}
+
+async function buildTxtExport(story: Story, includeToc: boolean): Promise<Blob> {
+  const sorted = [...(story.chapters || [])].sort((a, b) => a.order - b.order);
+  const lines: string[] = [];
+  lines.push(`# ${story.title}`);
+  if (story.introduction) lines.push('', story.introduction);
+  if (includeToc && sorted.length) {
+    lines.push('', '## Mục lục');
+    sorted.forEach((ch, idx) => {
+      lines.push(`${idx + 1}. ${ch.title || `Chương ${ch.order || idx + 1}`}`);
+    });
+  }
+  sorted.forEach((ch, idx) => {
+    lines.push('', `## ${ch.title || `Chương ${ch.order || idx + 1}`}`, '', normalizeAiJsonContent(ch.content, '').content || ch.content);
+  });
+  return new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
+}
+
+async function buildEpubExport(story: Story, includeToc: boolean): Promise<Blob> {
+  const zip = new JSZip();
+  const sorted = [...(story.chapters || [])].sort((a, b) => a.order - b.order);
+
+  zip.file('mimetype', 'application/epub+zip', { compression: 'STORE' });
+  zip.file('META-INF/container.xml', `<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>`);
+
+  const navItems: string[] = [];
+  const spineItems: string[] = [];
+  const manifestItems: string[] = [
+    `<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>`,
+  ];
+
+  sorted.forEach((ch, idx) => {
+    const id = `chap${idx + 1}`;
+    const href = `${id}.xhtml`;
+    const title = ch.title || `Chương ${ch.order || idx + 1}`;
+    const body = normalizeAiJsonContent(ch.content, '').content || ch.content;
+    const html = `<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="vi">
+<head><title>${title}</title><meta charset="utf-8"/></head>
+<body>
+<h2 id="${id}">${title}</h2>
+${body.replace(/\n/g, '<br/>')}
+</body></html>`;
+    zip.file(`OEBPS/${href}`, html);
+    manifestItems.push(`<item id="${id}" href="${href}" media-type="application/xhtml+xml"/>`);
+    spineItems.push(`<itemref idref="${id}"/>`);
+    navItems.push(`<li><a href="${href}#${id}">${idx + 1}. ${title}</a></li>`);
+  });
+
+  const navDoc = `<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="vi">
+<head><meta charset="utf-8"/><title>Navigation</title></head>
+<body>
+<nav epub:type="toc" id="toc">
+<h1>Mục lục</h1>
+<ol>
+${includeToc ? navItems.join('\n') : ''}
+</ol>
+</nav>
+</body>
+</html>`;
+  zip.file('OEBPS/nav.xhtml', navDoc);
+
+  const metadataId = `id-${Date.now()}`;
+  const opf = `<?xml version="1.0" encoding="utf-8"?>
+<package version="3.0" xmlns="http://www.idpf.org/2007/opf" unique-identifier="${metadataId}">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="${metadataId}">${metadataId}</dc:identifier>
+    <dc:title>${story.title}</dc:title>
+    <dc:language>vi</dc:language>
+    <dc:creator>TruyenForge AI</dc:creator>
+    <meta property="dcterms:modified">${new Date().toISOString()}</meta>
+  </metadata>
+  <manifest>
+    ${manifestItems.join('\n    ')}
+  </manifest>
+  <spine>
+    ${spineItems.join('\n    ')}
+  </spine>
+</package>`;
+  zip.file('OEBPS/content.opf', opf);
+
+  const content = await zip.generateAsync({ type: 'blob' });
+  return content;
+}
+
+
 type ApiMode = 'manual' | 'relay';
 const DEFAULT_RELAY_WS_BASE = 'wss://relay2026.up.railway.app/?code=';
 const DEFAULT_RELAY_WEB_BASE = 'https://relay2026.vercel.app/';
 const RELAY_SOCKET_BASE = normalizeRelaySocketBase(import.meta.env.VITE_RELAY_WS_BASE || DEFAULT_RELAY_WS_BASE);
 const RELAY_WEB_BASE = ((import.meta.env.VITE_RELAY_WEB_BASE || DEFAULT_RELAY_WEB_BASE).trim().replace(/\/+$/, '') + '/');
+
+type ExportFormat = 'txt' | 'epub';
 
 interface ApiRuntimeConfig {
   mode: ApiMode;
@@ -4491,13 +4599,15 @@ const StoryDetail = ({
   onBack, 
   onEdit, 
   onAddChapter,
-  onUpdateStory
+  onUpdateStory,
+  onExportStory,
 }: { 
   story: Story, 
   onBack: () => void, 
   onEdit: () => void,
   onAddChapter: () => void,
-  onUpdateStory: (story: Story) => void
+  onUpdateStory: (story: Story) => void,
+  onExportStory: (story: Story) => void,
 }) => {
   const [selectedChapter, setSelectedChapter] = useState<Chapter | null>(null);
   const [isEditingChapter, setIsEditingChapter] = useState(false);
@@ -4735,6 +4845,12 @@ const StoryDetail = ({
           <ChevronLeft className="w-6 h-6" /> Quay lại thư viện
         </button>
         <div className="story-detail__actions flex gap-3">
+          <button 
+            onClick={() => onExportStory(story)}
+            className="flex items-center gap-2 px-6 py-2 rounded-full border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-700 transition-colors text-sm font-bold"
+          >
+            <Download className="w-4 h-4" /> Xuất truyện
+          </button>
           <button 
             onClick={onEdit}
             className="flex items-center gap-2 px-6 py-2 rounded-full border border-slate-200 hover:bg-slate-50 transition-colors text-sm font-bold"
@@ -5338,6 +5454,92 @@ const PromptLibraryModal = ({ isOpen, onClose, onSelect }: { isOpen: boolean, on
               </div>
             ))}
           </div>
+        </div>
+      </motion.div>
+    </div>
+  );
+};
+
+const ExportStoryModal = ({
+  isOpen,
+  onClose,
+  format,
+  onFormatChange,
+  includeToc,
+  onToggleToc,
+  onConfirm,
+  busy,
+  storyTitle,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  format: ExportFormat;
+  onFormatChange: (f: ExportFormat) => void;
+  includeToc: boolean;
+  onToggleToc: (v: boolean) => void;
+  onConfirm: () => void;
+  busy: boolean;
+  storyTitle: string;
+}) => {
+  if (!isOpen) return null;
+  return (
+    <div className="fixed inset-0 z-[220] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95, y: 10 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        className="bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden"
+      >
+        <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+          <div>
+            <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Xuất truyện</p>
+            <h3 className="text-2xl font-serif font-bold text-slate-900">{storyTitle || 'Truyện'}</h3>
+          </div>
+          <button onClick={onClose} className="p-2 rounded-xl hover:bg-slate-100">
+            <X className="w-5 h-5 text-slate-500" />
+          </button>
+        </div>
+        <div className="p-6 space-y-4">
+          <div className="space-y-2">
+            <p className="text-sm font-semibold text-slate-700">Định dạng</p>
+            <div className="grid grid-cols-2 gap-3">
+              {(['txt', 'epub'] as ExportFormat[]).map((fmt) => (
+                <button
+                  key={fmt}
+                  onClick={() => onFormatChange(fmt)}
+                  className={cn(
+                    'px-4 py-3 rounded-2xl border text-sm font-bold transition-all',
+                    format === fmt
+                      ? 'border-indigo-500 bg-indigo-50 text-indigo-700 shadow-sm'
+                      : 'border-slate-200 bg-white text-slate-600 hover:border-indigo-200',
+                  )}
+                >
+                  {fmt.toUpperCase()}
+                </button>
+              ))}
+            </div>
+          </div>
+          <label className="flex items-center gap-3">
+            <input
+              type="checkbox"
+              className="h-4 w-4"
+              checked={includeToc}
+              onChange={(e) => onToggleToc(e.target.checked)}
+            />
+            <span className="text-sm text-slate-600">Bao gồm mục lục (nhảy đến chương)</span>
+          </label>
+          <p className="text-xs text-slate-400">EPUB sẽ tạo nav.xhtml với liên kết tới từng chương. TXT sẽ chèn mục lục dạng danh sách.</p>
+        </div>
+        <div className="p-6 border-t border-slate-100 flex justify-end gap-3">
+          <button onClick={onClose} className="px-4 py-2 rounded-xl border text-sm font-bold text-slate-600 hover:bg-slate-100">
+            Hủy
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={busy}
+            className="px-5 py-2 rounded-xl bg-indigo-600 text-white font-bold text-sm hover:bg-indigo-700 disabled:opacity-60"
+          >
+            {busy ? 'Đang xuất...' : 'Tải xuống'}
+          </button>
         </div>
       </motion.div>
     </div>
@@ -6536,6 +6738,7 @@ const AppContent = () => {
   const [aiLoadingMessage, setAILoadingMessage] = useState('');
   const [aiTimer, setAiTimer] = useState(0);
   const [showPromptManager, setShowPromptManager] = useState(false);
+  const [isExportingStory, setIsExportingStory] = useState(false);
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -6575,7 +6778,34 @@ const AppContent = () => {
   const [continueFileContent, setContinueFileContent] = useState('');
   const [continueFileName, setContinueFileName] = useState('');
   const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportFormat, setExportFormat] = useState<ExportFormat>('txt');
+  const [exportIncludeToc, setExportIncludeToc] = useState(true);
+  const [exportStory, setExportStory] = useState<Story | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+  const handleOpenExportStory = (story: Story) => {
+    setExportStory(story);
+    setShowExportModal(true);
+  };
+
+  const handleExportStoryConfirm = async () => {
+    if (!exportStory) return;
+    try {
+      setIsExportingStory(true);
+      const blob =
+        exportFormat === 'epub'
+          ? await buildEpubExport(exportStory, exportIncludeToc)
+          : await buildTxtExport(exportStory, exportIncludeToc);
+      const ext = exportFormat;
+      downloadBlob(blob, `${sanitizeFilename(exportStory.title)}.${ext}`);
+      setShowExportModal(false);
+    } catch (err) {
+      alert(`Xuất truyện thất bại: ${err instanceof Error ? err.message : err}`);
+    } finally {
+      setIsExportingStory(false);
+    }
+  };
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -7727,6 +7957,18 @@ const AppContent = () => {
         }}
       />
 
+      <ExportStoryModal
+        isOpen={showExportModal}
+        onClose={() => setShowExportModal(false)}
+        format={exportFormat}
+        onFormatChange={setExportFormat}
+        includeToc={exportIncludeToc}
+        onToggleToc={setExportIncludeToc}
+        onConfirm={handleExportStoryConfirm}
+        busy={isExportingStory}
+        storyTitle={exportStory?.title || ''}
+      />
+
       <Navbar 
         currentView={view} 
         setView={(v) => {
@@ -7768,6 +8010,7 @@ const AppContent = () => {
             }}
             onAddChapter={() => setShowAIGen(true)}
             onUpdateStory={(updated) => setSelectedStory(updated)}
+            onExportStory={handleOpenExportStory}
           />
         ) : view === 'characters' ? (
           <CharacterManager key="characters" onBack={() => setView('stories')} />

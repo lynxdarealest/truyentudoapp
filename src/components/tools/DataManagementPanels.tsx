@@ -24,11 +24,11 @@ export function DataManagementPanels({
           <h3 className="text-xl font-serif font-bold">Nhập dữ liệu</h3>
         </div>
         <p className="text-slate-500 text-sm mb-8 leading-relaxed">
-          Nhập truyện từ tệp <b>.docx</b>, <b>.txt</b> hoặc khôi phục từ tệp sao lưu.
+          Khôi phục dữ liệu người dùng từ tệp sao lưu <b>.json</b> (đúng định dạng đã xuất).
         </p>
         <label className="block w-full py-4 px-6 bg-slate-900 text-white text-center rounded-2xl font-bold cursor-pointer hover:bg-slate-800 transition-all shadow-lg shadow-slate-900/20">
-          {isImporting ? 'Đang xử lý...' : 'Chọn file để nhập'}
-          <input type="file" accept=".docx,.txt,.json" onChange={onImportFile} className="hidden" disabled={isImporting} />
+          {isImporting ? 'Đang xử lý...' : 'Chọn file .json để nhập'}
+          <input type="file" accept=".json" onChange={onImportFile} className="hidden" disabled={isImporting} />
         </label>
       </div>
 

@@ -332,6 +332,16 @@ export function Navbar({
               </div>
             ) : null}
           </div>
+          <button
+            onClick={onOpenPromptManager}
+            className={cn(
+              'hidden md:inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all duration-300',
+              isDark ? 'text-cyan-200 border border-cyan-400/25 hover:bg-cyan-500/10' : 'text-indigo-700 border border-indigo-200 bg-indigo-50 hover:bg-indigo-100',
+            )}
+            title="Kho prompt"
+          >
+            <Library className="w-4 h-4" /> Prompt
+          </button>
           <div className={cn('app-navbar-divider h-8 w-[1px] mx-1 md:mx-2', dividerClass)} />
           <button
             onClick={onToggleViewportMode}
