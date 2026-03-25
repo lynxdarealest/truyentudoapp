@@ -19,6 +19,41 @@ function maskSensitive(value: string, head = 6, tail = 4): string {
 const AIS_AUTH_BASE = 'https://ais-dev-qbnyavxszwzdl6ugpdjaxp-279055114293.asia-northeast1.run.app/';
 const CODE_REGEX = /\b(\d{4,8})\b/;
 
+function toWsUrl(url: string): string {
+  const u = String(url || '').trim();
+  if (!u) return '';
+  if (u.startsWith('wss://') || u.startsWith('ws://')) return u;
+  if (u.startsWith('https://')) return `wss://${u.slice('https://'.length)}`;
+  if (u.startsWith('http://')) return `ws://${u.slice('http://'.length)}`;
+  return `wss://${u.replace(/^\/+/, '')}`;
+}
+
+function buildRelaySocketUrl(base: string, code: string): string {
+  const cleanBase = toWsUrl(base).trim();
+  const cleanCode = String(code || '').trim();
+  if (!cleanBase || !cleanCode) return cleanBase;
+
+  try {
+    const url = new URL(cleanBase);
+    if (/[?&]code=/i.test(cleanBase)) {
+      url.searchParams.set('code', cleanCode);
+      return url.toString();
+    }
+    url.searchParams.delete('code');
+    url.pathname = `${url.pathname.replace(/\/\d{4,8}\/?$/i, '').replace(/\/+$/, '')}/${cleanCode}`;
+    return url.toString();
+  } catch {
+    return `${cleanBase.replace(/\/+$/, '')}/${cleanCode}`;
+  }
+}
+
+function buildRelayPublishUrl(base: string, code: string): string {
+  const cleanBase = String(base || '').trim().replace(/\/+$/, '');
+  const cleanCode = String(code || '').trim();
+  if (!cleanBase || !cleanCode) return '';
+  return `${cleanBase}/publish-token/${cleanCode}`;
+}
+
 interface ApiSectionPanelProps {
   onBack: () => void;
   apiMode: 'manual' | 'relay';
@@ -130,7 +165,9 @@ export function ApiSectionPanel({
   useEffect(() => {
     try {
       const params = new URLSearchParams(window.location.search);
-      const code = params.get('code') || '';
+      const fromQuery = params.get('code') || '';
+      const fromPath = window.location.pathname.split('/').filter(Boolean)[0] || '';
+      const code = /^\d{4,8}$/.test(fromPath) ? fromPath : fromQuery;
       if (/^\d{4,8}$/.test(code)) {
         setRelayCode(code);
       }
@@ -151,14 +188,12 @@ export function ApiSectionPanel({
 
   const relayConnectUrl = useMemo(() => {
     const code = relayCode || '';
-    return code ? `${relaySocketBase}${code}` : '';
+    return code ? buildRelaySocketUrl(relaySocketBase, code) : '';
   }, [relayCode, relaySocketBase]);
 
   const relayPublishUrl = useMemo(() => {
     const code = relayCode || '';
-    if (!code) return '';
-    const base = String(relayWebBase || '').trim().replace(/\/+$/, '');
-    return `${base}/publish-token?code=${code}`;
+    return code ? buildRelayPublishUrl(relayWebBase, code) : '';
   }, [relayCode, relayWebBase]);
 
   const authLink = useMemo(() => {
@@ -422,7 +457,7 @@ export function ApiSectionPanel({
 
             <div className="tf-card p-4 text-sm space-y-2">
               <p className="tf-break-long">WS Worker: <span className="text-slate-300">{relayConnectUrl || relaySocketBase}</span></p>
-              <p className="tf-break-long">Publish URL: <span className="text-slate-300">{relayPublishUrl || `${String(relayWebBase || '').trim().replace(/\/+$/, '')}/publish-token?code=...`}</span></p>
+              <p className="tf-break-long">Publish URL: <span className="text-slate-300">{relayPublishUrl || `${String(relayWebBase || '').trim().replace(/\/+$/, '')}/publish-token/1234`}</span></p>
               <p className="tf-break-long">Trạng thái: <span className="font-semibold text-white">{relayStatusText}</span></p>
               <p className="tf-break-all">Token: <span className="text-slate-300">{relayMaskedToken}</span></p>
               <p className="tf-break-long">Phiên: <span className="text-slate-300">{relayMatchedLong || relayCode || '—'}</span></p>
