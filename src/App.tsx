@@ -5241,7 +5241,7 @@ const AILoadingOverlay = ({ isVisible, message, timer }: { isVisible: boolean, m
   );
 };
 
-type PromptGroup = 'translate' | 'write' | 'common';
+type PromptGroup = 'translate' | 'write' | 'common' | 'tone_rules';
 
 const PREDEFINED_PROMPTS: Array<{ group: PromptGroup, category: string, prompts: Array<{ title: string, content: string }> }> = [
   // Translate prompts (Trung Quốc, Nhật Bản)
@@ -5364,12 +5364,25 @@ const PREDEFINED_PROMPTS: Array<{ group: PromptGroup, category: string, prompts:
       { title: 'Timeline kiểm chứng', content: 'Xuất timeline chuẩn hóa yyyy-mm-dd hoặc mốc chương, nêu ai/tham gia gì. Dùng để đối chiếu consistency.' },
     ],
   },
+  {
+    group: 'tone_rules',
+    category: 'Quy tắc thể loại (soát giọng & từ vựng)',
+    prompts: [
+      { title: 'Cổ đại/Cung đấu/Giang hồ/Tiên hiệp', content: `Giọng: cổ phong, ước lệ; không wow/emoji. Xưng hô tôn ti (trẫm/vi thần/thần thiếp, bổn vương, tại hạ, sư tôn–đồ đệ); cấm mày-tao/ông-bạn. Từ vựng: Hán Việt chọn lọc (linh căn, sát chiêu), cấm công nghệ/meme. Cấu trúc: câu 2-3 vế, tả cảnh rồi tâm/cơ mưu; nhịp chậm-trung. Không cắt cảnh như MV.` },
+      { title: 'Hiện đại/Đô thị/Hào môn/Giải trí', content: `Giọng: trực diện, nhịp nhanh; hào môn lạnh/sang, giải trí bóng bẩy. Từ: đời thường + business/showbiz (deal, rating, scandal) đúng cảnh; cấm Hán Việt cổ, viết tắt chat. Xưng: tôi-anh-em-cô; sếp/giám đốc khi công sở. Cấu trúc: đoạn 3-6 câu, thoại nhiều; cấm độc thoại dài >1/3 cảnh, cấm quá 2 brand/đoạn.` },
+      { title: 'Võng du/Khoa học viễn tưởng/Dị năng', content: `Giọng: lý tính, hệ thống rõ. Từ: game chuẩn (level, cooldown, buff/debuff, PK, dungeon), sci-fi (cơ giáp, gene, warp). Cấm bùa tiên hiệp. Cấu trúc: log/bảng trạng thái ngắn; giải thích cơ chế ≤5 câu rồi có ví dụ. Dị năng phải có giới hạn (tầm, CD, cost).` },
+      { title: 'Ngược luyến/Bi kịch/Báo thù/Hắc bang', content: `Giọng: trầm, gai; câu ngắn xen dài. Từ: u ám (rạn nứt, nghẹt thở); xưng khoảng cách (tôi-anh, hắn-cô ấy, tao-mày khi xung đột). Cấm đùa/meme, cấm tô hồng bạo lực. Cấu trúc: nhịp gấp cảnh truy sát, chậm ở hồi tưởng; kết quả trả giá rõ (pháp lý/đạo đức).` },
+      { title: 'Hài kịch/Oan gia/Chủng điền', content: `Giọng: sáng, dí dỏm; chủng điền ấm & chậm. Từ: đời thường, chơi chữ nhẹ; cấm tục/meme thô. Cấu trúc: set-up → punchline 2-3 câu; chủng điền tả quy trình (gieo/chăm/thu). Oan gia: đối đáp kéo–đẩy, không để một phía thắng mãi. Cấm bi kịch hóa quá mức.` },
+      { title: 'Trọng sinh/Xuyên không/Đồng nhân', content: `Giọng: hai lớp nhận thức (cũ vs mới). Từ: nghĩ hiện đại, nói theo bối cảnh; đồng nhân giữ khẩu đầu từ gốc. Cấm OOC không lý do. Cấu trúc: hồi tưởng ≤3 câu/cảnh; đối chiếu timeline. Vật phẩm/kiến thức xuyên sang phải có giới hạn; sự kiện gốc fandom phải được tôn trọng, thay đổi lớn cần điểm ngoặt hợp lý.` },
+    ],
+  },
 ];
 
 const PROMPT_GROUP_TABS: Array<{ key: PromptGroup, label: string }> = [
   { key: 'translate', label: 'Prompt dịch truyện' },
   { key: 'write', label: 'Prompt viết truyện' },
   { key: 'common', label: 'Prompt chung' },
+  { key: 'tone_rules', label: 'Quy tắc thể loại' },
 ];
 
 const PromptLibraryModal = ({ isOpen, onClose, onSelect }: { isOpen: boolean, onClose: () => void, onSelect: (prompt: string) => void }) => {
