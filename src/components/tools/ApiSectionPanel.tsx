@@ -122,7 +122,7 @@ export function ApiSectionPanel({
   onSaveManualRelayToken,
 }: ApiSectionPanelProps) {
   return (
-    <div className="max-w-5xl mx-auto pt-16 pb-10 px-4 space-y-6">
+    <div className="max-w-5xl mx-auto pt-28 pb-12 px-4 md:px-6 space-y-6">
       <div className="flex items-center gap-3">
         <button onClick={onBack} className="p-2 rounded-full hover:bg-slate-100 transition-colors shrink-0"><ChevronLeft /></button>
         <div>
