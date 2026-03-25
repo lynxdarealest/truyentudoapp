@@ -1,0 +1,25 @@
+<svg width="320" height="320" viewBox="0 0 320 320" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="copperLight" x1="60" y1="260" x2="260" y2="60" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#C08A52"/>
+      <stop offset="1" stop-color="#A36A32"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Shield frame -->
+  <path d="M80 78c-4.4 0-8 3.6-8 8v92c0 20 11 38 28 47l56 30 56-30c17-9 28-27 28-47V86c0-4.4-3.6-8-8-8H80Z" fill="url(#copperLight)"/>
+  <path d="M96 94c-3.3 0-6 2.7-6 6v76c0 14.6 8 27.9 21 34.8l49 26.1 49-26.1c13-6.9 21-20.2 21-34.8v-76c0-3.3-2.7-6-6-6H96Z" fill="white"/>
+
+  <!-- Left gear half -->
+  <path d="M96 110l18-4 4 12-10 8 6 10-8 10 6 10-6 10 10 10-4 12-18-4c-8-18-8-38 2-58Z" fill="url(#copperLight)"/>
+  <!-- Right hammer head hint -->
+  <path d="M222 110c12 18 14 38 4 58l-16 4-4-12 8-10-8-10 8-10-8-10 6-10-4-10 14-4Z" fill="url(#copperLight)"/>
+
+  <!-- Book + monogram -->
+  <path d="M133 120c-4.4 0-8 3.6-8 8v70c0 2.2 1.8 4 4 4h24l4-6 4 6h24c2.2 0 4-1.8 4-4v-70c0-4.4-3.6-8-8-8h-52Z" fill="url(#copperLight)"/>
+  <path d="M144 134c0-2.2 1.8-4 4-4h24c2.2 0 4 1.8 4 4v42c0 2.2-1.8 4-4 4h-24c-2.2 0-4-1.8-4-4v-42Z" fill="white"/>
+  <path d="M154 144c0-2.2 1.8-4 4-4h14c3.3 0 6 2.7 6 6 0 3.3-2.7 6-6 6h-10v6h8c3.3 0 6 2.7 6 6s-2.7 6-6 6h-14c-2.2 0-4-1.8-4-4v-22Z" fill="url(#copperLight)"/>
+
+  <!-- Spark dot -->
+  <circle cx="220" cy="162" r="8" fill="url(#copperLight)"/>
+</svg>
