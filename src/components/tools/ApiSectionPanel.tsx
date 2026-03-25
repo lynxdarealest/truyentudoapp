@@ -66,7 +66,7 @@ interface ApiSectionPanelProps {
   onDeleteApiEntry: (id: string) => void;
   onStoredApiModelChange: (id: string, value: string) => void;
   onStoredApiBaseUrlChange: (id: string, value: string) => void;
-  onConnectRelay: () => void;
+  onConnectRelay: (relayCode?: string) => void;
   onDisconnectRelay: () => void;
   onRelayUrlChange: (value: string) => void;
   onRelayModelChange: (value: string) => void;
@@ -166,11 +166,8 @@ export function ApiSectionPanel({
   }, [onRelayUrlChange, relayConnectUrl, relayUrl]);
 
   const handleStartRelayListening = () => {
-    if (!relayConnectUrl) return;
-    onRelayUrlChange(relayConnectUrl);
-    window.setTimeout(() => {
-      onConnectRelay();
-    }, 60);
+    if (!relayCode) return;
+    onConnectRelay(relayCode);
   };
 
   const handleOpenBridge = () => {

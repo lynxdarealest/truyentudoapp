@@ -3019,17 +3019,23 @@ const ToolsManager = ({
     return Array.from(candidates);
   };
 
-  const handleConnectRelay = async () => {
-    const inferredCode = parseRelayCodeFromText(relayUrl);
+  const handleConnectRelay = async (relayCodeOverride?: string) => {
+    const baseRelayInput = (relayCodeOverride && /^\d{4,8}$/.test(relayCodeOverride))
+      ? buildRelaySocketUrl(relayCodeOverride)
+      : relayUrl;
+    const inferredCode = (relayCodeOverride && /^\d{4,8}$/.test(relayCodeOverride))
+      ? relayCodeOverride
+      : parseRelayCodeFromText(baseRelayInput);
     if (!/^\d{4,8}$/.test(inferredCode)) {
       setRelayStatus('error');
       setRelayStatusText(`Vui lòng nhập đúng mẫu ${RELAY_SOCKET_BASE}1234 (mã 4-8 số).`);
       return;
     }
-    const wsCandidates = buildRelayCandidateUrls(relayUrl, inferredCode);
-    const longFromInput = parseLongIdFromText(relayUrl);
+    const nextRelayUrl = buildRelaySocketUrl(inferredCode);
+    const wsCandidates = buildRelayCandidateUrls(baseRelayInput, inferredCode);
+    const longFromInput = parseLongIdFromText(baseRelayInput);
     relayShouldReconnectRef.current = true;
-    setRelayUrl(buildRelaySocketUrl(inferredCode));
+    setRelayUrl(nextRelayUrl);
 
     try {
       if (relaySocketRef.current) {
@@ -3076,8 +3082,8 @@ const ToolsManager = ({
     const relayModel = selectedModel || getProfileModel('quality', 'gemini');
     persistRuntimeConfig({
       mode: 'relay',
-      relayUrl: buildRelaySocketUrl(inferredCode),
-      identityHint: relayUrl,
+      relayUrl: nextRelayUrl,
+      identityHint: baseRelayInput,
       selectedProvider: 'gemini',
       selectedModel: relayModel,
       activeApiKeyId: '',
@@ -3100,8 +3106,8 @@ const ToolsManager = ({
         } catch (_) {}
 
         const payload = extractRelayPayload(String(event.data || ''));
-        const expectedLong = parseLongIdFromText(relayUrl);
-        const expectedCode = parseRelayCodeFromText(relayUrl);
+        const expectedLong = parseLongIdFromText(nextRelayUrl);
+        const expectedCode = parseRelayCodeFromText(nextRelayUrl);
         const hasPayloadIdentifier = Boolean(payload.codeId || payload.longId);
         const isCodeMatch = expectedCode
           ? (!hasPayloadIdentifier || payload.codeId === expectedCode || payload.longId === expectedCode)
@@ -3122,7 +3128,7 @@ const ToolsManager = ({
           persistRuntimeConfig({
             mode: 'relay',
             relayUrl: buildRelaySocketUrl(expectedCode || inferredCode),
-            identityHint: relayUrl,
+            identityHint: baseRelayInput,
             relayMatchedLong: payload.longId || expectedLong,
             relayToken: token,
             relayUpdatedAt: new Date().toISOString(),
