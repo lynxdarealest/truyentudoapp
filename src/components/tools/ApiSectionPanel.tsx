@@ -126,7 +126,6 @@ export function ApiSectionPanel({
   onSaveManualRelayToken,
 }: ApiSectionPanelProps) {
   const [relayCode, setRelayCode] = useState('');
-  const [relaySendStatus, setRelaySendStatus] = useState<string>('');
 
   useEffect(() => {
     try {
@@ -150,37 +149,34 @@ export function ApiSectionPanel({
     }
   }, [relayUrl, relayCode]);
 
-  const relayConnectUrl = React.useMemo(() => {
+  const relayConnectUrl = useMemo(() => {
     const code = relayCode || '';
     return code ? `wss://relay2026.up.railway.app/?code=${code}` : '';
   }, [relayCode]);
 
-  const authLink = React.useMemo(() => {
+  const authLink = useMemo(() => {
     const code = relayCode || '';
     return code ? `${AIS_AUTH_BASE}${code}` : '';
   }, [relayCode]);
 
-  const handleSendTokenToRelay = () => {
-    if (!relayCode) {
-      setRelaySendStatus('Chưa có mã code 4-8 số trong URL.');
-      return;
-    }
-    const token = (manualRelayTokenInput || apiEntryText || '').trim();
-    if (!token) {
-      setRelaySendStatus('Bạn chưa nhập token/API key.');
-      return;
-    }
-    try {
-      const ws = new WebSocket(relayConnectUrl);
-      ws.onopen = () => {
-        ws.send(JSON.stringify({ type: 'TOKEN_TRANSFER', token, uid: 'local', email: '' }));
-        setRelaySendStatus('Đã gửi token an toàn qua WebSocket riêng. Có thể đóng tab này.');
-        ws.close();
-      };
-      ws.onerror = () => setRelaySendStatus('Gửi thất bại, kiểm tra mạng hoặc mã code.');
-    } catch {
-      setRelaySendStatus('Không thể mở kết nối WebSocket.');
-    }
+  useEffect(() => {
+    if (!relayConnectUrl) return;
+    if (relayUrl === relayConnectUrl) return;
+    onRelayUrlChange(relayConnectUrl);
+  }, [onRelayUrlChange, relayConnectUrl, relayUrl]);
+
+  const handleStartRelayListening = () => {
+    if (!relayConnectUrl) return;
+    onRelayUrlChange(relayConnectUrl);
+    window.setTimeout(() => {
+      onConnectRelay();
+    }, 60);
+  };
+
+  const handleOpenBridge = () => {
+    if (!authLink) return;
+    handleStartRelayListening();
+    window.open(authLink, '_blank', 'noopener,noreferrer');
   };
   return (
     <div className="max-w-5xl mx-auto pt-28 pb-12 px-4 md:px-6 space-y-6">
@@ -369,69 +365,63 @@ export function ApiSectionPanel({
           </div>
         ) : (
           <div className="space-y-4">
-            <div className="tf-card p-4 space-y-3 border border-emerald-400/30">
-              <div className="flex flex-col md:flex-row gap-2 md:items-center md:justify-between">
-                <div className="flex items-center gap-2">
-                  <p className="text-sm font-semibold text-white">AIS OAuth</p>
-                  {relayCode ? <span className="rounded-full border border-emerald-400/40 bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-200">Code {relayCode}</span> : null}
+            <div className="tf-card p-4 space-y-4 border border-emerald-400/30">
+              <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                <div className="space-y-1">
+                  <p className="text-sm font-semibold text-white">Kết nối qua Relay</p>
+                  <p className="text-xs text-slate-300">Web sẽ mở WebSocket trước, sau đó mở AI Studio để nhận `TOKEN_TRANSFER` theo đúng mã code.</p>
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  <a href={authLink || '#'} target="_blank" rel="noreferrer" className={cn("tf-btn tf-btn-ghost", !authLink && "pointer-events-none opacity-50")}>
-                    Mở AIS OAuth
-                  </a>
-                  <a href={relayConnectUrl || '#'} target="_blank" rel="noreferrer" className={cn("tf-btn tf-btn-ghost", !relayConnectUrl && "pointer-events-none opacity-50")}>
-                    WS endpoint
-                  </a>
-                </div>
+                {relayCode ? (
+                  <span className="rounded-full border border-emerald-400/40 bg-emerald-500/10 px-2.5 py-1 text-xs font-semibold text-emerald-200">
+                    Code {relayCode}
+                  </span>
+                ) : null}
               </div>
-              <input
-                value={relayCode}
-                onChange={(e) => setRelayCode(e.target.value.replace(/\D/g, '').slice(0, 8))}
-                className="tf-input md:w-44"
-                placeholder="Code 4-8 số"
-              />
-              {relaySendStatus ? <p className="text-xs text-emerald-200">{relaySendStatus}</p> : null}
+
+              <div className="grid grid-cols-1 md:grid-cols-[180px_1fr] gap-3">
+                <input
+                  value={relayCode}
+                  onChange={(e) => setRelayCode(e.target.value.replace(/\D/g, '').slice(0, 8))}
+                  className="tf-input"
+                  placeholder="Code 4-8 số"
+                />
+                <select
+                  value={relayModel}
+                  onChange={(e) => onRelayModelChange(e.target.value)}
+                  className="tf-input"
+                >
+                  {relayModelOptions.map((m) => (
+                    <option key={m.value} value={m.value}>{m.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex flex-col sm:flex-row flex-wrap gap-3 tf-actions-mobile">
+                <button
+                  onClick={handleStartRelayListening}
+                  disabled={!relayCode}
+                  className="tf-btn tf-btn-ghost disabled:opacity-50"
+                >
+                  Chờ token
+                </button>
+                <button
+                  onClick={handleOpenBridge}
+                  disabled={!authLink}
+                  className="tf-btn tf-btn-primary disabled:opacity-50"
+                >
+                  Kết nối AI
+                </button>
+                <button onClick={onDisconnectRelay} className="tf-btn tf-btn-ghost">
+                  Ngắt
+                </button>
+              </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <input
-                value={relayUrl}
-                onChange={(e) => onRelayUrlChange(e.target.value)}
-                className="tf-input"
-                placeholder="wss://relay2026.up.railway.app/?code=182004"
-              />
-              <select
-                value={relayModel}
-                onChange={(e) => onRelayModelChange(e.target.value)}
-                className="tf-input"
-              >
-                {relayModelOptions.map((m) => (
-                  <option key={m.value} value={m.value}>{m.label}</option>
-                ))}
-              </select>
-            </div>
-
-            <textarea
-              value={manualRelayTokenInput}
-              onChange={(e) => onManualRelayTokenInputChange(e.target.value)}
-              className="tf-textarea"
-              placeholder="Token relay (AI key nhận từ AIS OAuth)"
-            />
-
-            <div className="flex flex-col sm:flex-row flex-wrap justify-end gap-3 tf-actions-mobile">
-              <button onClick={onSaveManualRelayToken} className="tf-btn tf-btn-ghost">Lưu token</button>
-              <button onClick={onConnectRelay} className="tf-btn tf-btn-primary">Kết nối</button>
-              <button onClick={onDisconnectRelay} className="tf-btn tf-btn-ghost">Ngắt</button>
-            </div>
-
-            <div className="tf-card p-4 text-sm space-y-1">
+            <div className="tf-card p-4 text-sm space-y-2">
+              <p className="tf-break-long">WS: <span className="text-slate-300">{relayConnectUrl || relaySocketBase}</span></p>
               <p className="tf-break-long">Trạng thái: <span className="font-semibold text-white">{relayStatusText}</span></p>
               <p className="tf-break-all">Token: <span className="text-slate-300">{relayMaskedToken}</span></p>
-              <p className="tf-break-long">Phiên: <span className="text-slate-300">{relayMatchedLong || '—'}</span></p>
-              <div className="flex flex-col sm:flex-row gap-2 pt-2 tf-actions-mobile">
-                <a href={authLink || '#'} target="_blank" rel="noreferrer" className={cn("tf-btn tf-btn-primary", !authLink && "pointer-events-none opacity-50")}>Mở AIS OAuth</a>
-                <a href={relayConnectUrl || relaySocketBase} target="_blank" rel="noreferrer" className="tf-btn tf-btn-ghost">WS endpoint</a>
-              </div>
+              <p className="tf-break-long">Phiên: <span className="text-slate-300">{relayMatchedLong || relayCode || '—'}</span></p>
             </div>
           </div>
         )}
