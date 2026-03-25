@@ -55,6 +55,8 @@ export function Navbar({
 }: NavbarProps) {
   const viewportModeValue: ViewportMode = viewportMode;
   const isMobile = viewportModeValue === 'mobile';
+  const viewportToggleLabel = isMobile ? 'Chế độ Desktop' : 'Chế độ Mobile';
+  const ViewportIcon = isMobile ? Monitor : Smartphone;
   const computeAspectTag = () => {
     const w = window.innerWidth || 1;
     const h = window.innerHeight || 1;
@@ -93,6 +95,7 @@ export function Navbar({
             { key: 'tools', label: 'Công cụ', icon: Settings, action: () => setView('tools'), tone: 'neutral' as const },
           ]
         : []),
+      { key: 'viewport', label: viewportToggleLabel, icon: ViewportIcon, action: onToggleViewportMode, tone: 'neutral' as const },
       { key: 'create', label: 'Viết truyện mới', icon: Plus, action: onCreateStory, tone: 'brand' as const },
       { key: 'prompt', label: 'Kho prompt', icon: Library, action: onOpenPromptManager, tone: 'neutral' as const },
       { key: 'auth', label: authEmail ? 'Đăng xuất' : 'Đăng nhập', icon: authEmail ? LogOut : LogIn, action: authEmail ? onLogout : onShowAuth, tone: 'neutral' as const },

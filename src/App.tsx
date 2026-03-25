@@ -6899,6 +6899,81 @@ const AppContent = () => {
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState('');
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const footerSections: { id: string; title: string; content: React.ReactNode }[] = [
+    {
+      id: 'support',
+      title: 'TRUNG TÂM HỖ TRỢ & ĐIỀU KHOẢN DỊCH VỤ CƠ BẢN',
+      content: (
+        <div className="space-y-3 leading-relaxed">
+          <p>TruyenForge AI được vận hành cá nhân, ưu tiên phản hồi nhanh cho tác giả/dịch giả.</p>
+          <div className="space-y-1">
+            <p className="font-semibold text-slate-800">Kênh liên hệ duy nhất</p>
+            <p>Email: <a className="text-indigo-600 font-semibold" href="mailto:ductruong.lynx@gmail.com">ductruong.lynx@gmail.com</a></p>
+          </div>
+          <div className="space-y-1">
+            <p className="font-semibold text-slate-800">Phạm vi hỗ trợ</p>
+            <ul className="list-disc pl-5 space-y-1">
+              <li>Kỹ thuật & bug: giao diện, đồng bộ, lưu bản thảo, lỗi AI/Relay.</li>
+              <li>Góp ý & yêu cầu tính năng: phím tắt, workflow biên tập, đề xuất model.</li>
+              <li>Tài khoản & hạn mức: đăng nhập, bảo mật, quên mật khẩu, quota FinOps.</li>
+            </ul>
+          </div>
+          <div className="space-y-1">
+            <p className="font-semibold text-slate-800">Cách gửi yêu cầu</p>
+            <ul className="list-disc pl-5 space-y-1">
+              <li>Email đăng ký, mô tả bước gây lỗi (steps), trình duyệt + thiết bị.</li>
+              <li>Đính kèm screenshot/video nếu có; nêu mã lỗi/relay code nếu hiển thị.</li>
+            </ul>
+          </div>
+          <p className="text-xs text-slate-500">SLA: phản hồi 24-48h; sự cố toàn hệ thống được ưu tiên ngay.</p>
+        </div>
+      ),
+    },
+    {
+      id: 'ai',
+      title: 'TUYÊN BỐ MIỄN TRỪ TRÁCH NHIỆM VỀ AI',
+      content: (
+        <div className="space-y-3 leading-relaxed">
+          <p>AI đóng vai trò trợ lý (co-writer/co-translator), không thay thế biên tập viên.</p>
+          <ul className="list-disc pl-5 space-y-1">
+            <li>Nội dung AI sinh dựa trên xác suất, có thể sai lệch logic/văn hóa.</li>
+            <li>Bạn là vòng kiểm duyệt cuối: đọc lại, fact-check, sửa lỗi/hallucination trước khi xuất bản.</li>
+            <li>TruyenForge AI không chịu trách nhiệm pháp lý cho việc dùng nguyên bản đầu ra AI mà không biên tập.</li>
+          </ul>
+        </div>
+      ),
+    },
+    {
+      id: 'copyright',
+      title: 'BẢN QUYỀN & SỞ HỮU TRÍ TUỆ',
+      content: (
+        <div className="space-y-3 leading-relaxed">
+          <ul className="list-disc pl-5 space-y-1">
+            <li>Bạn sở hữu 100% dữ liệu đầu vào (bản thảo, glossary, worldbuilding) và đầu ra đã biên tập.</li>
+            <li>Cam kết chỉ nhập nội dung có quyền sử dụng; cấm dịch lậu/xào bài khi chưa được phép.</li>
+            <li>DMCA: khi nhận khiếu nại hợp lệ, tài khoản có thể bị tạm khóa/xóa nội dung vi phạm.</li>
+          </ul>
+        </div>
+      ),
+    },
+    {
+      id: 'privacy',
+      title: 'QUYỀN RIÊNG TƯ & BẢO MẬT DỮ LIỆU',
+      content: (
+        <div className="space-y-3 leading-relaxed">
+          <ul className="list-disc pl-5 space-y-1">
+            <li>Zero Data Retention: không dùng bản thảo/thuật ngữ của bạn để train mô hình công cộng.</li>
+            <li>Gọi model qua kênh doanh nghiệp, yêu cầu xóa dữ liệu ngay sau xử lý.</li>
+            <li>Tài khoản & dự án lưu trên Supabase/PostgreSQL, mật khẩu được bảo vệ; không bán/chia sẻ dữ liệu cá nhân.</li>
+          </ul>
+          <p className="text-xs text-slate-500">Cập nhật: 03/2026. Điều khoản có thể thay đổi và sẽ được thông báo qua email.</p>
+        </div>
+      ),
+    },
+  ];
+  const [footerOpen, setFooterOpen] = useState<Record<string, boolean>>(
+    () => footerSections.reduce((acc, section) => ({ ...acc, [section.id]: false }), {} as Record<string, boolean>)
+  );
 
   const handleOpenExportStory = (story: Story) => {
     setExportStory(story);
@@ -8174,6 +8249,15 @@ const AppContent = () => {
         onOpenPromptManager={() => setShowPromptManager(true)}
       />
 
+      {viewportMode === 'mobile' && (
+        <button
+          onClick={handleToggleViewportMode}
+          className="fixed right-3 bottom-3 z-[80] rounded-full bg-white shadow-lg border border-slate-200 px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
+        >
+          Chuyển chế độ máy tính
+        </button>
+      )}
+
       <div className="app-shell__body">
       <AnimatePresence mode="wait">
         {selectedStory ? (
@@ -8322,42 +8406,32 @@ const AppContent = () => {
       />
 
       <footer className="mt-10 border-t border-slate-200 bg-white/95 px-6 py-10 text-sm text-slate-600">
-        <div className="max-w-6xl mx-auto grid gap-8 md:grid-cols-4">
-          <div className="space-y-3">
+        <div className="max-w-6xl mx-auto space-y-6">
+          <div className="space-y-2">
             <div className="inline-flex items-center gap-2 rounded-full bg-indigo-600 px-3 py-1 text-white text-xs font-bold shadow">
               TruyenForge
             </div>
-            <p className="text-slate-600">Playground AI cho viết, dịch, QA và worldbuilding. Tập trung bảo mật, FinOps và quyền kiểm soát của bạn.</p>
-            <p className="text-xs text-slate-500">© 2026 TruyenForge. All rights reserved.</p>
+            <p className="text-slate-700">Playground AI cho viết, dịch, QA, worldbuilding. Vận hành cá nhân nên ưu tiên minh bạch, bảo mật và FinOps rõ ràng.</p>
+            <p className="text-xs text-slate-500">© 2026 TruyenForge · Người vận hành: ductruong.lynx@gmail.com</p>
           </div>
-          <div className="space-y-2">
-            <h3 className="text-base font-bold text-slate-900">Đường tắt</h3>
-            <ul className="space-y-1">
-              <li><a className="hover:text-indigo-600" href="/">Trang chủ / Thư viện</a></li>
-              <li><a className="hover:text-indigo-600" href="/?phase1=1">Translator (Phase 1)</a></li>
-              <li><a className="hover:text-indigo-600" href="/?phase2=1">QA & Hậu kỳ (Phase 2)</a></li>
-              <li><a className="hover:text-indigo-600" href="/?phase3=1">Writer Pro (Phase 3)</a></li>
-              <li><a className="hover:text-indigo-600" href="/?phase4=1">Offline/PWA (Phase 4)</a></li>
-              <li><a className="hover:text-indigo-600" href="/?phase5=1">Release checks (Phase 5)</a></li>
-            </ul>
-          </div>
-          <div className="space-y-2">
-            <h3 className="text-base font-bold text-slate-900">An toàn & Tin cậy</h3>
-            <ul className="list-disc pl-4 space-y-1">
-              <li>Không lưu nội dung người dùng trên server mặc định; API key nằm phía client/Supabase.</li>
-              <li>Cảnh báo hạn mức FinOps khi gần hết ngân sách; bạn tự kiểm soát quota.</li>
-              <li>Không dùng dữ liệu của bạn để huấn luyện mô hình bên thứ ba.</li>
-            </ul>
-          </div>
-          <div className="space-y-2">
-            <h3 className="text-base font-bold text-slate-900">Liên hệ & Điều khoản</h3>
-            <p>Email: <a className="text-indigo-600 font-semibold" href="mailto:ductruong.lynx@gmail.com">ductruong.lynx@gmail.com</a></p>
-            <p className="text-xs text-slate-500">Phản hồi bug, yêu cầu tính năng hoặc hỗ trợ tài khoản.</p>
-            <ul className="list-disc pl-4 space-y-1 text-sm">
-              <li><span className="font-semibold">Miễn trừ:</span> Nội dung AI chỉ tham khảo; bạn chịu trách nhiệm biên tập/kiểm duyệt.</li>
-              <li><a className="hover:text-indigo-600" href="#terms">Điều khoản sử dụng</a> &middot; <a className="hover:text-indigo-600" href="#privacy">Chính sách riêng tư</a> (cập nhật sau).</li>
-              <li><span className="font-semibold">Bản quyền:</span> Tôn trọng bản quyền tác giả, không nhập nội dung khi chưa có quyền.</li>
-            </ul>
+          <div className="space-y-3">
+            {footerSections.map((section) => (
+              <div key={section.id} className="border border-slate-200 rounded-2xl bg-white/90 shadow-sm">
+                <button
+                  onClick={() => setFooterOpen((prev) => ({ ...prev, [section.id]: !prev[section.id] }))}
+                  className="w-full flex items-center justify-between px-4 py-3 text-left font-semibold text-slate-800"
+                  aria-expanded={footerOpen[section.id]}
+                >
+                  <span>{section.title}</span>
+                  <ChevronRight className={cn('w-5 h-5 text-slate-400 transition-transform', footerOpen[section.id] ? 'rotate-90 text-indigo-600' : '')} />
+                </button>
+                {footerOpen[section.id] ? (
+                  <div className="px-4 pb-4 pt-1 text-sm text-slate-600 space-y-3">
+                    {section.content}
+                  </div>
+                ) : null}
+              </div>
+            ))}
           </div>
         </div>
       </footer>
