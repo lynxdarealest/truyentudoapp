@@ -243,6 +243,11 @@ export function ApiSectionPanel({
                 <p className="text-sm font-semibold text-white">Đã lưu ({vaultCount})</p>
                 <span className="text-xs text-slate-400">Chọn “Dùng” để kích hoạt</span>
               </div>
+              {currentStatusLabel ? (
+                <p className="text-xs text-emerald-200">
+                  Trạng thái kiểm tra gần nhất: <span className="font-semibold text-white">{currentStatusLabel}</span>
+                </p>
+              ) : null}
               <div className="divide-y divide-white/10">
                 {apiVault.length === 0 && <p className="text-sm text-slate-400 py-2">Chưa có kết nối.</p>}
                 {apiVault.map((item) => (
@@ -254,6 +259,14 @@ export function ApiSectionPanel({
                         <span className="tf-break-long">{item.model || 'Model?'}</span>
                         {item.baseUrl && <span className="text-[11px] text-slate-500 tf-break-all">{item.baseUrl}</span>}
                         <span className="text-[11px] text-slate-500 tf-break-all">•••{maskSensitive(item.key || '')}</span>
+                        <span className={cn(
+                          "px-2 py-0.5 rounded-full text-[11px] font-semibold",
+                          item.status === 'valid' ? "bg-emerald-500/20 text-emerald-100 border border-emerald-400/60" :
+                          item.status === 'invalid' ? "bg-rose-500/10 text-rose-100 border border-rose-400/60" :
+                          "bg-white/5 text-slate-200 border border-white/10"
+                        )}>
+                          {item.status === 'valid' ? 'OK' : item.status === 'invalid' ? 'Lỗi' : 'Chưa test'}
+                        </span>
                       </p>
                     </div>
                     <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-2 w-full md:w-auto">
@@ -281,7 +294,9 @@ export function ApiSectionPanel({
                       >
                         Dùng
                       </button>
-                      <button onClick={() => onTestApiEntry(item.id)} className="px-3 py-1 rounded-md text-xs border border-white/10 text-white/80 hover:bg-white/5">Test</button>
+                      <button onClick={() => onTestApiEntry(item.id)} className="px-3 py-1 rounded-md text-xs border border-white/10 text-white/80 hover:bg-white/5">
+                        {currentApiEntry?.id === item.id ? 'Test hiện tại' : 'Test'}
+                      </button>
                       <button onClick={() => onDeleteApiEntry(item.id)} className="p-2 rounded-md text-white/60 hover:text-red-400 hover:bg-red-900/30">
                         <Trash2 className="w-4 h-4" />
                       </button>
