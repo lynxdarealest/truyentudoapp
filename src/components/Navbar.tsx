@@ -69,6 +69,7 @@ export function Navbar({
   const [navDensity, setNavDensity] = useState<'normal' | 'compact' | 'tiny'>('normal');
   const [showDataMenu, setShowDataMenu] = useState(false);
   const [showQuickActions, setShowQuickActions] = useState(false);
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
 
   const isDark = themeMode === 'dark';
   const navItems = useMemo(
@@ -193,6 +194,7 @@ export function Navbar({
 
   return (
     <>
+      {isMobile && (
       <div className={cn('app-shell__quick-rail fixed left-4 z-[60] flex items-start gap-3', isMobile ? 'top-4 bottom-4' : 'top-24 bottom-4')}>
         <div
           className={cn(
@@ -255,6 +257,7 @@ export function Navbar({
           {showQuickActions ? <ChevronLeft className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
         </button>
       </div>
+      )}
 
       {!isMobile && (
       <nav ref={navRef} data-density={navDensity} className={cn('app-navbar fixed top-0 left-0 right-0 z-50 flex h-20 items-center justify-between border-b px-6 backdrop-blur-xl navbar-appear', surfaceClass)}>
@@ -379,10 +382,80 @@ export function Navbar({
           <div className="flex items-center gap-3">
             <div className="text-right hidden sm:block">
               <p className={cn('text-sm font-bold leading-none', titleClass)}>{profile.displayName}</p>
-              <p className={cn('text-[10px] uppercase tracking-widest mt-1', subTextClass)}>Local Storage</p>
+              <p className={cn('text-[10px] uppercase tracking-widest mt-1', subTextClass)}>{authEmail || 'Chưa đăng nhập'}</p>
             </div>
-            <div className={cn('w-10 h-10 rounded-full flex items-center justify-center overflow-hidden border shadow-sm transition-all duration-300 hover:scale-105', isDark ? 'bg-white/8 border-white/10' : 'bg-slate-100 border-indigo-100')}>
-              <img src={profile.avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
+            <div className="relative">
+              <button
+                onClick={() => setShowProfileMenu((v) => !v)}
+                className={cn('w-10 h-10 rounded-full flex items-center justify-center overflow-hidden border shadow-sm transition-all duration-300 hover:scale-105', isDark ? 'bg-white/8 border-white/10' : 'bg-slate-100 border-indigo-100')}
+                title="Tài khoản"
+              >
+                <img src={profile.avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
+              </button>
+              {showProfileMenu ? (
+                <div className={cn('absolute right-0 mt-2 w-56 rounded-2xl border z-50 p-2 backdrop-blur-xl', dropdownClass)}>
+                  <div className="px-3 py-2">
+                    <p className="text-xs text-slate-500">Đăng nhập với Supabase</p>
+                    <p className="font-bold text-slate-800 truncate">{authEmail || 'Khách/Local'}</p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setShowProfileMenu(false);
+                      onShowAuth();
+                    }}
+                    className={cn('w-full text-left px-3 py-2 rounded-lg text-sm font-semibold transition-colors', isDark ? 'hover:bg-white/10' : 'hover:bg-slate-100')}
+                  >
+                    {authEmail ? 'Đổi tài khoản' : 'Đăng nhập / Đăng ký'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowProfileMenu(false);
+                      onOpenPromptManager();
+                    }}
+                    className={cn('w-full text-left px-3 py-2 rounded-lg text-sm font-semibold transition-colors', isDark ? 'hover:bg-white/10' : 'hover:bg-slate-100')}
+                  >
+                    Kho Prompt
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowProfileMenu(false);
+                      handleExport();
+                    }}
+                    className={cn('w-full text-left px-3 py-2 rounded-lg text-sm font-semibold transition-colors', isDark ? 'hover:bg-white/10' : 'hover:bg-slate-100')}
+                  >
+                    Xuất backup JSON
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowProfileMenu(false);
+                      handleImport();
+                    }}
+                    className={cn('w-full text-left px-3 py-2 rounded-lg text-sm font-semibold transition-colors', isDark ? 'hover:bg-white/10' : 'hover:bg-slate-100')}
+                  >
+                    Nhập backup JSON
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowProfileMenu(false);
+                      onHome();
+                    }}
+                    className={cn('w-full text-left px-3 py-2 rounded-lg text-sm font-semibold transition-colors', isDark ? 'hover:bg-white/10' : 'hover:bg-slate-100')}
+                  >
+                    Hồ sơ hiển thị
+                  </button>
+                  {authEmail ? (
+                    <button
+                      onClick={() => {
+                        setShowProfileMenu(false);
+                        onLogout();
+                      }}
+                      className="w-full text-left px-3 py-2 rounded-lg text-sm font-semibold text-rose-600 hover:bg-rose-50"
+                    >
+                      Đăng xuất
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           </div>
         </div>
