@@ -1,0 +1,18 @@
+<svg width="240" height="240" viewBox="0 0 240 240" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="g2" x1="24" y1="216" x2="216" y2="24" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#10B981"/>
+      <stop offset="0.45" stop-color="#06B6D4"/>
+      <stop offset="1" stop-color="#7C3AED"/>
+    </linearGradient>
+  </defs>
+  <rect x="14" y="14" width="212" height="212" rx="48" fill="#0B1220"/>
+  <rect x="26" y="26" width="188" height="188" rx="40" fill="url(#g2)" opacity="0.08"/>
+  <!-- Anvil base -->
+  <path d="M70 152c0-4.4 3.6-8 8-8h84c4.4 0 8 3.6 8 8v10c0 6.6-5.4 12-12 12H82c-6.6 0-12-5.4-12-12v-10Z" fill="url(#g2)"/>
+  <!-- Anvil horn -->
+  <path d="M162 132H94c-6.6 0-12 5.4-12 12v2c0 4.4 3.6 8 8 8h64l24-10v-2c0-5.5-4.5-10-10-10Z" fill="url(#g2)" opacity="0.85"/>
+  <!-- Flame quill -->
+  <path d="M132 54c-13 8-22 22-22 38 0 9 3 16 7 22l17-12c4-3 9-3 13 0l6 4c5-7 8-15 8-24 0-11-5-22-12-30l-2-2c-3-3-8-3-12 0l-3 4Z" fill="url(#g2)"/>
+  <circle cx="128" cy="92" r="8" fill="#0B1220" opacity="0.35"/>
+</svg>

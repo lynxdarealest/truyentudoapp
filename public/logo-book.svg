@@ -1,0 +1,16 @@
+<svg width="240" height="240" viewBox="0 0 240 240" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="g3" x1="24" y1="216" x2="216" y2="24" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#22D3EE"/>
+      <stop offset="0.5" stop-color="#10B981"/>
+      <stop offset="1" stop-color="#3B82F6"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="208" height="208" rx="44" fill="#0F172A"/>
+  <rect x="28" y="28" width="184" height="184" rx="38" fill="url(#g3)" opacity="0.08"/>
+  <!-- Open book -->
+  <path d="M74 78c0-4.4 3.6-8 8-8h40c6 0 12 1.4 17 4l19 9c3 1.4 4.8 4.4 4.8 7.6V166c0 4.4-3.6 8-8 8h-40c-6 0-12-1.4-17-4l-19-9c-3-1.4-4.8-4.4-4.8-7.6V78Z" fill="url(#g3)"/>
+  <path d="M126 74h40c4.4 0 8 3.6 8 8v82c0 4.4-3.6 8-8 8h-40" stroke="#0F172A" stroke-width="6" stroke-linecap="round" opacity="0.45"/>
+  <!-- Bookmark lightning -->
+  <path d="M118 92h14l-10 24h12l-20 34 6-22h-12l10-36Z" fill="url(#g3)"/>
+</svg>
