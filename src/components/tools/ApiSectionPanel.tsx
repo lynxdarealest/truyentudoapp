@@ -127,7 +127,6 @@ export function ApiSectionPanel({
         <button onClick={onBack} className="p-2 rounded-full hover:bg-slate-100 transition-colors shrink-0"><ChevronLeft /></button>
         <div>
           <h2 className="text-2xl font-serif font-bold">Kết nối AI</h2>
-          <p className="text-sm text-slate-500">Gọn nhất: thêm khóa hoặc relay, chọn model, xong.</p>
         </div>
       </div>
 

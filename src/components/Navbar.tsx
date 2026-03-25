@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'motion/react';
-import { BookOpen, Users, Settings, Info, Sun, Moon, Menu, ChevronLeft, Zap, Plus, Library } from 'lucide-react';
+import { BookOpen, Users, Settings, Sun, Moon, Menu, ChevronLeft, Zap, Plus, Library } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { storage } from '../storage';
@@ -20,7 +20,6 @@ type ViewportMode = 'desktop' | 'mobile';
 interface NavbarProps {
   currentView: string;
   setView: (view: 'stories' | 'characters' | 'tools' | 'api') => void;
-  onShowHelp: () => void;
   onHome: () => void;
   onCreateStory: () => void;
   onOpenPromptManager: () => void;
@@ -39,7 +38,6 @@ interface NavbarProps {
 export function Navbar({
   currentView,
   setView,
-  onShowHelp,
   onHome,
   onCreateStory,
   onOpenPromptManager,
@@ -95,10 +93,9 @@ export function Navbar({
         : []),
       { key: 'create', label: 'Viết truyện mới', icon: Plus, action: onCreateStory, tone: 'brand' as const },
       { key: 'prompt', label: 'Kho prompt', icon: Library, action: onOpenPromptManager, tone: 'neutral' as const },
-      { key: 'help', label: 'Xem hướng dẫn', icon: Info, action: onShowHelp, tone: 'neutral' as const },
       { key: 'theme', label: isDark ? 'Nền sáng' : 'Nền tối', icon: isDark ? Sun : Moon, action: onToggleTheme, tone: 'neutral' as const },
     ],
-    [isDark, isMobile, onCreateStory, onHome, onOpenPromptManager, onShowHelp, onToggleTheme, setView],
+    [isDark, isMobile, onCreateStory, onHome, onOpenPromptManager, onToggleTheme, setView],
   );
 
   const surfaceClass = isDark
@@ -282,7 +279,6 @@ export function Navbar({
                 <p className={cn('text-[11px] font-bold uppercase tracking-[0.25em]', isDark ? 'text-cyan-300/70' : 'text-indigo-500/70')}>
                   Bảng nhanh
                 </p>
-                <p className={cn('text-xs', isDark ? 'text-slate-400' : 'text-slate-500')}>Các thao tác hay dùng</p>
               </div>
             </div>
             <div className="space-y-2 flex-1 overflow-y-auto pr-1">
@@ -309,9 +305,6 @@ export function Navbar({
                   <span>{label}</span>
                 </button>
               ))}
-            </div>
-            <div className={cn('mt-3 rounded-2xl px-4 py-3 text-xs leading-relaxed', isDark ? 'bg-white/5 text-slate-400' : 'bg-slate-50 text-slate-500')}>
-              Mở khi cần, đóng khi không dùng để giao diện chính gọn hơn.
             </div>
           </div>
         </div>
@@ -396,13 +389,6 @@ export function Navbar({
             title={themeMode === 'dark' ? 'Đổi sang giao diện sáng' : 'Đổi sang giao diện tối'}
           >
             {themeMode === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-          </button>
-          <button
-            onClick={onShowHelp}
-            className={cn('w-10 h-10 rounded-full border flex items-center justify-center transition-all duration-300', utilityButtonClass)}
-            title="Hướng dẫn"
-          >
-            <Info className="w-5 h-5" />
           </button>
           <div className={cn('app-navbar-divider h-8 w-[1px] mx-1 md:mx-2', dividerClass)} />
           <div className="flex items-center gap-3">

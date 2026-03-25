@@ -51,7 +51,6 @@ import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { Navbar } from './components/Navbar';
 import { loadBudgetState } from './finops';
-import { HelpModal } from './components/HelpModal';
 import { ApiSectionPanel } from './components/tools/ApiSectionPanel';
 import { ToolsPage } from './features/tools/ToolsPage';
 import { PromptLibraryModal as PromptLibraryModalNew } from './features/prompt/PromptLibrary';
@@ -3572,7 +3571,7 @@ const ToolsManager = ({
             </div>
             <div>
               <h3 className="text-xl font-semibold text-white">Yêu cầu đăng nhập</h3>
-              <p className="tf-body">Đăng nhập để dùng Công cụ (dịch, viết, kho prompt). Nút đăng nhập/đăng xuất nằm trong avatar góc phải.</p>
+              <p className="tf-body">Đăng nhập để dùng Công cụ.</p>
             </div>
           </div>
           <div className="flex justify-end">
@@ -6871,7 +6870,6 @@ const AppContent = () => {
   const [showAIGen, setShowAIGen] = useState(false);
   const [storiesVersion, setStoriesVersion] = useState(0);
   const [view, setView] = useState<'stories' | 'characters' | 'tools' | 'api'>('stories');
-  const [showHelp, setShowHelp] = useState(false);
   const [showAIStoryModal, setShowAIStoryModal] = useState(false);
   const [showAIContinueModal, setShowAIContinueModal] = useState(false);
   const [showTranslateModal, setShowTranslateModal] = useState(false);
@@ -8189,7 +8187,6 @@ const AppContent = () => {
       viewportMode === 'mobile' ? 'app-shell--mobile' : 'app-shell--desktop',
       themeMode === 'dark' ? 'night-bg text-slate-100' : 'day-bg text-slate-900'
     )}>
-      <HelpModal isOpen={showHelp} onClose={() => setShowHelp(false)} />
       <AIGenerationModal 
         isOpen={showAIGen} 
         onClose={() => setShowAIGen(false)} 
@@ -8354,7 +8351,6 @@ const AppContent = () => {
           setEditingStory(null);
           setIsCreating(false);
         }} 
-        onShowHelp={() => setShowHelp(true)} 
         onHome={() => {
           setView('stories');
           setSelectedStory(null);
@@ -8440,9 +8436,6 @@ const AppContent = () => {
               <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
                 <div>
                   <h2 className="text-5xl font-serif font-bold text-slate-900 mb-4 tracking-tight">Thư viện</h2>
-                  <p className="max-w-xl text-sm md:text-base text-slate-600">
-                    Điều hướng chính nằm trên thanh đầu trang. Dùng thanh tác vụ nhanh ở góc trái để mở ngay Trang chủ, Nhân vật, API hoặc Công cụ.
-                  </p>
                 </div>
                 <div className="flex flex-wrap gap-4">
                   <button 
@@ -8484,29 +8477,6 @@ const AppContent = () => {
               </div>
             </div>
 
-            <div className="max-w-7xl mx-auto px-6 mb-10">
-              <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-                <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-                  <h3 className="text-xl font-serif font-bold text-slate-900">Bắt đầu nhanh</h3>
-                  <span className="text-xs px-3 py-1 rounded-full bg-indigo-50 text-indigo-700 font-semibold">Hướng dẫn nhanh</span>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
-                  <div className="rounded-2xl border border-slate-200 p-4 bg-slate-50">
-                    <p className="font-bold text-slate-800 mb-1">1. Chuẩn bị trong API</p>
-                    <p className="text-slate-600">Mở <b>API</b>, thêm khóa, mã đăng nhập Google hoặc kết nối trung chuyển rồi chọn model bạn muốn dùng.</p>
-                  </div>
-                  <div className="rounded-2xl border border-slate-200 p-4 bg-slate-50">
-                    <p className="font-bold text-slate-800 mb-1">2. Chọn workflow AI</p>
-                    <p className="text-slate-600">Dùng nút <b>AI từ file</b> để chọn nhanh Dịch truyện hoặc Viết tiếp.</p>
-                  </div>
-                  <div className="rounded-2xl border border-slate-200 p-4 bg-slate-50">
-                    <p className="font-bold text-slate-800 mb-1">3. Cá nhân hóa UI</p>
-                    <p className="text-slate-600">Đổi tên, avatar và chuyển ngày/đêm để dùng thoải mái hơn.</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-             
             <StoryList refreshKey={storiesVersion} onView={setSelectedStory} />
           </motion.div>
         )}
