@@ -2,12 +2,20 @@
 
 TruyenForge AI là playground web/PWA giúp tác giả, dịch giả và biên tập viên cộng tác với AI: dịch chương, gợi ý cốt truyện, đổi giọng văn, quét chất lượng, và quản lý thế giới hư cấu (wiki/timeline/graph). Kiến trúc mô phỏng đa nhà cung cấp model, FinOps quota, cache, fallback, và chế độ offline/sync cơ bản.
 
-## Tính năng chính
-- Phase 1 – Translator: màn split-view, 3 gợi ý dịch/segment, glossary lock + retry, Translation Memory exact/fuzzy, KPI vi phạm glossary.
-- Phase 2 – QA & hậu kỳ: proofread + consistency scan (glossary/xưng hô/timeline), Quality Center assign/resolve, pipeline DRAFT → PUBLISHED, local KPI thời gian post-edit.
-- Phase 3 – Writer Pro: auto-complete 3 biến thể 50/100/200 từ, plot generator, tone shift presets, context Q&A, wiki extraction; Hierarchical context + GraphRAG node/edge từ Universe timeline/characters/locations/items. FinOps control ngay trên header.
-- Phase 4 – Scale & PWA: offline drafting với IndexedDB, sync queue mô phỏng, service worker cache shell, quota/observability dashboard.
-- Phase 5 – Release checks: các gate (glossary pass-rate, latency, queue health, crash-free) và xuất báo cáo JSON.
+## Chức năng nổi bật
+- Translator (Phase 1): split-view, 3 gợi ý/segment, glossary lock + retry cưỡng bức, Translation Memory exact + fuzzy, KPI vi phạm glossary.
+- QA & hậu kỳ (Phase 2): proofread + consistency scan (glossary/xưng hô/timeline), Quality Center assign/resolve, pipeline DRAFT → PUBLISHED, đo thời gian post-edit.
+- Writer Pro (Phase 3): auto-complete 3 biến thể 50/100/200 từ, plot generator, tone shift preset, context Q&A, wiki extraction. Hierarchical context + GraphRAG node/edge (characters/locations/items/timeline) được tiêm vào prompt. FinOps control ngay trên header.
+- Scale & PWA (Phase 4): offline drafting (IndexedDB), sync queue mô phỏng, service worker cache shell, quota/observability dashboard.
+- Release checks (Phase 5): gate glossary pass-rate, latency, queue health, crash-free; xuất báo cáo JSON.
+
+## An toàn, bảo mật & độ tin cậy
+- **FinOps & quota:** Mọi call AI đi qua FinOps check (ước tính chi phí theo provider/model). Hết quota sẽ tự fallback mock thay vì chặn cứng. Có nút chỉnh hạn mức và reset chu kỳ 28 ngày (Phase 1 & 3).
+- **Data privacy:** Gọi AI qua gateway server-side (mô phỏng multi-provider) với tùy chọn Zero Data Retention. Prompt được lọc PII ở gateway (khung sẵn). Không lưu API key trên server, chỉ localStorage trong môi trường demo.
+- **Consistency guard:** Glossary lock + regex post-processing; Context Q&A bắt buộc dẫn chứng (references). Autocomplete/plot sử dụng hierarchical summary + GraphRAG để giảm drift.
+- **Caching & fallback:** Cache fingerprint theo task; session cache cho dịch/viết; fallback heuristic khi provider lỗi hoặc hết quota.
+- **Collaboration safety:** Editor đã gắn nền CRDT (Yjs) cho mở rộng real-time; debounce & requestIdle cho preview để tránh nghẽn UI.
+- **Offline-first:** Khi offline, draft lưu IndexedDB; hàng đợi đồng bộ khi lên mạng lại. Export nặng (PDF/EPUB) mô phỏng chạy nền để không khóa UI.
 
 ## Kiến trúc & kỹ thuật nổi bật
 - AI Gateway + FinOps: router đa nhà cung cấp (OpenAI/Anthropic/Gemini) với budget check, cost estimation, cache session, failover và fallback mock khi hết quota.
