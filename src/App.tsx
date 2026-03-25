@@ -3746,23 +3746,6 @@ const ToolsManager = ({
       <div className="space-y-12">
         <div className="space-y-6">
           <SectionHeader
-            title="Thiết lập cá nhân"
-            subtitle="Quản lý hồ sơ, avatar và các tùy chọn hiển thị."
-          />
-          <ProfileSettingsPanel
-            profileName={profileName}
-            profileAvatar={profileAvatar}
-            onProfileNameChange={setProfileName}
-            onProfileAvatarChange={setProfileAvatar}
-            onSave={handleSaveProfileInfo}
-            onPickAvatarFile={handlePickAvatarFile}
-            onAvatarFileChange={handleAvatarFileChange}
-            avatarInputRef={avatarUploadInputRef}
-          />
-        </div>
-
-        <div className="space-y-6">
-          <SectionHeader
             title="Kho prompt"
             subtitle="Lưu và quản lý prompt dùng chung cho viết và dịch."
           />
