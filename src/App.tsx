@@ -225,6 +225,7 @@ ${includeToc ? navItems.join('\n') : ''}
 type ApiMode = 'manual' | 'relay';
 const DEFAULT_RELAY_WS_BASE = 'wss://proxymid.ductruong-lynx.workers.dev/';
 const DEFAULT_RELAY_WEB_BASE = 'https://proxymid.ductruong-lynx.workers.dev/';
+const LEGACY_RELAY_HOST_RE = /(relay2026\.up\.railway\.app|relay2026\.vercel\.app|proxymid\.your-subdomain\.workers\.dev)/i;
 const RELAY_SOCKET_BASE = normalizeRelaySocketBase(import.meta.env.VITE_RELAY_WS_BASE || DEFAULT_RELAY_WS_BASE);
 const RELAY_WEB_BASE = ((import.meta.env.VITE_RELAY_WEB_BASE || DEFAULT_RELAY_WEB_BASE).trim().replace(/\/+$/, '') + '/');
 
@@ -445,13 +446,25 @@ function toWsUrl(url: string): string {
   return `wss://${u.replace(/^\/+/, '')}`;
 }
 
+function normalizeStoredRelayUrl(input: string): string {
+  const raw = String(input || '').trim();
+  if (!raw) return buildRelaySocketUrl('');
+
+  const code = parseRelayCodeFromText(raw);
+  if (LEGACY_RELAY_HOST_RE.test(raw)) {
+    return buildRelaySocketUrl(code);
+  }
+
+  return raw;
+}
+
 function getApiRuntimeConfig(): ApiRuntimeConfig {
   try {
     const raw = localStorage.getItem(API_RUNTIME_CONFIG_KEY);
     const parsed = raw ? (JSON.parse(raw) as Partial<ApiRuntimeConfig>) : {};
     return {
       mode: parsed.mode === 'relay' ? 'relay' : 'manual',
-      relayUrl: parsed.relayUrl || buildRelaySocketUrl(''),
+      relayUrl: normalizeStoredRelayUrl(parsed.relayUrl || buildRelaySocketUrl('')),
       identityHint: parsed.identityHint || '',
       relayMatchedLong: parsed.relayMatchedLong || '',
       relayToken: parsed.relayToken || '',
@@ -2750,6 +2763,21 @@ const ToolsManager = ({
 
   useEffect(() => {
     const runtime = getApiRuntimeConfig();
+    try {
+      const rawRuntime = localStorage.getItem(API_RUNTIME_CONFIG_KEY);
+      const parsedRuntime = rawRuntime ? (JSON.parse(rawRuntime) as Partial<ApiRuntimeConfig>) : {};
+      const originalRelayUrl = String(parsedRuntime.relayUrl || '').trim();
+      if (originalRelayUrl && originalRelayUrl !== runtime.relayUrl) {
+        saveApiRuntimeConfig({
+          ...runtime,
+          relayUrl: runtime.relayUrl,
+          identityHint: runtime.identityHint || runtime.relayUrl,
+        });
+      }
+    } catch {
+      // Ignore migration write failures and continue with normalized runtime in memory.
+    }
+
     const vault = loadApiVault(runtime.aiProfile);
     const active = vault.find((item) => item.id === runtime.activeApiKeyId) || getActiveApiKeyRecord(vault);
     const current = active?.key?.trim() || '';
