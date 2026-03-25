@@ -5392,11 +5392,23 @@ const PromptLibraryModal = ({ isOpen, onClose, onSelect }: { isOpen: boolean, on
   const [selectedGroup, setSelectedGroup] = useState<PromptGroup>('common');
   const filteredCategories = PREDEFINED_PROMPTS.filter((c) => c.group === selectedGroup);
   const [selectedCategory, setSelectedCategory] = useState(filteredCategories[0]?.category || '');
+  const [editablePrompts, setEditablePrompts] = useState<Record<string, Array<{ title: string; content: string }>>>({});
+  const [newPromptTitle, setNewPromptTitle] = useState('');
+  const [newPromptContent, setNewPromptContent] = useState('');
 
   useEffect(() => {
     const first = PREDEFINED_PROMPTS.find((c) => c.group === selectedGroup);
     if (first?.category) setSelectedCategory(first.category);
   }, [selectedGroup]);
+
+  useEffect(() => {
+    if (!selectedCategory) return;
+    setEditablePrompts((prev) => {
+      if (prev[selectedCategory]) return prev;
+      const source = PREDEFINED_PROMPTS.find((c) => c.category === selectedCategory)?.prompts || [];
+      return { ...prev, [selectedCategory]: source.map((p) => ({ ...p })) };
+    });
+  }, [selectedCategory]);
 
   if (!isOpen) return null;
 
@@ -5456,23 +5468,80 @@ const PromptLibraryModal = ({ isOpen, onClose, onSelect }: { isOpen: boolean, on
           
           {/* Content */}
           <div className="w-2/3 p-6 overflow-y-auto bg-white space-y-4">
-            {PREDEFINED_PROMPTS.find(c => c.category === selectedCategory)?.prompts.map((prompt, idx) => (
-              <div key={idx} className="p-5 rounded-2xl border border-slate-200 hover:border-indigo-300 transition-all group">
-                <div className="flex justify-between items-start mb-2">
-                  <h4 className="font-bold text-slate-800 text-lg">{prompt.title}</h4>
-                  <button 
-                    onClick={() => {
-                      onSelect(prompt.content);
-                      onClose();
+            {(editablePrompts[selectedCategory] || []).map((prompt, idx) => (
+              <div key={`${selectedCategory}-${idx}`} className="p-5 rounded-2xl border border-slate-200 hover:border-indigo-300 transition-all group space-y-3">
+                <div className="flex justify-between items-start gap-3">
+                  <input
+                    value={prompt.title}
+                    onChange={(e) => {
+                      const next = [...(editablePrompts[selectedCategory] || [])];
+                      next[idx] = { ...next[idx], title: e.target.value };
+                      setEditablePrompts((prev) => ({ ...prev, [selectedCategory]: next }));
                     }}
-                    className="px-4 py-2 bg-indigo-50 text-indigo-600 rounded-xl text-sm font-bold opacity-0 group-hover:opacity-100 transition-all hover:bg-indigo-100"
-                  >
-                    Sử dụng
-                  </button>
+                    className="flex-1 font-bold text-slate-800 text-lg bg-transparent border-b border-slate-200 focus:border-indigo-400 outline-none"
+                  />
+                  <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition">
+                    <button 
+                      onClick={() => {
+                        onSelect(prompt.content);
+                        onClose();
+                      }}
+                      className="px-3 py-2 bg-indigo-50 text-indigo-600 rounded-lg text-sm font-bold hover:bg-indigo-100"
+                    >
+                      Dùng
+                    </button>
+                    <button
+                      onClick={() => {
+                        const next = (editablePrompts[selectedCategory] || []).filter((_, i) => i !== idx);
+                        setEditablePrompts((prev) => ({ ...prev, [selectedCategory]: next }));
+                      }}
+                      className="px-3 py-2 bg-rose-50 text-rose-600 rounded-lg text-sm font-bold hover:bg-rose-100"
+                    >
+                      Xóa
+                    </button>
+                  </div>
                 </div>
-                <p className="text-slate-600 text-sm leading-relaxed">{prompt.content}</p>
+                <textarea
+                  value={prompt.content}
+                  onChange={(e) => {
+                    const next = [...(editablePrompts[selectedCategory] || [])];
+                    next[idx] = { ...next[idx], content: e.target.value };
+                    setEditablePrompts((prev) => ({ ...prev, [selectedCategory]: next }));
+                  }}
+                  className="w-full min-h-[120px] text-sm text-slate-700 border border-slate-200 rounded-xl p-3 focus:border-indigo-400 focus:ring-1 focus:ring-indigo-200 outline-none resize-vertical"
+                />
               </div>
             ))}
+
+            <div className="p-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50 space-y-3">
+              <p className="text-sm font-semibold text-slate-700">Thêm prompt mới</p>
+              <input
+                value={newPromptTitle}
+                onChange={(e) => setNewPromptTitle(e.target.value)}
+                placeholder="Tiêu đề"
+                className="w-full px-3 py-2 rounded-lg border border-slate-200 focus:border-indigo-400 outline-none"
+              />
+              <textarea
+                value={newPromptContent}
+                onChange={(e) => setNewPromptContent(e.target.value)}
+                placeholder="Nội dung prompt..."
+                className="w-full min-h-[100px] px-3 py-2 rounded-lg border border-slate-200 focus:border-indigo-400 outline-none resize-vertical"
+              />
+              <div className="flex justify-end">
+                <button
+                  onClick={() => {
+                    if (!newPromptContent.trim()) return;
+                    const next = [...(editablePrompts[selectedCategory] || []), { title: newPromptTitle || 'Prompt tùy chỉnh', content: newPromptContent }];
+                    setEditablePrompts((prev) => ({ ...prev, [selectedCategory]: next }));
+                    setNewPromptTitle('');
+                    setNewPromptContent('');
+                  }}
+                  className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-bold hover:bg-emerald-700"
+                >
+                  Thêm
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </motion.div>
