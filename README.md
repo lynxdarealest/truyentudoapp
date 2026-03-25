@@ -39,15 +39,14 @@ npm run dev
 - Phase 5 Release checks: `/?phase5=1`
 
 ## Cấu hình relay (Cloudflare Worker)
-- `VITE_RELAY_WS_BASE=wss://truyenforge-relay.<your-subdomain>.workers.dev/?code=`
-- `VITE_RELAY_WEB_BASE=https://truyenforge-relay.<your-subdomain>.workers.dev/`
-Nhập URL WebSocket trong tab Relay: ví dụ `wss://truyenforge-relay.<your-subdomain>.workers.dev/?code=1810`.
+- `VITE_RELAY_WS_BASE=wss://proxymid.<your-subdomain>.workers.dev/?code=`
+- `VITE_RELAY_WEB_BASE=https://proxymid.<your-subdomain>.workers.dev/`
+Nhập mã phòng trong tab Relay, app sẽ tự ghép WebSocket endpoint từ 2 biến trên.
 
-Worker relay mẫu nằm tại:
-- `workers/relay-worker/src/index.ts`
-- `workers/relay-worker/wrangler.toml`
+Repo worker dùng sẵn:
+- [ductruonglynx-netizen/proxymid](https://github.com/ductruonglynx-netizen/proxymid)
 
-Hướng dẫn deploy:
+Hướng dẫn deploy + kết nối:
 - [CLOUDFLARE_RELAY_SETUP.md](/Users/phand/Downloads/ai/truyentudoapp/docs/CLOUDFLARE_RELAY_SETUP.md)
 
 ## FinOps nhanh (mock, client-side)

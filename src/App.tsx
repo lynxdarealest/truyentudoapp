@@ -223,8 +223,8 @@ ${includeToc ? navItems.join('\n') : ''}
 
 
 type ApiMode = 'manual' | 'relay';
-const DEFAULT_RELAY_WS_BASE = 'wss://truyenforge-relay.your-subdomain.workers.dev/?code=';
-const DEFAULT_RELAY_WEB_BASE = 'https://truyenforge-relay.your-subdomain.workers.dev/';
+const DEFAULT_RELAY_WS_BASE = 'wss://proxymid.your-subdomain.workers.dev/?code=';
+const DEFAULT_RELAY_WEB_BASE = 'https://proxymid.your-subdomain.workers.dev/';
 const RELAY_SOCKET_BASE = normalizeRelaySocketBase(import.meta.env.VITE_RELAY_WS_BASE || DEFAULT_RELAY_WS_BASE);
 const RELAY_WEB_BASE = ((import.meta.env.VITE_RELAY_WEB_BASE || DEFAULT_RELAY_WEB_BASE).trim().replace(/\/+$/, '') + '/');
 
