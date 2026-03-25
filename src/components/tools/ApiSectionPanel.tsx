@@ -145,25 +145,25 @@ export function ApiSectionPanel({
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="phase1-stat">
-          <p>Nhà cung cấp</p>
-          <strong>{currentProviderLabel}</strong>
+        <div className="tf-card p-4 text-sm">
+          <p className="text-slate-300">Nhà cung cấp</p>
+          <strong className="text-slate-50 text-lg">{currentProviderLabel}</strong>
         </div>
-        <div className="phase1-stat">
-          <p>Model hiện tại</p>
-          <strong>{currentModelLabel}</strong>
+        <div className="tf-card p-4 text-sm">
+          <p className="text-slate-300">Model hiện tại</p>
+          <strong className="text-slate-50 text-lg">{currentModelLabel}</strong>
         </div>
-        <div className="phase1-stat">
-          <p>Đã lưu</p>
-          <strong>{vaultCount.toLocaleString('vi-VN')} kết nối</strong>
+        <div className="tf-card p-4 text-sm">
+          <p className="text-slate-300">Đã lưu</p>
+          <strong className="text-slate-50 text-lg">{vaultCount.toLocaleString('vi-VN')} kết nối</strong>
         </div>
-        <div className="phase1-stat">
-          <p>Trạng thái</p>
-          <strong>{currentStatusLabel}</strong>
+        <div className="tf-card p-4 text-sm">
+          <p className="text-slate-300">Trạng thái</p>
+          <strong className="text-slate-50 text-lg">{currentStatusLabel}</strong>
         </div>
       </div>
 
-      <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm space-y-6">
+      <div className="tf-card p-8 space-y-6">
         <div className="flex items-center gap-3">
           <div className="p-3 bg-emerald-50 rounded-2xl">
             <Zap className="w-6 h-6 text-emerald-600" />
@@ -174,29 +174,35 @@ export function ApiSectionPanel({
           </div>
         </div>
 
-        <div className="inline-flex rounded-2xl bg-slate-100 p-1">
+        <div className="tf-pill-tabs">
           <button
             onClick={onSwitchToDirect}
-            className={`px-4 py-2 rounded-xl text-sm font-bold ${apiMode === 'manual' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}
+            className={cn(
+              "tf-pill-btn",
+              apiMode === 'manual' ? "bg-indigo-600 text-white shadow" : "text-slate-200 hover:bg-slate-800"
+            )}
           >
             Gọi trực tiếp
           </button>
           <button
             onClick={onSwitchToRelay}
-            className={`px-4 py-2 rounded-xl text-sm font-bold ${apiMode === 'relay' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}
+            className={cn(
+              "tf-pill-btn",
+              apiMode === 'relay' ? "bg-indigo-600 text-white shadow" : "text-slate-200 hover:bg-slate-800"
+            )}
           >
             Qua trung chuyển
           </button>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-slate-600">
-            <p className="font-bold text-slate-900 mb-1">Gọi trực tiếp</p>
-            <p>Dùng API key Gemini/OpenAI/Anthropic, mã truy cập Google <code>ya29...</code>, hoặc địa chỉ máy chủ AI riêng do bạn nhập. Ứng dụng gọi thẳng, không qua trung chuyển.</p>
+          <div className="tf-card p-4 text-slate-200">
+            <p className="font-bold text-slate-50 mb-1">Gọi trực tiếp</p>
+            <p className="tf-body">Dùng API key Gemini/OpenAI/Anthropic, mã truy cập Google <code>ya29...</code>, hoặc địa chỉ máy chủ AI riêng do bạn nhập. Ứng dụng gọi thẳng, không qua trung chuyển.</p>
           </div>
-          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-amber-900">
+          <div className="rounded-lg border border-amber-500/50 bg-amber-900/20 p-4 text-amber-100">
             <p className="font-bold mb-1">Qua trung chuyển</p>
-            <p>Ứng dụng chỉ nối vào máy chủ trung chuyển <code>relay2026...</code>; phía trung chuyển giữ khóa hoặc tự gọi AI thay cho trình duyệt.</p>
+            <p className="leading-relaxed">Ứng dụng chỉ nối vào máy chủ trung chuyển <code>relay2026...</code>; phía trung chuyển giữ khóa hoặc tự gọi AI thay cho trình duyệt.</p>
           </div>
         </div>
 
