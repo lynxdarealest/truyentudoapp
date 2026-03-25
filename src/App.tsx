@@ -5415,6 +5415,7 @@ const PromptLibraryModal = ({ isOpen, onClose, onSelect }: { isOpen: boolean, on
   const currentList = selectedGroup === 'common' ? coreRules : genreRules;
   const selectedId = selectedGroup === 'common' ? selectedCoreId : selectedGenreId;
   const setList = selectedGroup === 'common' ? setCoreRules : setGenreRules;
+  const selectedItem = currentList.find((i) => i.id === selectedId) || currentList[0];
 
   if (!isOpen) return null;
 
