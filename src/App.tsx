@@ -3084,7 +3084,6 @@ const ToolsManager = ({
     try {
       const url = new URL(`${RELAY_SOCKET_BASE}${code}`);
       candidates.add(`${url.origin}/${code}`);
-      candidates.add(`${url.origin}/code=${code}`);
     } catch {}
     return Array.from(candidates);
   };
