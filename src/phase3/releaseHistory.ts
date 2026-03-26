@@ -11,12 +11,12 @@ export const WRITER_RELEASE_NOTES: ReleaseNote[] = [
   {
     version: '0.0a',
     dateLabel: '2026-03-26',
-    title: 'Tang do bam context cho Writer Pro',
+    title: 'Tăng độ bám context cho Writer Pro',
     items: [
-      'Nang cap prompt Writer Pro de bam chat objective, timeline, glossary va Universe Wiki truoc khi sinh noi dung.',
-      'Tu dong khoa glossary sau khi AI tra ve, giam tinh trang ten rieng va thuat ngu bi troi lai ve ban goc.',
-      'Bo sung Context Readiness de canh bao khi du lieu dau vao con thieu, giup AI hoat dong on dinh hon.',
-      'Them muc Lich su cap nhat nho ngay trong giao dien de theo doi thay doi cua san pham.',
+      'Nâng cấp prompt Writer Pro để bám chặt objective, timeline, glossary và Universe Wiki trước khi sinh nội dung.',
+      'Tự động khóa glossary sau khi AI trả về, giảm tình trạng tên riêng và thuật ngữ bị trôi lại về bản gốc.',
+      'Bổ sung Context Readiness để cảnh báo khi dữ liệu đầu vào còn thiếu, giúp AI hoạt động ổn định hơn.',
+      'Thêm mục Lịch sử cập nhật nhỏ ngay trong giao diện để theo dõi thay đổi của sản phẩm.',
     ],
   },
 ];

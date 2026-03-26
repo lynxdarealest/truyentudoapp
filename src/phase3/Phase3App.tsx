@@ -782,7 +782,7 @@ export default function Phase3App() {
             </div>
             <div className="rounded-xl border border-[#D9E2EC] bg-white p-3 text-xs text-[#52606D]">
               <div className="flex items-center justify-between gap-2">
-                <p className="font-semibold uppercase tracking-wide">Lich su cap nhat</p>
+                <p className="font-semibold uppercase tracking-wide">Lịch sử cập nhật</p>
                 <span className="rounded-full bg-[#EEF2FF] px-2 py-1 text-[11px] font-semibold text-[#4338CA]">
                   {CURRENT_WRITER_VERSION}
                 </span>
