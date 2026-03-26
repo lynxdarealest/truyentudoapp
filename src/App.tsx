@@ -788,6 +788,16 @@ interface TranslationDictionaryEntry {
   translation: string;
 }
 
+interface TranslationBatchEntry {
+  index: number;
+  text: string;
+}
+
+interface TranslationSegmentBatch {
+  entries: TranslationBatchEntry[];
+  sourceText: string;
+}
+
 const CHAPTER_HEADING_PATTERNS: RegExp[] = [
   /^(?:#{1,6}\s*)?第\s*[0-9０-９一二三四五六七八九十百千万兩两零〇IVXLCDMivxlcdm]+\s*[章节回卷部集篇](?:\s*[:：\-—.．、]\s*.*)?$/,
   /^(?:#{1,6}\s*)?(?:chương|chuong)\s*[0-9ivxlcdm]+(?:\s*[:：\-—.．、]\s*.*)?$/i,
@@ -1005,10 +1015,130 @@ function applyTranslationDictionaryToText(
   return output.trim();
 }
 
+function buildScopedDictionaryContext(
+  sourceText: string,
+  dictionary: TranslationDictionaryEntry[],
+  maxEntries = 24,
+): string {
+  const source = String(sourceText || '');
+  if (!source.trim() || !dictionary.length) return '';
+  const matched = dictionary
+    .filter((entry) => source.includes(entry.original))
+    .sort((a, b) => b.original.length - a.original.length)
+    .slice(0, Math.max(1, maxEntries));
+  if (!matched.length) return '';
+  return "SỬ DỤNG TỪ ĐIỂN TÊN RIÊNG SAU ĐÂY (Ưu tiên tuyệt đối):\n" +
+    matched.map((entry) => `- ${entry.original} -> ${entry.translation}`).join('\n');
+}
+
 function extractTranslationContextTail(text: string, maxChars = 900): string {
   const clean = String(text || '').trim();
   if (clean.length <= maxChars) return clean;
   return clean.slice(clean.length - maxChars).trim();
+}
+
+function buildTranslationSegmentBatches(
+  entries: TranslationBatchEntry[],
+  maxCharsPerBatch: number,
+  maxItemsPerBatch: number,
+): TranslationSegmentBatch[] {
+  const safeMaxChars = Math.max(1200, maxCharsPerBatch);
+  const safeMaxItems = Math.max(1, maxItemsPerBatch);
+  const batches: TranslationSegmentBatch[] = [];
+  let current: TranslationBatchEntry[] = [];
+  let currentChars = 0;
+
+  const flush = () => {
+    if (!current.length) return;
+    batches.push({
+      entries: current,
+      sourceText: current.map((entry, idx) => `[${idx + 1}]\n${entry.text}`).join('\n\n'),
+    });
+    current = [];
+    currentChars = 0;
+  };
+
+  entries.forEach((entry) => {
+    const text = String(entry.text || '').trim();
+    if (!text) return;
+    const entryChars = text.length;
+    const wouldOverflow =
+      current.length >= safeMaxItems ||
+      (current.length > 0 && currentChars + entryChars > safeMaxChars);
+    if (wouldOverflow) flush();
+    current.push({ ...entry, text });
+    currentChars += entryChars;
+  });
+
+  flush();
+  return batches;
+}
+
+function normalizeTranslationBatchItem(value: unknown): string {
+  if (typeof value === 'string') return value.trim();
+  if (!value || typeof value !== 'object') return '';
+  const record = value as Record<string, unknown>;
+  const direct = ['content', 'translation', 'text', 'value', 'body']
+    .map((key) => record[key])
+    .find((item) => typeof item === 'string');
+  return typeof direct === 'string' ? direct.trim() : '';
+}
+
+function normalizeTranslationBatchResponse(
+  raw: string,
+  expectedCount: number,
+  fallbackTitle: string,
+): { title: string; segments: string[] } {
+  const parsed = tryParseJson<any>(raw, 'any') || tryParseJson<any>(normalizeJsonLikeText(raw), 'any');
+  let title = fallbackTitle;
+
+  const sortKey = (key: string): number => {
+    const matched = key.match(/(\d+)/);
+    return matched ? Number(matched[1]) : Number.MAX_SAFE_INTEGER;
+  };
+
+  const readCollection = (value: unknown): string[] => {
+    if (Array.isArray(value)) {
+      return value.map((item) => normalizeTranslationBatchItem(item));
+    }
+    if (value && typeof value === 'object') {
+      return Object.entries(value as Record<string, unknown>)
+        .sort((a, b) => sortKey(a[0]) - sortKey(b[0]) || a[0].localeCompare(b[0]))
+        .map(([, item]) => normalizeTranslationBatchItem(item));
+    }
+    return [];
+  };
+
+  let segments: string[] = [];
+  if (Array.isArray(parsed)) {
+    segments = readCollection(parsed);
+  } else if (parsed && typeof parsed === 'object') {
+    title = typeof parsed.title === 'string' && parsed.title.trim() ? parsed.title.trim() : fallbackTitle;
+    const candidateKeys = ['segments', 'translations', 'contents', 'items', 'parts', 'results'];
+    for (const key of candidateKeys) {
+      segments = readCollection((parsed as Record<string, unknown>)[key]);
+      if (segments.length) break;
+    }
+    if (!segments.length && expectedCount === 1) {
+      const fallbackSegment =
+        normalizeTranslationBatchItem(parsed) ||
+        (typeof parsed.content === 'string' ? parsed.content.trim() : '');
+      if (fallbackSegment) segments = [fallbackSegment];
+    }
+  }
+
+  if (!segments.length && expectedCount === 1) {
+    const single = normalizeAiJsonContent(raw, fallbackTitle);
+    return {
+      title: single.title || fallbackTitle,
+      segments: [single.content],
+    };
+  }
+
+  return {
+    title,
+    segments: segments.slice(0, expectedCount),
+  };
 }
 
 function sanitizePromptForUrl(prompt: string): string {
@@ -7404,7 +7534,6 @@ const AppContent = () => {
       const ai = createGeminiClient();
       const translateStartedAt = Date.now();
       
-      let dictionaryContext = "";
       let dictionaryEntries: TranslationDictionaryEntry[] = [];
       if (options.useDictionary) {
         try {
@@ -7413,16 +7542,12 @@ const AppContent = () => {
           const names = normalizeTranslationDictionary(namesSnapshot.docs.map(doc => doc.data() as { original?: string; translation?: string }));
           if (names.length > 0) {
             dictionaryEntries = names;
-            dictionaryContext = "SỬ DỤNG TỪ ĐIỂN TÊN RIÊNG SAU ĐÂY (Ưu tiên tuyệt đối):\n" +
-              names.map(n => `- ${n.original} -> ${n.translation}`).join('\n');
           }
         } catch (err) {
           if (isFirestorePermissionError(err)) {
             const names = normalizeTranslationDictionary(storage.getTranslationNames());
             if (names.length > 0) {
               dictionaryEntries = names;
-              dictionaryContext = "SỬ DỤNG TỪ ĐIỂN TÊN RIÊNG SAU ĐÂY (Ưu tiên tuyệt đối):\n" +
-                names.map((n) => `- ${n.original} -> ${n.translation}`).join('\n');
             }
           } else {
             console.warn("Không thể tải từ điển tên riêng", err);
@@ -7434,9 +7559,9 @@ const AppContent = () => {
       const sourceCharCount = String(translateFileContent || '').length;
       const sourceTokenEstimate = estimateTextTokens(translateFileContent);
       const turboMode = sourceWordCount >= 3200 || sourceCharCount >= 45000 || sourceTokenEstimate >= 12000;
-      let segmentCharLimit = turboMode ? 5200 : 3200;
+      let segmentCharLimit = turboMode ? 6000 : 3800;
       if ((ai.provider === 'gemini' || ai.provider === 'gcli') && sourceCharCount >= 45000) {
-        segmentCharLimit = 6800;
+        segmentCharLimit = 7800;
       }
       const translationKind: 'fast' | 'quality' = turboMode ? 'fast' : 'quality';
       const analysisKind: 'fast' | 'quality' = turboMode ? 'fast' : 'quality';
@@ -7454,17 +7579,31 @@ const AppContent = () => {
         effectiveUnits.reduce((acc, unit) => acc + unit.segments.filter((segment) => segment.trim().length >= 30).length, 0) ||
         effectiveUnits.length;
       const lowQuotaMode = (ai.provider === 'gemini' || ai.provider === 'gcli') && totalSegments >= 14;
+      const shouldRunAnalysis = !turboMode && !lowQuotaMode && effectiveUnits.length <= 6 && sourceTokenEstimate <= 9000;
+      const batchCharLimit =
+        ai.provider === 'gemini' || ai.provider === 'gcli'
+          ? (turboMode ? 12000 : 9000)
+          : (turboMode ? 9000 : 7200);
+      const batchItemLimit = lowQuotaMode ? 2 : (turboMode ? 3 : 2);
+      const translationRequestRetries = lowQuotaMode ? 0 : 1;
+      const sharedSafetySettings = [
+        { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+        { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+        { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+        { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+      ];
+      const preparationLabel = shouldRunAnalysis ? 'Đang phân tích nội dung gốc...' : 'Đang chuẩn bị dịch theo lô...';
 
       if (detectedSections.length >= 2 && turboMode && lowQuotaMode) {
         setAILoadingMessage(`Đã nhận diện ${effectiveUnits.length} chương. Bật chế độ tiết kiệm quota + dịch nhanh...`);
       } else if (detectedSections.length >= 2 && turboMode) {
-        setAILoadingMessage(`Đã nhận diện ${effectiveUnits.length} chương. Bật chế độ dịch nhanh, đang phân tích nội dung...`);
+        setAILoadingMessage(`Đã nhận diện ${effectiveUnits.length} chương. Bật chế độ dịch nhanh. ${preparationLabel}`);
       } else if (detectedSections.length >= 2) {
-        setAILoadingMessage(`Đã nhận diện ${effectiveUnits.length} chương. Đang phân tích nội dung gốc...`);
+        setAILoadingMessage(`Đã nhận diện ${effectiveUnits.length} chương. ${preparationLabel}`);
       } else if (turboMode) {
-        setAILoadingMessage("File lớn nên hệ thống bật chế độ dịch nhanh và tự chia đoạn. Đang phân tích nội dung...");
+        setAILoadingMessage(`File lớn nên hệ thống bật chế độ dịch nhanh và tự chia đoạn. ${preparationLabel}`);
       } else {
-        setAILoadingMessage("Chưa thấy mốc chương rõ ràng, hệ thống sẽ tự chia đoạn. Đang phân tích nội dung...");
+        setAILoadingMessage(`Chưa thấy mốc chương rõ ràng, hệ thống sẽ tự chia đoạn. ${preparationLabel}`);
       }
 
       // 1. Analyze the story for metadata (skip on low quota mode)
@@ -7473,7 +7612,7 @@ const AppContent = () => {
         genre: 'Dịch thuật',
         characters: [] as any[],
       };
-      if (!lowQuotaMode) {
+      if (shouldRunAnalysis) {
         const analysisExcerpt = buildAnalysisExcerpt(translateFileContent, effectiveUnits);
         const analysisPrompt = `
           Hãy phân tích nội dung truyện (tiếng Trung hoặc ngôn ngữ khác) sau đây:
@@ -7500,7 +7639,7 @@ const AppContent = () => {
             responseMimeType: "application/json",
             maxOutputTokens: turboMode ? 1500 : 2600,
             minOutputChars: turboMode ? 120 : 200,
-            maxRetries: turboMode ? 1 : 2,
+            maxRetries: 1,
           },
         );
 
@@ -7543,107 +7682,229 @@ const AppContent = () => {
       const adultContentInstruction = options.isAdult 
         ? "CHẾ ĐỘ 18+ KHÔNG GIỚI HẠN: Bạn là một dịch giả chuyên nghiệp. Bạn ĐƯỢC PHÉP và NÊN dịch các nội dung nhạy cảm, bạo lực, tình dục một cách CHI TIẾT và TRẦN TRỤI. Tuyệt đối không được né tránh hoặc tóm tắt."
         : "CHẾ ĐỘ BÌNH THƯỜNG: Tuyệt đối không dịch nội dung khiêu dâm hoặc bạo lực cực đoan.";
-      const perSegmentRetries = lowQuotaMode ? 0 : (turboMode ? 1 : 2);
-
-      const chapterResults = await mapWithConcurrency(effectiveUnits, translationConcurrency, async (unit, chapterIndex) => {
-        const sourceSegments = unit.segments.length ? unit.segments : [unit.source];
-        const translatedSegments: string[] = [];
-        let translatedTitle = String(unit.title || `Chương ${chapterIndex + 1}`).trim() || `Chương ${chapterIndex + 1}`;
-        let previousTranslatedTail = '';
-
-        for (let segmentIndex = 0; segmentIndex < sourceSegments.length; segmentIndex++) {
-          const segment = sourceSegments[segmentIndex];
-          if (segment.trim().length < 30) continue;
-          processedSegments += 1;
-
-          setAILoadingMessage(
-            `Đang dịch chương ${chapterIndex + 1}/${maxTranslateChunks} (${segmentIndex + 1}/${sourceSegments.length}) - tiến độ ${processedSegments}/${totalSegments}${turboMode ? ' [Turbo]' : ''}${lowQuotaMode ? ' [Quota-safe]' : ''}...`
-          );
-          
-          const includeTitleField = segmentIndex === 0;
-          const translatePrompt = `
+      const translateSingleStorySegment = async (params: {
+        unitTitle: string;
+        fallbackTitle: string;
+        segmentText: string;
+        segmentPosition: number;
+        totalSegmentsInUnit: number;
+        previousTranslatedTail: string;
+        includeTitleField: boolean;
+      }): Promise<{ title: string; content: string }> => {
+        const scopedDictionaryContext = buildScopedDictionaryContext(params.segmentText, dictionaryEntries, 18);
+        const translatePrompt = `
             Bạn là một dịch giả văn học cao cấp, chuyên dịch truyện từ tiếng Trung sang tiếng Việt.
-            Hãy dịch toàn bộ đoạn sau sang tiếng Việt mượt mà, thuần Việt, giữ đúng nghĩa và phong thái bản gốc.
-            ĐÂY LÀ PHẦN ${segmentIndex + 1}/${sourceSegments.length} CỦA "${unit.title}".
+            Hãy dịch toàn bộ đoạn sau sang tiếng Việt mượt mà, tự nhiên, giữ đúng nghĩa, đúng xưng hô và đúng sắc thái bản gốc.
+            ĐÂY LÀ PHẦN ${params.segmentPosition}/${params.totalSegmentsInUnit} CỦA "${params.unitTitle}".
             KHÔNG được tóm tắt, KHÔNG bỏ đoạn, KHÔNG rút gọn.
             
             ${adultContentInstruction}
-            ${dictionaryContext}
+            ${scopedDictionaryContext}
             YÊU CẦU BỔ SUNG: ${options.additionalInstructions}
-            ${previousTranslatedTail ? `NGỮ CẢNH NGAY TRƯỚC (để giữ xưng hô, nhịp văn và continuity):\n${previousTranslatedTail}` : ''}
+            ${params.previousTranslatedTail ? `NGỮ CẢNH NGAY TRƯỚC (để giữ xưng hô, nhịp văn và continuity):\n${params.previousTranslatedTail}` : ''}
             
             NỘI DUNG CẦN DỊCH:
-            ${segment}
+            ${params.segmentText}
             
             Trả về JSON (không bọc bằng dấu 3 backtick):
             {
-              ${includeTitleField ? '"title": "Tiêu đề chương (dịch sang tiếng Việt)",' : '"title": "",'}
+              ${params.includeTitleField ? '"title": "Tiêu đề chương (dịch sang tiếng Việt)",' : '"title": "",'}
               "content": "Nội dung phần đã dịch (Markdown)"
             }
           `;
 
-          const dynamicMaxTokens = turboMode
-            ? Math.min(10240, Math.max(2400, Math.round(segment.length * 1.2)))
-            : Math.min(16384, Math.max(3200, Math.round(segment.length * 1.7)));
-          const dynamicMinChars = turboMode
-            ? Math.max(160, Math.round(segment.length * 0.15))
-            : Math.max(240, Math.round(segment.length * 0.22));
-          const translateTextRaw = await generateGeminiText(
-            ai,
-            translationKind,
-            translatePrompt,
-            { 
-              responseMimeType: "application/json",
-              maxOutputTokens: dynamicMaxTokens,
-              minOutputChars: dynamicMinChars,
-              maxRetries: perSegmentRetries,
-              safetySettings: [
-                { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-                { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-                { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-                { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE }
-              ]
-            },
-          );
+        const dynamicMaxTokens = turboMode
+          ? Math.min(12288, Math.max(2600, Math.round(params.segmentText.length * 1.18)))
+          : Math.min(16384, Math.max(3400, Math.round(params.segmentText.length * 1.55)));
+        const dynamicMinChars = turboMode
+          ? Math.max(160, Math.round(params.segmentText.length * 0.14))
+          : Math.max(240, Math.round(params.segmentText.length * 0.2));
+        const translateTextRaw = await generateGeminiText(
+          ai,
+          translationKind,
+          translatePrompt,
+          {
+            responseMimeType: "application/json",
+            maxOutputTokens: dynamicMaxTokens,
+            minOutputChars: dynamicMinChars,
+            maxRetries: translationRequestRetries,
+            safetySettings: sharedSafetySettings,
+          },
+        );
 
-          let translated = normalizeAiJsonContent(translateTextRaw || '', translatedTitle || `Chương ${chapterIndex + 1}`);
-          translated = {
-            title: applyTranslationDictionaryToText(unit.title || translatedTitle, translated.title, dictionaryEntries) || translated.title,
-            content: applyTranslationDictionaryToText(segment, translated.content, dictionaryEntries),
+        let translated = normalizeAiJsonContent(translateTextRaw || '', params.fallbackTitle);
+        translated = {
+          title: applyTranslationDictionaryToText(params.unitTitle || params.fallbackTitle, translated.title, dictionaryEntries) || translated.title,
+          content: applyTranslationDictionaryToText(params.segmentText, translated.content, dictionaryEntries),
+        };
+        const shortThreshold = turboMode
+          ? Math.max(120, Math.round(dynamicMinChars * 0.55))
+          : Math.max(180, Math.round(dynamicMinChars * 0.7));
+        if (translationRequestRetries > 0 && translated.content.length < shortThreshold) {
+          const retryPrompt = `${translatePrompt}\n\nYÊU CẦU BẮT BUỘC: Bản dịch trước quá ngắn. Hãy dịch đầy đủ toàn bộ đoạn nguồn, không tóm tắt, không rút gọn.`;
+          const retryRaw = await generateGeminiText(ai, turboMode ? 'quality' : translationKind, retryPrompt, {
+            responseMimeType: "application/json",
+            maxOutputTokens: Math.min(16384, Math.round(dynamicMaxTokens * 1.25)),
+            minOutputChars: Math.round(dynamicMinChars * 1.08),
+            maxRetries: 1,
+            safetySettings: sharedSafetySettings,
+          });
+          const retried = normalizeAiJsonContent(retryRaw || '', params.fallbackTitle);
+          const normalizedRetried = {
+            title: applyTranslationDictionaryToText(params.unitTitle || params.fallbackTitle, retried.title, dictionaryEntries) || retried.title,
+            content: applyTranslationDictionaryToText(params.segmentText, retried.content, dictionaryEntries),
           };
-          const shortThreshold = turboMode
-            ? Math.max(120, Math.round(dynamicMinChars * 0.55))
-            : Math.max(180, Math.round(dynamicMinChars * 0.7));
-          if (perSegmentRetries > 0 && translated.content.length < shortThreshold) {
-            const retryPrompt = `${translatePrompt}\n\nYÊU CẦU BẮT BUỘC: Bản dịch trước quá ngắn. Hãy dịch đầy đủ toàn bộ đoạn nguồn, không tóm tắt, không rút gọn.`;
-            const retryRaw = await generateGeminiText(ai, turboMode ? 'quality' : translationKind, retryPrompt, {
-              responseMimeType: "application/json",
-              maxOutputTokens: Math.min(16384, Math.round(dynamicMaxTokens * 1.35)),
-              minOutputChars: Math.round(dynamicMinChars * 1.1),
-              maxRetries: 1,
-              safetySettings: [
-                { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-                { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-                { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-                { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE }
-              ]
-            });
-            const retried = normalizeAiJsonContent(retryRaw || '', translatedTitle || `Chương ${chapterIndex + 1}`);
-            const normalizedRetried = {
-              title: applyTranslationDictionaryToText(unit.title || translatedTitle, retried.title, dictionaryEntries) || retried.title,
-              content: applyTranslationDictionaryToText(segment, retried.content, dictionaryEntries),
-            };
-            if (normalizedRetried.content.length > translated.content.length) translated = normalizedRetried;
-          }
+          if (normalizedRetried.content.length > translated.content.length) translated = normalizedRetried;
+        }
 
-          const parsedTitle = String(translated.title || '').trim();
-          if (parsedTitle && (segmentIndex === 0 || /^chương\s*\d+$/i.test(translatedTitle))) {
+        return {
+          title: String(translated.title || params.fallbackTitle).trim() || params.fallbackTitle,
+          content: String(translated.content || '').trim(),
+        };
+      };
+
+      const translateStoryBatch = async (params: {
+        unitTitle: string;
+        fallbackTitle: string;
+        batch: TranslationSegmentBatch;
+        batchIndex: number;
+        totalBatches: number;
+        totalSegmentsInUnit: number;
+        previousTranslatedTail: string;
+      }): Promise<{ title: string; segments: string[] }> => {
+        const scopedDictionaryContext = buildScopedDictionaryContext(params.batch.sourceText, dictionaryEntries, 24);
+        const includeTitleField = params.batchIndex === 0;
+        const translatePrompt = `
+            Bạn là một dịch giả văn học cao cấp, chuyên dịch truyện từ tiếng Trung sang tiếng Việt.
+            Hãy dịch đồng thời ${params.batch.entries.length} đoạn sau sang tiếng Việt mượt mà, thuần Việt, đúng nghĩa và đúng không khí bản gốc.
+            ĐÂY LÀ LÔ ${params.batchIndex + 1}/${params.totalBatches} CỦA "${params.unitTitle}".
+            KHÔNG được tóm tắt, KHÔNG bỏ đoạn, KHÔNG gộp các đoạn với nhau.
+
+            ${adultContentInstruction}
+            ${scopedDictionaryContext}
+            YÊU CẦU BỔ SUNG: ${options.additionalInstructions}
+            ${params.previousTranslatedTail ? `NGỮ CẢNH NGAY TRƯỚC (để giữ xưng hô, nhịp văn và continuity):\n${params.previousTranslatedTail}` : ''}
+
+            Trả về JSON (không bọc bằng dấu 3 backtick):
+            {
+              ${includeTitleField ? '"title": "Tiêu đề chương (dịch sang tiếng Việt)",' : '"title": "",'}
+              "segments": [
+                { "id": 1, "content": "Bản dịch đoạn 1" }
+              ]
+            }
+
+            QUY TẮC BẮT BUỘC:
+            - Phải trả đủ đúng ${params.batch.entries.length} phần trong mảng "segments".
+            - Thứ tự phải khớp chính xác từ 1 đến ${params.batch.entries.length}.
+            - Mỗi "content" chỉ chứa bản dịch của đúng một đoạn nguồn tương ứng.
+
+            NỘI DUNG CẦN DỊCH:
+            ${params.batch.sourceText}
+          `;
+
+        const sourceLength = params.batch.sourceText.length;
+        const dynamicMaxTokens = turboMode
+          ? Math.min(14336, Math.max(3600, Math.round(sourceLength * 1.08)))
+          : Math.min(16384, Math.max(4600, Math.round(sourceLength * 1.35)));
+        const dynamicMinChars = Math.max(
+          180 * params.batch.entries.length,
+          Math.round(sourceLength * (turboMode ? 0.13 : 0.19)),
+        );
+
+        const batchRaw = await generateGeminiText(
+          ai,
+          translationKind,
+          translatePrompt,
+          {
+            responseMimeType: "application/json",
+            maxOutputTokens: dynamicMaxTokens,
+            minOutputChars: dynamicMinChars,
+            maxRetries: translationRequestRetries,
+            safetySettings: sharedSafetySettings,
+          },
+        );
+
+        const normalizedBatch = normalizeTranslationBatchResponse(
+          batchRaw || '',
+          params.batch.entries.length,
+          params.fallbackTitle,
+        );
+        const translatedSegments = params.batch.entries.map((entry, localIndex) =>
+          applyTranslationDictionaryToText(
+            entry.text,
+            normalizedBatch.segments[localIndex] || '',
+            dictionaryEntries,
+          ),
+        );
+
+        const weakIndexes = translatedSegments.reduce<number[]>((acc, translatedText, localIndex) => {
+          const content = String(translatedText || '').trim();
+          const minChars = Math.max(90, Math.round(params.batch.entries[localIndex].text.length * (turboMode ? 0.1 : 0.14)));
+          if (!content || content.length < minChars) acc.push(localIndex);
+          return acc;
+        }, []);
+
+        for (const localIndex of weakIndexes) {
+          const entry = params.batch.entries[localIndex];
+          const single = await translateSingleStorySegment({
+            unitTitle: params.unitTitle,
+            fallbackTitle: params.fallbackTitle,
+            segmentText: entry.text,
+            segmentPosition: entry.index + 1,
+            totalSegmentsInUnit: params.totalSegmentsInUnit,
+            previousTranslatedTail: params.previousTranslatedTail,
+            includeTitleField: includeTitleField && localIndex === 0,
+          });
+          translatedSegments[localIndex] = single.content;
+          if (includeTitleField && localIndex === 0 && single.title.trim()) {
+            normalizedBatch.title = single.title.trim();
+          }
+        }
+
+        return {
+          title: String(normalizedBatch.title || params.fallbackTitle).trim() || params.fallbackTitle,
+          segments: translatedSegments.map((item) => String(item || '').trim()),
+        };
+      };
+
+      const chapterResults = await mapWithConcurrency(effectiveUnits, translationConcurrency, async (unit, chapterIndex) => {
+        const sourceSegments = unit.segments.length ? unit.segments : [unit.source];
+        const meaningfulEntries = sourceSegments
+          .map((segment, index) => ({ index, text: String(segment || '').trim() }))
+          .filter((entry) => entry.text.length >= 30);
+        if (!meaningfulEntries.length) return null;
+        const translatedSegments: string[] = [];
+        let translatedTitle = String(unit.title || `Chương ${chapterIndex + 1}`).trim() || `Chương ${chapterIndex + 1}`;
+        let previousTranslatedTail = '';
+        const batches = buildTranslationSegmentBatches(meaningfulEntries, batchCharLimit, batchItemLimit);
+
+        for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+          const batch = batches[batchIndex];
+          processedSegments += batch.entries.length;
+
+          setAILoadingMessage(
+            `Đang dịch chương ${chapterIndex + 1}/${maxTranslateChunks} - lô ${batchIndex + 1}/${batches.length} (${batch.entries.length} đoạn), tiến độ ${Math.min(processedSegments, totalSegments)}/${totalSegments}${turboMode ? ' [Turbo]' : ''}${lowQuotaMode ? ' [Quota-safe]' : ''}...`
+          );
+          const batchResult = await translateStoryBatch({
+            unitTitle: unit.title || translatedTitle,
+            fallbackTitle: translatedTitle || `Chương ${chapterIndex + 1}`,
+            batch,
+            batchIndex,
+            totalBatches: batches.length,
+            totalSegmentsInUnit: meaningfulEntries.length,
+            previousTranslatedTail,
+          });
+
+          const parsedTitle = String(batchResult.title || '').trim();
+          if (parsedTitle && (batchIndex === 0 || /^chương\s*\d+$/i.test(translatedTitle))) {
             translatedTitle = parsedTitle;
           }
-          if (translated.content.trim()) {
-            translatedSegments.push(translated.content.trim());
-            previousTranslatedTail = extractTranslationContextTail(translated.content, turboMode ? 680 : 920);
-          }
+
+          batchResult.segments.forEach((content) => {
+            if (!content.trim()) return;
+            translatedSegments.push(content.trim());
+            previousTranslatedTail = extractTranslationContextTail(content, turboMode ? 680 : 920);
+          });
         }
 
         const mergedChapterContent = translatedSegments.join('\n\n').trim();

@@ -75,7 +75,7 @@ npm run build
 - Tự động khóa glossary sau khi AI sinh nội dung, giảm hiện tượng lệch tên riêng hoặc thuật ngữ.
 - Bổ sung chỉ số `Context Readiness` để báo khi dữ liệu đầu vào còn thiếu, giúp người dùng biết lúc nào AI sẽ hoạt động tốt nhất.
 - Cải thiện tạo ảnh bìa bằng cách dựng prompt thông minh hơn và tăng chất lượng bìa fallback khi dịch vụ ảnh AI lỗi.
-- Cải thiện dịch truyện bằng cơ chế giữ ngữ cảnh giữa các đoạn và siết lại từ điển tên riêng sau hậu xử lý.
+- Cải thiện dịch truyện bằng cơ chế dịch theo lô nhiều đoạn, giữ ngữ cảnh giữa các lô và chỉ nạp các mục từ điển thật sự xuất hiện để tăng tốc rõ rệt.
 - Khắc phục 2 mục Writer Pro: `Tone` và `Context` nay cập nhật đúng context/runtime và hỗ trợ đưa kết quả ngược về workspace.
 - Thêm mục `Lịch sử cập nhật` nhỏ ngay trong giao diện Writer Pro để theo dõi thay đổi của phiên bản.
 
