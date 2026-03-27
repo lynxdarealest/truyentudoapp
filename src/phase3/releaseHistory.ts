@@ -13,6 +13,18 @@ export const WRITER_RELEASE_NOTES: ReleaseNote[] = [
   {
     version: APP_VERSION_LABEL,
     dateLabel: '2026-03-28',
+    title: 'Làm lại ngôn ngữ giao diện và luồng sao lưu theo hướng gọn, rõ, đỡ “mùi dev” hơn',
+    items: [
+      'Dọn lại toàn bộ khu Sao lưu & khôi phục theo cách nói tự nhiên hơn: bỏ các nhãn nửa Anh nửa Việt, đổi nút bấm cho rõ ý và viết lại mô tả để người dùng biết chính xác mỗi chức năng dùng để làm gì.',
+      'Làm sạch phần Google Drive backup: một tài khoản chỉ liên kết với một Gmail, luôn cập nhật lại cùng một tệp sao lưu thay vì sinh thêm file mới, đồng thời giải thích rõ trạng thái đang liên kết hay chưa.',
+      'Sửa cách hiển thị lỗi cũ trong lịch sử sao lưu để người dùng không còn bị đánh lừa bởi các cảnh báo đã hết hiệu lực sau khi cấu hình Google Drive hoặc redeploy môi trường.',
+      'Giữ nguyên hướng an toàn dữ liệu: tự đồng bộ vẫn tắt, đồng bộ tài khoản chỉ chạy khi người dùng tự bấm, còn các mốc sao lưu cục bộ vẫn được tạo đều để có đường quay lại khi cần.',
+      'Đồng bộ phiên bản sản phẩm lên 0.1b và cập nhật lại lịch sử thay đổi để người dùng theo dõi đúng những gì vừa được chỉnh sửa trong giao diện.',
+    ],
+  },
+  {
+    version: '0.1a',
+    dateLabel: '2026-03-28',
     title: 'Tăng AI trust, quan sát tiến trình và độ rõ ràng của workflow',
     items: [
       'Thêm Trung tâm sao lưu mới: có nút Sao lưu ngay, lịch sử backup ngay trong app, khôi phục theo từng mốc thời gian và cảnh báo đỏ khi để quá lâu chưa backup.',

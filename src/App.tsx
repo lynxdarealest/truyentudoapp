@@ -439,9 +439,9 @@ function createBackupFingerprint(payload: StorageBackupPayload): string {
 function getBackupReasonLabel(reason: BackupReason): string {
   switch (reason) {
     case 'manual':
-      return 'Sao lưu tay';
+      return 'Thủ công';
     case 'restore-point':
-      return 'Mốc khôi phục';
+      return 'Mốc an toàn';
     default:
       return 'Tự động';
   }
@@ -450,13 +450,13 @@ function getBackupReasonLabel(reason: BackupReason): string {
 function getDriveStatusLabel(snapshot: BackupSnapshot): string {
   switch (snapshot.drive?.status) {
     case 'uploaded':
-      return 'Đã lên Drive';
+      return 'Đã lưu lên Drive';
     case 'failed':
-      return 'Lỗi Drive';
+      return 'Cần lưu lại';
     case 'skipped':
-      return 'Chưa đẩy Drive';
+      return 'Chưa dùng Drive';
     default:
-      return 'Chờ Drive';
+      return 'Đang chờ';
   }
 }
 
@@ -475,13 +475,13 @@ function formatBackupTimestamp(value: string): string {
 
 function buildBackupWarningMessage(latestBackupAt: string, staleAfterHours: number): string {
   if (!latestBackupAt) {
-    return 'Chưa có bản sao lưu nào. Hãy bấm "Sao lưu ngay" hoặc kết nối Google Drive trước khi tiếp tục làm việc.';
+    return 'Bạn chưa có bản sao lưu nào. Hãy lưu lại một bản trước khi tiếp tục làm việc.';
   }
   const ageMs = Date.now() - new Date(latestBackupAt).getTime();
   if (!Number.isFinite(ageMs) || ageMs <= staleAfterHours * 3600 * 1000) {
     return '';
   }
-  return `Đã quá ${staleAfterHours} giờ kể từ lần sao lưu gần nhất (${formatBackupTimestamp(latestBackupAt)}). Nên sao lưu lại ngay để tránh mất dữ liệu.`;
+  return `Đã hơn ${staleAfterHours} giờ kể từ lần lưu gần nhất (${formatBackupTimestamp(latestBackupAt)}). Bạn nên sao lưu lại để tránh mất dữ liệu mới.`;
 }
 
 function loadUiProfile(defaultName?: string, defaultAvatar?: string): UiProfile {
@@ -9106,13 +9106,13 @@ const AppContent = () => {
     if (!user?.uid) {
       await updateBackupSnapshotDriveMeta(snapshot.id, {
         status: 'skipped',
-        error: 'Cần đăng nhập TruyenForge trước khi khóa và dùng Google Drive backup.',
+        error: 'Bạn cần đăng nhập TruyenForge trước khi dùng sao lưu lên Google Drive.',
       });
       await refreshBackupHistory();
       if (!options?.quiet) {
         notifyApp({
           tone: 'warn',
-          message: 'Hãy đăng nhập TruyenForge trước khi dùng Google Drive backup.',
+          message: 'Hãy đăng nhập TruyenForge trước khi lưu dữ liệu lên Google Drive.',
           groupKey: 'backup-drive-login-required',
         });
       }
@@ -9122,13 +9122,13 @@ const AppContent = () => {
     if (!hasGoogleDriveBackupConfig()) {
       await updateBackupSnapshotDriveMeta(snapshot.id, {
         status: 'skipped',
-        error: 'Thiếu VITE_GOOGLE_DRIVE_CLIENT_ID nên chưa thể đẩy lên Google Drive.',
+        error: 'Chưa có cấu hình Google Drive nên mốc này chưa thể lưu lên Drive.',
       });
       await refreshBackupHistory();
       if (!options?.quiet) {
         notifyApp({
           tone: 'warn',
-          message: 'Thiếu cấu hình Google Drive Client ID, chưa thể đẩy backup lên Drive.',
+          message: 'Google Drive chưa được thiết lập xong nên chưa thể lưu bản sao này lên Drive.',
           groupKey: 'backup-drive-config-missing',
         });
       }
@@ -9139,13 +9139,13 @@ const AppContent = () => {
     if (!boundDrive) {
       await updateBackupSnapshotDriveMeta(snapshot.id, {
         status: 'failed',
-        error: 'Tài khoản này chưa được khóa với Google Drive nào. Hãy bấm Kết nối Google Drive trước.',
+        error: 'Tài khoản này chưa liên kết với Google Drive nào. Hãy liên kết trước khi lưu bản sao lên Drive.',
       });
       await refreshBackupHistory();
       if (!options?.quiet) {
         notifyApp({
           tone: 'warn',
-          message: 'Tài khoản này chưa khóa Google Drive. Hãy kết nối trước để tránh lưu nhầm Gmail.',
+          message: 'Tài khoản này chưa liên kết Google Drive. Hãy liên kết trước để tránh lưu nhầm Gmail.',
           groupKey: 'backup-drive-binding-missing',
         });
       }
@@ -9158,13 +9158,13 @@ const AppContent = () => {
     if (!accessToken) {
       await updateBackupSnapshotDriveMeta(snapshot.id, {
         status: 'failed',
-        error: 'Token Google Drive không còn hiệu lực. Hãy kết nối lại để tiếp tục auto backup.',
+        error: 'Phiên Google Drive đã hết hạn. Hãy kết nối lại để tiếp tục sao lưu tự động.',
       });
       await refreshBackupHistory();
       if (!options?.quiet) {
         notifyApp({
           tone: 'warn',
-          message: 'Google Drive chưa sẵn sàng. Hãy kết nối lại để tiếp tục sao lưu tự động.',
+          message: 'Google Drive chưa sẵn sàng. Hãy kết nối lại để tiếp tục tự động sao lưu.',
           groupKey: 'backup-drive-token-missing',
         });
       }
@@ -9174,13 +9174,13 @@ const AppContent = () => {
     if (!currentAuth?.account?.sub || currentAuth.account.sub !== boundDrive.sub) {
       await updateBackupSnapshotDriveMeta(snapshot.id, {
         status: 'failed',
-        error: `Tài khoản TruyenForge này đang khóa với Google Drive ${boundDrive.email}. Hãy đăng nhập đúng Gmail đó rồi thử lại.`,
+        error: `Tài khoản TruyenForge này chỉ liên kết với Google Drive ${boundDrive.email}. Hãy đăng nhập đúng Gmail đó rồi thử lại.`,
       });
       await refreshBackupHistory();
       if (!options?.quiet) {
         notifyApp({
           tone: 'error',
-          message: `Sai Gmail Drive. Tài khoản này chỉ được phép backup vào ${boundDrive.email}.`,
+          message: `Bạn đang dùng sai Gmail. Tài khoản này chỉ lưu vào ${boundDrive.email}.`,
           groupKey: 'backup-drive-binding-mismatch',
         });
       }
@@ -9204,10 +9204,10 @@ const AppContent = () => {
         notifyApp({
           tone: 'success',
           message: uploaded.replacedExisting
-            ? 'Đã ghi đè file backup hiện hành trên Google Drive.'
-            : 'Đã tạo file backup hiện hành trên Google Drive.',
+            ? 'Đã cập nhật bản sao lưu hiện hành trên Google Drive.'
+            : 'Đã tạo bản sao lưu đầu tiên trên Google Drive.',
           detail: uploaded.cleanedDuplicates
-            ? `${uploaded.name} · đã dọn ${uploaded.cleanedDuplicates} file backup cũ trùng tên`
+            ? `${uploaded.name} · đã dọn ${uploaded.cleanedDuplicates} bản trùng cũ`
             : uploaded.name,
           groupKey: 'backup-drive-upload-success',
         });
@@ -9220,12 +9220,12 @@ const AppContent = () => {
       });
       await refreshBackupHistory();
       if (!options?.quiet) {
-        notifyApp({
-          tone: 'error',
-          message: 'Đẩy backup lên Google Drive thất bại.',
-          detail: error instanceof Error ? error.message : undefined,
-          groupKey: 'backup-drive-upload-failed',
-        });
+      notifyApp({
+        tone: 'error',
+        message: 'Không thể lưu bản sao này lên Google Drive.',
+        detail: error instanceof Error ? error.message : undefined,
+        groupKey: 'backup-drive-upload-failed',
+      });
       }
       return false;
     }
@@ -9263,7 +9263,7 @@ const AppContent = () => {
     if (!options?.quiet) {
       notifyApp({
         tone: 'success',
-        message: `Đã tạo bản sao lưu ${reason === 'manual' ? 'thủ công' : 'an toàn'} lúc ${formatBackupTimestamp(snapshot.createdAt)}.`,
+        message: `Đã lưu một mốc ${reason === 'manual' ? 'thủ công' : 'an toàn'} lúc ${formatBackupTimestamp(snapshot.createdAt)}.`,
         groupKey: `backup-created:${reason}`,
       });
     }
@@ -9277,7 +9277,7 @@ const AppContent = () => {
     } catch (error) {
       notifyApp({
         tone: 'error',
-        message: 'Tạo sao lưu thủ công thất bại.',
+        message: 'Không thể tạo bản sao lưu thủ công.',
         detail: error instanceof Error ? error.message : undefined,
         groupKey: 'backup-manual-failed',
       });
@@ -9293,14 +9293,14 @@ const AppContent = () => {
       const filename = storage.downloadBackupPayload(payload, `truyenforge-backup-${Date.now()}.json`);
       notifyApp({
         tone: 'success',
-        message: 'Đã xuất file JSON ra máy.',
+        message: 'Đã tải bản sao lưu về máy.',
         detail: filename,
         groupKey: 'backup-download-current',
       });
     } catch (error) {
       notifyApp({
         tone: 'error',
-        message: 'Xuất file JSON thất bại.',
+        message: 'Không thể tải bản sao lưu về máy.',
         detail: error instanceof Error ? error.message : undefined,
         groupKey: 'backup-download-current-failed',
       });
@@ -9319,14 +9319,14 @@ const AppContent = () => {
       );
       notifyApp({
         tone: 'success',
-        message: 'Đã tải xuống snapshot đã chọn.',
+        message: 'Đã tải xuống mốc sao lưu đã chọn.',
         detail: filename,
         groupKey: `backup-download-snapshot:${snapshotId}`,
       });
     } catch (error) {
       notifyApp({
         tone: 'error',
-        message: 'Tải snapshot thất bại.',
+        message: 'Không thể tải mốc sao lưu này.',
         detail: error instanceof Error ? error.message : undefined,
         groupKey: `backup-download-snapshot-failed:${snapshotId}`,
       });
@@ -9360,14 +9360,14 @@ const AppContent = () => {
       await refreshBackupHistory();
       notifyApp({
         tone: 'success',
-        message: 'Đã khôi phục dữ liệu từ mốc thời gian đã chọn.',
+        message: 'Đã khôi phục dữ liệu từ mốc đã chọn.',
         detail: `Khôi phục ${report.restoredSections.join(', ')}.`,
         groupKey: `backup-restore-success:${snapshotId}`,
       });
     } catch (error) {
       notifyApp({
         tone: 'error',
-        message: 'Khôi phục dữ liệu thất bại.',
+        message: 'Không thể khôi phục dữ liệu từ mốc này.',
         detail: error instanceof Error ? error.message : undefined,
         groupKey: `backup-restore-failed:${snapshotId}`,
       });
@@ -9392,14 +9392,14 @@ const AppContent = () => {
       await refreshBackupHistory();
       notifyApp({
         tone: 'success',
-        message: 'Đã nhập file backup JSON.',
+        message: 'Đã khôi phục dữ liệu từ file sao lưu.',
         detail: `Khôi phục ${report.restoredSections.join(', ')}.`,
         groupKey: 'backup-import-success',
       });
     } catch (error) {
       notifyApp({
         tone: 'error',
-        message: 'Nhập file backup thất bại.',
+        message: 'Không thể khôi phục từ file sao lưu.',
         detail: error instanceof Error ? error.message : undefined,
         groupKey: 'backup-import-failed',
       });
@@ -9413,7 +9413,7 @@ const AppContent = () => {
     if (!user?.uid) {
       notifyApp({
         tone: 'warn',
-        message: 'Cần đăng nhập TruyenForge trước khi khóa Google Drive cho tài khoản này.',
+        message: 'Hãy đăng nhập TruyenForge trước khi liên kết Google Drive.',
         groupKey: 'backup-drive-connect-login-required',
       });
       return;
@@ -9429,8 +9429,8 @@ const AppContent = () => {
         setDriveAuth(null);
         notifyApp({
           tone: 'error',
-          message: `Tài khoản này đã khóa với Google Drive ${boundDrive.email}.`,
-          detail: `Bạn vừa chọn ${auth.account.email}. Hãy đăng nhập lại đúng Gmail đã khóa nếu muốn tiếp tục backup.`,
+          message: `Tài khoản này đã liên kết với Google Drive ${boundDrive.email}.`,
+          detail: `Bạn vừa chọn ${auth.account.email}. Hãy đăng nhập lại đúng Gmail đã liên kết nếu muốn tiếp tục sao lưu.`,
           groupKey: 'backup-drive-binding-locked',
         });
         return;
@@ -9440,8 +9440,8 @@ const AppContent = () => {
       setDriveAuth(auth);
       notifyApp({
         tone: 'success',
-        message: `Đã khóa tài khoản này với Google Drive ${auth.account.email}.`,
-        detail: 'Từ giờ chỉ Gmail này mới được dùng để backup tự động cho tài khoản TruyenForge hiện tại.',
+        message: `Đã liên kết tài khoản này với Google Drive ${auth.account.email}.`,
+        detail: 'Từ giờ app sẽ chỉ dùng đúng Gmail này để sao lưu dữ liệu của tài khoản hiện tại.',
         groupKey: 'backup-drive-connect-success',
       });
       const latest = backupSnapshots[0];
@@ -9451,7 +9451,7 @@ const AppContent = () => {
     } catch (error) {
       notifyApp({
         tone: 'error',
-        message: 'Kết nối Google Drive thất bại.',
+        message: 'Không thể liên kết Google Drive.',
         detail: error instanceof Error ? error.message : undefined,
         groupKey: 'backup-drive-connect-failed',
       });
@@ -9467,14 +9467,14 @@ const AppContent = () => {
       setDriveAuth(null);
       notifyApp({
         tone: 'info',
-        message: 'Đã ngắt phiên Google Drive trên trình duyệt này.',
-        detail: driveBinding ? `Tài khoản TruyenForge vẫn đang khóa với ${driveBinding.email}. Khi kết nối lại, bạn phải dùng đúng Gmail đó.` : 'Bạn có thể kết nối lại Google Drive sau.',
+        message: 'Đã ngắt kết nối Google Drive trên trình duyệt này.',
+        detail: driveBinding ? `Tài khoản TruyenForge vẫn đang liên kết với ${driveBinding.email}. Khi kết nối lại, bạn phải dùng đúng Gmail đó.` : 'Bạn có thể kết nối lại Google Drive sau.',
         groupKey: 'backup-drive-disconnect',
       });
     } catch (error) {
       notifyApp({
         tone: 'warn',
-        message: 'Ngắt kết nối Google Drive chưa trọn vẹn, nhưng token cục bộ đã được xóa.',
+        message: 'Chưa thể ngắt kết nối Google Drive trọn vẹn, nhưng phiên cục bộ đã được xóa.',
         detail: error instanceof Error ? error.message : undefined,
         groupKey: 'backup-drive-disconnect-warn',
       });
@@ -9496,7 +9496,7 @@ const AppContent = () => {
     } catch (error) {
       notifyApp({
         tone: 'error',
-        message: 'Đẩy snapshot lên Drive thất bại.',
+        message: 'Không thể lưu mốc này lên Google Drive.',
         detail: error instanceof Error ? error.message : undefined,
         groupKey: `backup-drive-manual-failed:${snapshotId}`,
       });
@@ -9509,7 +9509,7 @@ const AppContent = () => {
     if (!user || !hasSupabase) {
       notifyApp({
         tone: 'warn',
-        message: 'Cần đăng nhập tài khoản trước khi dùng đồng bộ thủ công.',
+        message: 'Hãy đăng nhập trước khi đồng bộ dữ liệu với tài khoản.',
         groupKey: 'backup-manual-sync-no-account',
       });
       return;
@@ -9543,14 +9543,14 @@ const AppContent = () => {
       await createWorkspaceBackup('manual', { force: true, quiet: true });
       notifyApp({
         tone: 'success',
-        message: 'Đã đồng bộ thủ công an toàn với tài khoản.',
-        detail: 'Luồng này hợp nhất local và server theo từng nhóm dữ liệu thay vì autosync nền.',
+        message: 'Đã đồng bộ dữ liệu với tài khoản.',
+        detail: 'App chỉ hợp nhất dữ liệu khi bạn bấm tay, nên an toàn hơn tự đồng bộ nền.',
         groupKey: 'backup-manual-sync-success',
       });
     } catch (error) {
       notifyApp({
         tone: 'error',
-        message: 'Đồng bộ thủ công thất bại.',
+        message: 'Không thể đồng bộ dữ liệu với tài khoản.',
         detail: error instanceof Error ? error.message : undefined,
         groupKey: 'backup-manual-sync-failed',
       });
@@ -11579,10 +11579,10 @@ const AppContent = () => {
           <div className="tf-modal-panel w-full max-w-6xl tf-card p-6 space-y-5">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div className="space-y-2">
-                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Trung tâm sao lưu</p>
-                <h3 className="text-2xl font-bold">Sao lưu, khôi phục và đồng bộ thủ công</h3>
+                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Sao lưu & khôi phục</p>
+                <h3 className="text-2xl font-bold">Sao lưu và khôi phục dữ liệu</h3>
                 <p className="text-sm text-slate-400 max-w-3xl">
-                  Từ giờ app ưu tiên giữ dữ liệu an toàn: backup cục bộ theo mốc thời gian, có thể đẩy JSON lên Google Drive sau mỗi lần lưu, và chỉ đồng bộ tài khoản khi bạn bấm tay.
+                  Đây là nơi giữ cho công sức của bạn không biến mất vô lý. Bạn có thể lưu bản sao ngay trên thiết bị, giữ một bản duy nhất trên Google Drive và chỉ đồng bộ với tài khoản khi chính bạn quyết định.
                 </p>
               </div>
               <button
@@ -11598,46 +11598,46 @@ const AppContent = () => {
 
             {backupWarningMessage ? (
               <div className="rounded-2xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
-                <div className="flex items-start gap-3">
-                  <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
-                  <div className="space-y-1">
-                    <p className="font-semibold text-rose-50">Cảnh báo sao lưu</p>
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+                <div className="space-y-1">
+                    <p className="font-semibold text-rose-50">Nhắc bạn sao lưu</p>
                     <p>{backupWarningMessage}</p>
-                  </div>
                 </div>
+              </div>
               </div>
             ) : null}
 
             <div className="grid gap-3 md:grid-cols-3">
               <div className="rounded-2xl border border-white/10 bg-slate-900/50 p-4 space-y-2">
-                <p className="text-xs uppercase tracking-[0.14em] text-slate-400">Lần backup gần nhất</p>
+                <p className="text-xs uppercase tracking-[0.14em] text-slate-400">Lần sao lưu gần nhất</p>
                 <p className="text-lg font-bold text-white">{latestBackupAt ? formatBackupTimestamp(latestBackupAt) : 'Chưa có'}</p>
                 <p className="text-sm text-slate-400">
-                  {latestBackup ? `${(latestBackup.payload.stories || []).length} truyện · ${(latestBackup.payload.characters || []).length} nhân vật` : 'Chưa ghi được snapshot nào trong app.'}
+                  {latestBackup ? `${(latestBackup.payload.stories || []).length} truyện · ${(latestBackup.payload.characters || []).length} nhân vật` : 'Chưa có bản sao lưu nào trên thiết bị này.'}
                 </p>
               </div>
               <div className="rounded-2xl border border-white/10 bg-slate-900/50 p-4 space-y-2">
                 <p className="text-xs uppercase tracking-[0.14em] text-slate-400">Google Drive</p>
                 <p className="text-lg font-bold text-white">
-                  {!user ? 'Cần đăng nhập' : !driveConfigured ? 'Chưa cấu hình' : driveBinding ? 'Đã khóa Drive' : 'Chưa khóa Drive'}
+                  {!user ? 'Cần đăng nhập' : !driveConfigured ? 'Chưa thiết lập' : driveBinding ? 'Đã liên kết' : 'Chưa liên kết'}
                 </p>
                 <p className="text-sm text-slate-400">
                   {!user
-                    ? 'Đăng nhập TruyenForge trước để khóa đúng một Gmail cho tài khoản này.'
+                    ? 'Đăng nhập TruyenForge trước để liên kết đúng một Gmail cho tài khoản này.'
                     : !driveConfigured
-                      ? 'Thiếu VITE_GOOGLE_DRIVE_CLIENT_ID nên chưa thể dùng Drive backup.'
+                      ? 'Thiếu cấu hình Google Drive ở môi trường triển khai nên chưa thể sử dụng.'
                       : driveBinding
-                        ? `Tài khoản này đang khóa với ${driveBinding.email}${driveConnected ? ` và hiện đang nối đúng Gmail đó` : ''}.`
-                        : 'Chưa khóa Gmail Drive nào cho tài khoản này.'}
+                        ? `Tài khoản này đang liên kết với ${driveBinding.email}${driveConnected ? ` và hiện đang đăng nhập đúng Gmail đó` : ''}.`
+                        : 'Tài khoản này chưa liên kết với Google Drive nào.'}
                 </p>
               </div>
               <div className="rounded-2xl border border-white/10 bg-slate-900/50 p-4 space-y-2">
-                <p className="text-xs uppercase tracking-[0.14em] text-slate-400">Đồng bộ tài khoản</p>
+                <p className="text-xs uppercase tracking-[0.14em] text-slate-400">Đồng bộ với tài khoản</p>
                 <p className="text-lg font-bold text-white">
-                  {backupSettings.lastManualSyncAt ? formatBackupTimestamp(backupSettings.lastManualSyncAt) : 'Chưa sync tay'}
+                  {backupSettings.lastManualSyncAt ? formatBackupTimestamp(backupSettings.lastManualSyncAt) : 'Chưa đồng bộ'}
                 </p>
                 <p className="text-sm text-slate-400">
-                  Autosync đã bị tắt. Dữ liệu server chỉ đổi khi bạn bấm đồng bộ thủ công.
+                  Tự đồng bộ đã tắt. Dữ liệu trên server chỉ thay đổi khi bạn chủ động bấm đồng bộ.
                 </p>
               </div>
             </div>
@@ -11662,14 +11662,14 @@ const AppContent = () => {
                       onClick={handleDownloadCurrentBackupJson}
                       disabled={isExporting}
                     >
-                      {isExporting ? 'Đang xuất JSON...' : 'Xuất JSON ra máy'}
+                      {isExporting ? 'Đang chuẩn bị file...' : 'Tải file sao lưu'}
                     </button>
                     <button
                       className="tf-btn tf-btn-ghost"
                       onClick={() => backupImportInputRef.current?.click()}
                       disabled={isImporting}
                     >
-                      {isImporting ? 'Đang nhập JSON...' : 'Nhập JSON từ máy'}
+                      {isImporting ? 'Đang đọc file...' : 'Khôi phục từ file'}
                     </button>
                   </div>
                   <div className="space-y-3">
@@ -11681,9 +11681,9 @@ const AppContent = () => {
                         onChange={(e) => setBackupSettings((prev) => ({ ...prev, autoSnapshotEnabled: e.target.checked }))}
                       />
                       <span>
-                        <strong className="text-white">Tự tạo snapshot cục bộ sau mỗi lần thay đổi dữ liệu</strong>
+                        <strong className="text-white">Tự lưu một mốc khôi phục sau mỗi lần dữ liệu thay đổi</strong>
                         <br />
-                        Mỗi lần lưu truyện, prompt, nhân vật, theme hoặc dữ liệu chính, app sẽ chụp lại một mốc khôi phục trong app.
+                        Mỗi lần bạn lưu truyện, nhân vật, prompt hoặc thiết lập quan trọng, app sẽ giữ lại một mốc để có thể quay về khi cần.
                       </span>
                     </label>
                     <label className="flex items-start gap-3 rounded-2xl border border-white/10 bg-slate-950/50 px-4 py-3 text-sm text-slate-300">
@@ -11694,9 +11694,9 @@ const AppContent = () => {
                         onChange={(e) => setBackupSettings((prev) => ({ ...prev, autoUploadToDrive: e.target.checked }))}
                       />
                       <span>
-                        <strong className="text-white">Tự ghi đè file backup hiện hành trên Google Drive</strong>
+                        <strong className="text-white">Giữ một bản sao lưu duy nhất trên Google Drive</strong>
                         <br />
-                        Nếu Drive đã kết nối, app sẽ cập nhật lại đúng một file JSON trong `appDataFolder`, không tạo thêm file mới mỗi lần sao lưu.
+                        Nếu đã liên kết Drive, app sẽ luôn cập nhật lại cùng một tệp sao lưu thay vì tạo ra nhiều bản rời rạc.
                       </span>
                     </label>
                   </div>
@@ -11705,10 +11705,10 @@ const AppContent = () => {
                 <div className="rounded-2xl border border-white/10 bg-slate-900/40 p-4 space-y-4">
                   <div className="flex items-center gap-2">
                     <Link2 className="h-5 w-5 text-emerald-300" />
-                    <h4 className="text-lg font-semibold">Google Drive backup</h4>
+                    <h4 className="text-lg font-semibold">Sao lưu lên Google Drive</h4>
                   </div>
                   <p className="text-sm text-slate-400">
-                    Mỗi tài khoản TruyenForge chỉ được khóa với đúng một Google Drive. Sau khi khóa xong, app chỉ chấp nhận backup vào đúng Gmail đó và sẽ luôn ghi đè file backup hiện hành thay vì đẻ thêm file mới.
+                    Mỗi tài khoản TruyenForge chỉ liên kết với một Google Drive duy nhất. Sau khi liên kết, app sẽ luôn lưu vào đúng Gmail đó và cập nhật lại cùng một tệp sao lưu để thư mục Drive không bị rối.
                   </p>
                   <div className="flex flex-wrap gap-3">
                     <button
@@ -11719,38 +11719,38 @@ const AppContent = () => {
                       {backupBusyAction === 'connect-drive'
                         ? 'Đang kết nối Drive...'
                         : driveBinding
-                          ? (driveConnected ? 'Xác thực lại đúng Gmail' : 'Kết nối lại đúng Gmail đã khóa')
-                          : 'Khóa Google Drive cho tài khoản này'}
+                          ? (driveConnected ? 'Xác nhận lại Gmail đã liên kết' : 'Kết nối lại Gmail đã liên kết')
+                          : 'Liên kết với Google Drive'}
                     </button>
                     <button
                       className="tf-btn tf-btn-ghost"
                       onClick={handleDisconnectDrive}
                       disabled={!driveConnected || backupBusyAction === 'disconnect-drive'}
                     >
-                      {backupBusyAction === 'disconnect-drive' ? 'Đang ngắt Drive...' : 'Ngắt kết nối'}
+                      {backupBusyAction === 'disconnect-drive' ? 'Đang ngắt kết nối...' : 'Ngắt kết nối tạm thời'}
                     </button>
                   </div>
                   {!driveConfigured ? (
                     <p className="text-sm text-amber-300">
-                      Cần thêm `VITE_GOOGLE_DRIVE_CLIENT_ID` vào file môi trường trước khi dùng auto backup lên Drive.
+                      Bản triển khai này chưa bật Google Drive. Chỉ cần thêm cấu hình OAuth rồi deploy lại một lần là dùng được.
                     </p>
                   ) : !user ? (
                     <p className="text-sm text-amber-300">
-                      Hãy đăng nhập TruyenForge trước. Drive backup giờ bị khóa theo từng tài khoản.
+                      Hãy đăng nhập TruyenForge trước. Mỗi tài khoản chỉ liên kết với một Gmail duy nhất.
                     </p>
                   ) : (
                     <div className="rounded-2xl border border-white/10 bg-slate-950/50 px-4 py-3 text-sm text-slate-300">
                       <p className="font-semibold text-white">
                         {driveBinding
-                          ? `Google Drive đã khóa: ${driveBinding.email}`
-                          : 'Chưa khóa Google Drive cho tài khoản này.'}
+                          ? `Google Drive đã liên kết: ${driveBinding.email}`
+                          : 'Tài khoản này chưa liên kết với Google Drive.'}
                       </p>
                       <p className="mt-1">
                         {driveBinding
                           ? driveConnected
-                            ? `Drive đang kết nối bằng ${driveAuth?.account.email || driveBinding.email}. Từ giờ app sẽ luôn cập nhật lại đúng một file backup hiện hành trên Gmail đã khóa này.`
-                            : `Phiên Drive hiện đã ngắt. Khi kết nối lại, bạn bắt buộc phải chọn đúng ${driveBinding.email}.`
-                          : 'Bấm kết nối một lần để khóa vĩnh viễn một Gmail cho tài khoản TruyenForge hiện tại, rồi mới bật auto backup lên Drive.'}
+                            ? `Bạn đang dùng đúng Gmail ${driveAuth?.account.email || driveBinding.email}. Từ giờ app sẽ luôn cập nhật lại cùng một tệp sao lưu trên Drive này.`
+                            : `Phiên Drive hiện đã ngắt. Khi kết nối lại, bạn cần chọn đúng ${driveBinding.email}.`
+                          : 'Chỉ cần liên kết một lần, sau đó app sẽ luôn biết chính xác nên lưu dữ liệu vào Gmail nào.'}
                       </p>
                     </div>
                   )}
@@ -11759,20 +11759,20 @@ const AppContent = () => {
                 <div className="rounded-2xl border border-white/10 bg-slate-900/40 p-4 space-y-4">
                   <div className="flex items-center gap-2">
                     <Database className="h-5 w-5 text-indigo-300" />
-                    <h4 className="text-lg font-semibold">Manual sync thay cho autosync</h4>
+                    <h4 className="text-lg font-semibold">Đồng bộ thủ công</h4>
                   </div>
                   <p className="text-sm text-slate-400">
-                    Autosync đã bị khóa để tránh tự ghi đè. Khi cần, bạn bấm nút này để hợp nhất bản local hiện tại với dữ liệu đang có trên tài khoản rồi lưu lại an toàn.
+                    Tự đồng bộ đã được tắt để tránh ghi đè âm thầm. Khi cần, bạn có thể chủ động hợp nhất dữ liệu trên thiết bị với dữ liệu trên tài khoản rồi mới lưu lại.
                   </p>
                   <button
                     className="tf-btn tf-btn-primary"
                     onClick={handleManualAccountSync}
                     disabled={!user || !hasSupabase || backupBusyAction === 'manual-sync'}
                   >
-                    {backupBusyAction === 'manual-sync' ? 'Đang đồng bộ thủ công...' : 'Đồng bộ thủ công ngay'}
+                    {backupBusyAction === 'manual-sync' ? 'Đang đồng bộ...' : 'Đồng bộ ngay'}
                   </button>
                   {!user ? (
-                    <p className="text-sm text-amber-300">Cần đăng nhập để dùng manual sync với tài khoản.</p>
+                    <p className="text-sm text-amber-300">Cần đăng nhập để đồng bộ dữ liệu với tài khoản.</p>
                   ) : null}
                 </div>
               </div>
@@ -11780,8 +11780,8 @@ const AppContent = () => {
               <div className="rounded-2xl border border-white/10 bg-slate-900/40 p-4 space-y-4">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <h4 className="text-lg font-semibold">Lịch sử backup trong app</h4>
-                    <p className="text-sm text-slate-400">Bạn có thể đọc mốc thời gian, tải JSON từng snapshot, hoặc khôi phục ngay từ đây.</p>
+                    <h4 className="text-lg font-semibold">Lịch sử sao lưu</h4>
+                    <p className="text-sm text-slate-400">Tại đây bạn có thể xem từng mốc đã lưu, tải về máy hoặc khôi phục lại ngay khi cần.</p>
                   </div>
                   <button
                     className="tf-btn tf-btn-ghost"
@@ -11793,11 +11793,11 @@ const AppContent = () => {
 
                 {!backupHistoryReady ? (
                   <div className="rounded-2xl border border-white/10 bg-slate-950/50 px-4 py-8 text-center text-sm text-slate-400">
-                    Đang nạp lịch sử backup...
+                    Đang nạp lịch sử sao lưu...
                   </div>
                 ) : backupSnapshots.length === 0 ? (
                   <div className="rounded-2xl border border-dashed border-white/15 bg-slate-950/50 px-4 py-8 text-center text-sm text-slate-400">
-                    Chưa có snapshot nào trong app. Hãy bấm <strong className="text-white">Sao lưu ngay</strong> để tạo mốc đầu tiên.
+                    Chưa có mốc sao lưu nào. Hãy bấm <strong className="text-white">Sao lưu ngay</strong> để tạo bản đầu tiên.
                   </div>
                 ) : (
                   <div className="max-h-[55vh] space-y-3 overflow-y-auto pr-2">
@@ -11828,7 +11828,14 @@ const AppContent = () => {
                                 {(snapshot.payload.stories || []).length} truyện · {(snapshot.payload.characters || []).length} nhân vật · {(snapshot.payload.translation_names || []).length} tên dịch
                               </p>
                               {snapshot.drive?.error ? (
-                                <p className="text-xs text-amber-300">{snapshot.drive.error}</p>
+                                <p className="text-xs text-amber-300">
+                                  {driveConfigured && (
+                                    snapshot.drive.error.includes('VITE_GOOGLE_DRIVE_CLIENT_ID')
+                                    || snapshot.drive.error.includes('Chưa có cấu hình Google Drive')
+                                  )
+                                    ? 'Mốc này được tạo trước khi bạn bật Google Drive. Bấm "Lưu lên Drive" để cập nhật lại trạng thái mới.'
+                                    : snapshot.drive.error}
+                                </p>
                               ) : null}
                             </div>
                             <div className="flex flex-wrap gap-2">
@@ -11836,21 +11843,21 @@ const AppContent = () => {
                                 className="tf-btn tf-btn-ghost"
                                 onClick={() => void handleDownloadBackupSnapshot(snapshot.id)}
                               >
-                                Tải JSON
+                                Tải về
                               </button>
                               <button
                                 className="tf-btn tf-btn-ghost"
                                 onClick={() => void handleUploadSnapshotManually(snapshot.id)}
                                 disabled={!driveConfigured || driveBusy}
                               >
-                                {driveBusy ? 'Đang đẩy Drive...' : 'Đẩy lên Drive'}
+                                {driveBusy ? 'Đang lưu lên Drive...' : 'Lưu lên Drive'}
                               </button>
                               <button
                                 className="tf-btn tf-btn-primary"
                                 onClick={() => void handleRestoreBackupSnapshot(snapshot.id)}
                                 disabled={restoreBusy}
                               >
-                                {restoreBusy ? 'Đang khôi phục...' : 'Khôi phục từ mốc thời gian'}
+                                {restoreBusy ? 'Đang khôi phục...' : 'Khôi phục mốc này'}
                               </button>
                             </div>
                           </div>
@@ -11927,7 +11934,7 @@ const AppContent = () => {
             <div className="flex items-start gap-3">
               <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
               <div className="space-y-1">
-                <p className="font-semibold text-rose-50">Bạn đã lâu chưa backup</p>
+                <p className="font-semibold text-rose-50">Đã lâu chưa sao lưu</p>
                 <p>{backupWarningMessage}</p>
               </div>
             </div>
