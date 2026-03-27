@@ -3545,6 +3545,8 @@ const ToolsManager = ({
   const [enablePromptCache, setEnablePromptCache] = useState(true);
   const [imageAiEnabled, setImageAiEnabled] = useState(false);
   const [imageAiApiKey, setImageAiApiKey] = useState('');
+  const [imageAiProvider, setImageAiProvider] = useState<ImageAiProvider>('evolink');
+  const [imageAiModel, setImageAiModel] = useState(getDefaultImageAiModel('evolink'));
   const relaySocketRef = useRef<WebSocket | null>(null);
   const relayPingRef = useRef<number | null>(null);
   const relayReconnectRef = useRef<number | null>(null);
@@ -3588,6 +3590,8 @@ const ToolsManager = ({
     setEnablePromptCache(runtime.enableCache);
     const imageApi = getImageApiConfig();
     setImageAiEnabled(imageApi.enabled);
+    setImageAiProvider(imageApi.provider);
+    setImageAiModel(imageApi.providers[imageApi.provider]?.model || getDefaultImageAiModel(imageApi.provider));
     setImageAiApiKey(imageApi.providers[imageApi.provider]?.apiKey || '');
     const token = (localStorage.getItem(RELAY_TOKEN_CACHE_KEY) || runtime.relayToken || '').trim();
     setRelayMaskedToken(token ? maskSensitive(token) : 'Chưa nhận token');
@@ -3724,33 +3728,38 @@ const ToolsManager = ({
 
   const handleSaveImageAiConfig = () => {
     const currentConfig = getImageApiConfig();
-    const activeProvider = currentConfig.provider;
+    const activeProvider = imageAiProvider;
     const nextConfig: ImageApiConfig = {
       ...currentConfig,
       enabled: imageAiEnabled,
       provider: activeProvider,
+      size: currentConfig.size,
       providers: {
         ...currentConfig.providers,
         [activeProvider]: {
           ...currentConfig.providers[activeProvider],
           apiKey: imageAiApiKey.trim(),
+          model: imageAiModel || getDefaultImageAiModel(activeProvider),
         },
       },
     };
     saveImageApiConfig(nextConfig);
     setImageAiEnabled(nextConfig.enabled);
+    setImageAiProvider(activeProvider);
+    setImageAiModel(nextConfig.providers[activeProvider]?.model || getDefaultImageAiModel(activeProvider));
     setImageAiApiKey(nextConfig.providers[activeProvider]?.apiKey || '');
+    const providerMeta = IMAGE_AI_PROVIDER_META[activeProvider];
     if (nextConfig.enabled && nextConfig.providers[activeProvider]?.apiKey) {
       notifyApp({
         tone: 'success',
-        message: 'AI Sinh ảnh đã sẵn sàng. Từ giờ nút tạo bìa sẽ ưu tiên gọi Evolink để sinh ảnh.',
+        message: `AI Sinh ảnh đã sẵn sàng. Từ giờ nút tạo bìa sẽ ưu tiên gọi ${providerMeta.label}.`,
       });
       return;
     }
     if (nextConfig.enabled) {
       notifyApp({
         tone: 'warn',
-        message: 'AI Sinh ảnh đã bật nhưng chưa có API key Evolink, nên hệ thống sẽ phải dùng đường dự phòng.',
+        message: `AI Sinh ảnh đã bật nhưng chưa có ${providerMeta.keyLabel}, nên hệ thống sẽ phải dùng đường dự phòng.`,
       });
       return;
     }
@@ -4528,10 +4537,12 @@ const ToolsManager = ({
           quickImportResult={quickImportResult}
           imageAiEnabled={imageAiEnabled}
           imageAiApiKey={imageAiApiKey}
+          imageAiProvider={imageAiProvider}
+          imageAiModel={imageAiModel}
           imageAiStatusLabel={
             imageAiEnabled
               ? (imageAiApiKey.trim()
-                ? 'Đang bật và sẽ ưu tiên dùng Evolink cho tạo ảnh bìa.'
+                ? `Đang bật và sẽ ưu tiên dùng ${IMAGE_AI_PROVIDER_META[imageAiProvider].label} cho tạo ảnh bìa.`
                 : 'Đang bật nhưng chưa có API key, nên vẫn sẽ rơi xuống nhánh dự phòng.')
               : 'Đang tắt. TruyenForge sẽ bỏ qua nhánh AI sinh ảnh riêng khi tạo bìa.'
           }
@@ -4542,6 +4553,13 @@ const ToolsManager = ({
           onApiEntryBaseUrlChange={setApiEntryBaseUrl}
           onImageAiEnabledChange={setImageAiEnabled}
           onImageAiApiKeyChange={setImageAiApiKey}
+          onImageAiProviderChange={(value) => {
+            const nextConfig = getImageApiConfig();
+            setImageAiProvider(value);
+            setImageAiModel(nextConfig.providers[value]?.model || getDefaultImageAiModel(value));
+            setImageAiApiKey(nextConfig.providers[value]?.apiKey || '');
+          }}
+          onImageAiModelChange={setImageAiModel}
           onSaveImageAiConfig={handleSaveImageAiConfig}
           onSaveApiEntry={handleSaveApiEntry}
           onTestApiEntry={handleTestApiEntry}

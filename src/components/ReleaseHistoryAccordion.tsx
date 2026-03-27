@@ -70,7 +70,7 @@ export const ReleaseHistoryAccordion: React.FC<{
             </button>
             {isExpanded ? (
               <div className={`border-t px-4 pb-4 pt-3 text-sm ${styles.body} ${variant === 'dark' ? 'border-white/10' : 'border-[#D9E2EC]'}`}>
-                <div className="space-y-2">
+                <div className={`max-h-72 overflow-y-auto pr-1 space-y-2 ${variant === 'dark' ? 'scrollbar-thin scrollbar-track-transparent scrollbar-thumb-white/15' : 'scrollbar-thin scrollbar-track-transparent scrollbar-thumb-slate-300'}`}>
                   {note.items.map((item, idx) => (
                     <p key={`${note.version}-${idx}`}>- {item}</p>
                   ))}

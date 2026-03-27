@@ -4,6 +4,7 @@ import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import type { AiProfileMode, ApiModelOption, ApiProvider, StoredApiKeyRecord } from '../../apiVault';
 import { PROVIDER_LABELS, PROVIDER_MODEL_OPTIONS } from '../../apiVault';
+import { IMAGE_AI_PROVIDER_META, IMAGE_AI_PROVIDER_ORDER, type ImageAiProvider } from '../../imageAiProviders';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -96,6 +97,8 @@ interface ApiSectionPanelProps {
   imageAiEnabled: boolean;
   imageAiApiKey: string;
   imageAiStatusLabel: string;
+  imageAiProvider: ImageAiProvider;
+  imageAiModel: string;
   onApiEntryNameChange: (value: string) => void;
   onApiEntryTextChange: (value: string) => void;
   onApiEntryProviderChange: (value: ApiProvider) => void;
@@ -103,6 +106,8 @@ interface ApiSectionPanelProps {
   onApiEntryBaseUrlChange: (value: string) => void;
   onImageAiEnabledChange: (value: boolean) => void;
   onImageAiApiKeyChange: (value: string) => void;
+  onImageAiProviderChange: (value: ImageAiProvider) => void;
+  onImageAiModelChange: (value: string) => void;
   onSaveImageAiConfig: () => void;
   onSaveApiEntry: () => void;
   onTestApiEntry: (id: string) => void;
@@ -154,6 +159,8 @@ export function ApiSectionPanel({
   imageAiEnabled,
   imageAiApiKey,
   imageAiStatusLabel,
+  imageAiProvider,
+  imageAiModel,
   onApiEntryNameChange,
   onApiEntryTextChange,
   onApiEntryProviderChange,
@@ -161,6 +168,8 @@ export function ApiSectionPanel({
   onApiEntryBaseUrlChange,
   onImageAiEnabledChange,
   onImageAiApiKeyChange,
+  onImageAiProviderChange,
+  onImageAiModelChange,
   onSaveImageAiConfig,
   onSaveApiEntry,
   onTestApiEntry,
@@ -177,6 +186,8 @@ export function ApiSectionPanel({
 }: ApiSectionPanelProps) {
   const [relayCode, setRelayCode] = useState('');
   const lastSyncedRelayUrlCodeRef = React.useRef('');
+  const imageProviderMeta = IMAGE_AI_PROVIDER_META[imageAiProvider];
+  const imageModelOptions = imageProviderMeta.models;
 
   useEffect(() => {
     try {
@@ -498,7 +509,7 @@ export function ApiSectionPanel({
               </div>
             </div>
             <p className="text-sm text-slate-300">
-              Khi bật và có API key, nút <span className="font-semibold text-white">Tạo bìa bằng AI</span> sẽ ưu tiên gửi prompt sang Evolink để sinh ảnh trong nền.
+              Khi bật và có API key, nút <span className="font-semibold text-white">Tạo bìa bằng AI</span> sẽ ưu tiên gửi prompt sang nhà phát triển ảnh bạn chọn.
               Khi tắt, TruyenForge sẽ bỏ qua nhánh này và chuyển sang các đường tạo ảnh dự phòng khác.
             </p>
           </div>
@@ -514,12 +525,59 @@ export function ApiSectionPanel({
           </label>
         </div>
 
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <label className="space-y-2">
+            <span className="text-xs uppercase tracking-wide text-slate-400 font-semibold">Nhà phát triển</span>
+            <select
+              value={imageAiProvider}
+              onChange={(e) => onImageAiProviderChange(e.target.value as ImageAiProvider)}
+              className="tf-input"
+            >
+              {IMAGE_AI_PROVIDER_ORDER.map((provider) => (
+                <option key={provider} value={provider}>
+                  {IMAGE_AI_PROVIDER_META[provider].label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="space-y-2">
+            <span className="text-xs uppercase tracking-wide text-slate-400 font-semibold">Model ảnh</span>
+            <select
+              value={imageAiModel}
+              onChange={(e) => onImageAiModelChange(e.target.value)}
+              className="tf-input"
+            >
+              {imageModelOptions.map((model) => (
+                <option key={model.value} value={model.value}>
+                  {model.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <div className="rounded-2xl border border-white/10 bg-slate-950/30 p-4 space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-semibold text-white">{imageProviderMeta.label}</p>
+            <span className="rounded-full border border-sky-400/20 bg-sky-500/10 px-2.5 py-1 text-[11px] font-semibold text-sky-200">
+              {imageModelOptions.find((item) => item.value === imageAiModel)?.label || imageAiModel}
+            </span>
+          </div>
+          <p className="text-sm text-slate-300">{imageProviderMeta.summary}</p>
+          <p className="text-sm text-emerald-200">Ưu điểm: {imageProviderMeta.strengths}</p>
+          <p className="text-sm text-amber-200">Lưu ý: {imageProviderMeta.tradeoffs}</p>
+          <div className="rounded-xl border border-white/10 bg-slate-900/60 px-3 py-2 text-xs text-slate-300">
+            {imageModelOptions.find((item) => item.value === imageAiModel)?.description || 'Chọn model để xem mô tả chi tiết.'}
+          </div>
+        </div>
+
         <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_auto]">
           <input
             value={imageAiApiKey}
             onChange={(e) => onImageAiApiKeyChange(e.target.value)}
             className="tf-input"
-            placeholder="Dán API key Evolink cho AI sinh ảnh (sk-...)"
+            placeholder={imageProviderMeta.keyPlaceholder}
           />
           <button onClick={onSaveImageAiConfig} className="tf-btn tf-btn-primary">
             Lưu AI Sinh ảnh
@@ -529,28 +587,28 @@ export function ApiSectionPanel({
         <div className="rounded-2xl border border-white/10 bg-slate-950/30 p-4 space-y-2">
           <p className="text-xs uppercase tracking-wide text-slate-400 font-semibold">Trạng thái hiện tại</p>
           <p className="text-sm text-white">{imageAiStatusLabel}</p>
-          <p className="text-xs text-slate-400">API key này chỉ được lưu cục bộ trên trình duyệt/máy hiện tại, không dùng để thay thế khóa AI viết và dịch.</p>
+          <p className="text-xs text-slate-400">{imageProviderMeta.keyLabel} này chỉ được lưu cục bộ trên trình duyệt/máy hiện tại, không dùng để thay thế khóa AI viết và dịch.</p>
         </div>
 
         <div className="flex flex-wrap gap-3 text-sm">
-          <a href={EVOLINK_HOME_URL} target="_blank" rel="noreferrer" className="tf-btn tf-btn-ghost">
-            Mở Evolink
+          <a href={imageProviderMeta.signupUrl} target="_blank" rel="noreferrer" className="tf-btn tf-btn-ghost">
+            Mở Trang Nhà Phát Triển
           </a>
-          <a href={EVOLINK_SIGNUP_URL} target="_blank" rel="noreferrer" className="tf-btn tf-btn-ghost">
+          <a href={imageProviderMeta.signupUrl} target="_blank" rel="noreferrer" className="tf-btn tf-btn-ghost">
             Đăng ký / Đăng nhập
           </a>
-          <a href={EVOLINK_IMAGE_DOCS_URL} target="_blank" rel="noreferrer" className="tf-btn tf-btn-ghost">
+          <a href={imageProviderMeta.docsUrl} target="_blank" rel="noreferrer" className="tf-btn tf-btn-ghost">
             Xem tài liệu API ảnh
           </a>
         </div>
 
         <div className="rounded-2xl border border-indigo-400/20 bg-indigo-500/5 p-4 space-y-2">
-          <p className="text-sm font-semibold text-white">Cách lấy API key Evolink</p>
+          <p className="text-sm font-semibold text-white">Cách lấy API key</p>
           <ol className="list-decimal pl-5 space-y-1 text-sm text-slate-300">
-            <li>Mở trang <a href={EVOLINK_SIGNUP_URL} target="_blank" rel="noreferrer" className="text-sky-300 underline underline-offset-2">evolink.ai/signup</a> rồi đăng ký hoặc đăng nhập.</li>
-            <li>Vào dashboard Evolink và mở khu vực quản lý API key của tài khoản.</li>
-            <li>Tạo hoặc sao chép khóa có dạng <span className="font-mono text-white">sk-...</span>.</li>
-            <li>Dán khóa vào ô phía trên, bật <span className="font-semibold text-white">AI Sinh ảnh</span>, rồi bấm <span className="font-semibold text-white">Lưu AI Sinh ảnh</span>.</li>
+            <li>Mở trang <a href={imageProviderMeta.signupUrl} target="_blank" rel="noreferrer" className="text-sky-300 underline underline-offset-2">{imageProviderMeta.signupUrl.replace(/^https?:\/\//, '')}</a> rồi đăng ký hoặc đăng nhập.</li>
+            <li>Vào dashboard của nhà phát triển và mở khu vực quản lý API key.</li>
+            <li>Tạo hoặc sao chép khóa theo đúng định dạng mà nhà cung cấp đó cấp cho bạn.</li>
+            <li>Chọn đúng <span className="font-semibold text-white">Nhà phát triển</span> và <span className="font-semibold text-white">Model ảnh</span>, dán key vào ô phía trên, bật <span className="font-semibold text-white">AI Sinh ảnh</span>, rồi bấm <span className="font-semibold text-white">Lưu AI Sinh ảnh</span>.</li>
           </ol>
         </div>
       </div>
