@@ -60,7 +60,7 @@ import { LOCAL_WORKSPACE_CHANGED_EVENT, emitLocalWorkspaceChanged, loadLocalWork
 import { loadServerWorkspace, saveQaReport, saveServerWorkspace, SUPABASE_STORAGE_TABLES } from './supabaseWorkspace';
 import { IMAGE_AI_PROVIDER_META, getDefaultImageAiModel, type ImageAiProvider } from './imageAiProviders';
 import { createBackupSnapshot, getBackupSnapshot, listBackupSnapshots, updateBackupSnapshotDriveMeta, type BackupReason, type BackupSnapshot } from './backupVault';
-import { buildDriveBackupFilename, connectGoogleDriveInteractive, disconnectGoogleDrive, ensureGoogleDriveAccessToken, hasGoogleDriveBackupConfig, hasUsableDriveToken, loadStoredDriveAuth, uploadBackupSnapshotToDrive, type GoogleDriveAuthState } from './googleDriveBackups';
+import { buildDriveBackupFilename, connectGoogleDriveInteractive, disconnectGoogleDrive, ensureGoogleDriveAccessToken, hasGoogleDriveBackupConfig, hasUsableDriveToken, loadStoredDriveAuth, uploadBackupSnapshotToDrive, type GoogleDriveAuthState, type GoogleDriveAccountProfile } from './googleDriveBackups';
 
 import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { handleRelayMessage, relayGenerateContent, setRelaySender, notifyRelayDisconnected } from './relayBridge';
@@ -324,8 +324,18 @@ interface BackupSettings {
   lastManualSyncAt: string;
 }
 
+interface GoogleDriveBinding {
+  sub: string;
+  email: string;
+  name: string;
+  picture: string;
+  lockedAt: string;
+  lastValidatedAt: string;
+}
+
 const DEFAULT_PROFILE_AVATAR = 'https://api.dicebear.com/9.x/initials/svg?seed=User';
 const BACKUP_SETTINGS_KEY = 'truyenforge:backup-settings-v1';
+const DRIVE_BINDING_MAP_KEY = 'truyenforge:drive-binding-map-v1';
 const DEFAULT_BACKUP_SETTINGS: BackupSettings = {
   autoSnapshotEnabled: true,
   autoUploadToDrive: true,
@@ -355,6 +365,67 @@ function loadBackupSettings(): BackupSettings {
 function saveBackupSettings(settings: BackupSettings): void {
   if (typeof window === 'undefined') return;
   localStorage.setItem(BACKUP_SETTINGS_KEY, JSON.stringify(settings));
+}
+
+function normalizeDriveBinding(value: unknown): GoogleDriveBinding | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const row = value as Partial<GoogleDriveBinding>;
+  const email = String(row.email || '').trim();
+  const sub = String(row.sub || '').trim();
+  if (!email || !sub) return null;
+  return {
+    sub,
+    email,
+    name: String(row.name || '').trim(),
+    picture: String(row.picture || '').trim(),
+    lockedAt: String(row.lockedAt || row.lastValidatedAt || new Date().toISOString()),
+    lastValidatedAt: String(row.lastValidatedAt || row.lockedAt || new Date().toISOString()),
+  };
+}
+
+function loadDriveBindingMap(): Record<string, GoogleDriveBinding> {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = localStorage.getItem(DRIVE_BINDING_MAP_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const next: Record<string, GoogleDriveBinding> = {};
+    Object.entries(parsed || {}).forEach(([userId, value]) => {
+      const normalized = normalizeDriveBinding(value);
+      if (normalized) next[userId] = normalized;
+    });
+    return next;
+  } catch {
+    return {};
+  }
+}
+
+function loadDriveBindingForUser(userId?: string | null): GoogleDriveBinding | null {
+  if (!userId) return null;
+  const map = loadDriveBindingMap();
+  return map[userId] || null;
+}
+
+function saveDriveBindingForUser(userId: string, binding: GoogleDriveBinding | null): void {
+  if (typeof window === 'undefined' || !userId) return;
+  const next = loadDriveBindingMap();
+  if (binding) {
+    next[userId] = binding;
+  } else {
+    delete next[userId];
+  }
+  localStorage.setItem(DRIVE_BINDING_MAP_KEY, JSON.stringify(next));
+}
+
+function toDriveBinding(account: GoogleDriveAccountProfile, current?: GoogleDriveBinding | null): GoogleDriveBinding {
+  return {
+    sub: account.sub,
+    email: account.email,
+    name: account.name || current?.name || '',
+    picture: account.picture || current?.picture || '',
+    lockedAt: current?.lockedAt || new Date().toISOString(),
+    lastValidatedAt: new Date().toISOString(),
+  };
 }
 
 function createBackupFingerprint(payload: StorageBackupPayload): string {
@@ -539,6 +610,7 @@ interface AccountWorkspaceSnapshot {
   translationNames: any[];
   promptLibrary: PromptLibraryState;
   finopsBudget: ReturnType<typeof loadBudgetState>;
+  driveBinding?: GoogleDriveBinding | null;
 }
 
 const ACCOUNT_WORKSPACE_BINDINGS = [
@@ -662,6 +734,7 @@ function mergeAccountWorkspaceSnapshots(
       ...buildSectionUpdatedAt(loadLocalWorkspaceMeta()),
       ...localSnapshot.sectionUpdatedAt,
     },
+    driveBinding: localSnapshot.driveBinding || normalizeDriveBinding(remoteSnapshot.driveBinding) || null,
   };
 
   ACCOUNT_WORKSPACE_BINDINGS.forEach(({ section, key }) => {
@@ -746,7 +819,7 @@ function loadWorkspaceRecoverySnapshot(): AccountWorkspaceSnapshot | null {
   }
 }
 
-function buildAccountWorkspaceSnapshot(defaultName?: string, defaultAvatar?: string): AccountWorkspaceSnapshot {
+function buildAccountWorkspaceSnapshot(defaultName?: string, defaultAvatar?: string, userId?: string): AccountWorkspaceSnapshot {
   const meta = loadLocalWorkspaceMeta();
   return {
     schemaVersion: 1,
@@ -762,10 +835,11 @@ function buildAccountWorkspaceSnapshot(defaultName?: string, defaultAvatar?: str
     translationNames: storage.getTranslationNames(),
     promptLibrary: loadPromptLibraryState(),
     finopsBudget: loadBudgetState(),
+    driveBinding: loadDriveBindingForUser(userId),
   };
 }
 
-function applyAccountWorkspaceSnapshot(snapshot: Partial<AccountWorkspaceSnapshot>, defaultName?: string, defaultAvatar?: string): void {
+function applyAccountWorkspaceSnapshot(snapshot: Partial<AccountWorkspaceSnapshot>, defaultName?: string, defaultAvatar?: string, userId?: string): void {
   const nextProfileRaw = snapshot.uiProfile;
   if (nextProfileRaw && typeof nextProfileRaw === 'object') {
     saveUiProfile({
@@ -799,6 +873,9 @@ function applyAccountWorkspaceSnapshot(snapshot: Partial<AccountWorkspaceSnapsho
   }
   if (snapshot.finopsBudget && typeof snapshot.finopsBudget === 'object') {
     saveBudgetState(snapshot.finopsBudget);
+  }
+  if (userId && Object.prototype.hasOwnProperty.call(snapshot, 'driveBinding')) {
+    saveDriveBindingForUser(userId, normalizeDriveBinding(snapshot.driveBinding));
   }
   markLocalWorkspaceHydrated(snapshot.updatedAt || new Date().toISOString(), 'cloud-hydrate', snapshot.sectionUpdatedAt);
 }
@@ -8843,6 +8920,7 @@ const AppContent = () => {
   const [backupHistoryReady, setBackupHistoryReady] = useState(false);
   const [backupBusyAction, setBackupBusyAction] = useState('');
   const [driveAuth, setDriveAuth] = useState<GoogleDriveAuthState | null>(() => loadStoredDriveAuth());
+  const [driveBinding, setDriveBinding] = useState<GoogleDriveBinding | null>(() => loadDriveBindingForUser(user?.uid));
   const [isUploadingProfileAvatar, setIsUploadingProfileAvatar] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
@@ -8971,10 +9049,76 @@ const AppContent = () => {
     bumpStoriesVersion();
   }, [user?.displayName, user?.photoURL]);
 
+  const loadBoundDriveBinding = useCallback(async (): Promise<GoogleDriveBinding | null> => {
+    const localBinding = loadDriveBindingForUser(user?.uid);
+    if (!user || !hasSupabase) {
+      setDriveBinding(localBinding);
+      return localBinding;
+    }
+
+    try {
+      const remoteSnapshot = await loadServerWorkspace<Partial<AccountWorkspaceSnapshot>>(user.uid);
+      const remoteBinding = normalizeDriveBinding(remoteSnapshot.payload?.driveBinding);
+      if (remoteBinding) {
+        saveDriveBindingForUser(user.uid, remoteBinding);
+        setDriveBinding(remoteBinding);
+        return remoteBinding;
+      }
+    } catch (error) {
+      console.warn('Không đọc được Drive binding từ tài khoản.', error);
+    }
+
+    setDriveBinding(localBinding);
+    return localBinding;
+  }, [user, hasSupabase]);
+
+  const persistDriveBinding = useCallback(async (binding: GoogleDriveBinding | null) => {
+    if (!user?.uid) {
+      setDriveBinding(binding);
+      return;
+    }
+
+    saveDriveBindingForUser(user.uid, binding);
+    setDriveBinding(binding);
+
+    if (!hasSupabase) return;
+
+    const remoteSnapshot = await loadServerWorkspace<Partial<AccountWorkspaceSnapshot>>(user.uid);
+    const baseSnapshot = remoteSnapshot.payload && typeof remoteSnapshot.payload === 'object'
+      ? {
+          ...(remoteSnapshot.payload as Partial<AccountWorkspaceSnapshot>),
+        }
+      : buildAccountWorkspaceSnapshot(user.displayName || undefined, user.photoURL || undefined, user.uid);
+
+    const nextSnapshot: AccountWorkspaceSnapshot = {
+      ...buildAccountWorkspaceSnapshot(user.displayName || undefined, user.photoURL || undefined, user.uid),
+      ...baseSnapshot,
+      updatedAt: typeof baseSnapshot.updatedAt === 'string' ? baseSnapshot.updatedAt : new Date().toISOString(),
+      driveBinding: binding,
+    };
+    await saveServerWorkspace(user.uid, nextSnapshot);
+  }, [hasSupabase, user]);
+
   const uploadSnapshotToDrive = useCallback(async (
     snapshot: BackupSnapshot,
     options?: { quiet?: boolean; interactive?: boolean },
   ): Promise<boolean> => {
+    if (!user?.uid) {
+      await updateBackupSnapshotDriveMeta(snapshot.id, {
+        status: 'skipped',
+        error: 'Cần đăng nhập TruyenForge trước khi khóa và dùng Google Drive backup.',
+      });
+      await refreshBackupHistory();
+      if (!options?.quiet) {
+        notifyApp({
+          tone: 'warn',
+          message: 'Hãy đăng nhập TruyenForge trước khi dùng Google Drive backup.',
+          groupKey: 'backup-drive-login-required',
+        });
+      }
+      return false;
+    }
+
     if (!hasGoogleDriveBackupConfig()) {
       await updateBackupSnapshotDriveMeta(snapshot.id, {
         status: 'skipped',
@@ -8991,8 +9135,26 @@ const AppContent = () => {
       return false;
     }
 
+    const boundDrive = driveBinding || await loadBoundDriveBinding();
+    if (!boundDrive) {
+      await updateBackupSnapshotDriveMeta(snapshot.id, {
+        status: 'failed',
+        error: 'Tài khoản này chưa được khóa với Google Drive nào. Hãy bấm Kết nối Google Drive trước.',
+      });
+      await refreshBackupHistory();
+      if (!options?.quiet) {
+        notifyApp({
+          tone: 'warn',
+          message: 'Tài khoản này chưa khóa Google Drive. Hãy kết nối trước để tránh lưu nhầm Gmail.',
+          groupKey: 'backup-drive-binding-missing',
+        });
+      }
+      return false;
+    }
+
     const accessToken = await ensureGoogleDriveAccessToken(Boolean(options?.interactive));
-    setDriveAuth(loadStoredDriveAuth());
+    const currentAuth = loadStoredDriveAuth();
+    setDriveAuth(currentAuth);
     if (!accessToken) {
       await updateBackupSnapshotDriveMeta(snapshot.id, {
         status: 'failed',
@@ -9004,6 +9166,22 @@ const AppContent = () => {
           tone: 'warn',
           message: 'Google Drive chưa sẵn sàng. Hãy kết nối lại để tiếp tục sao lưu tự động.',
           groupKey: 'backup-drive-token-missing',
+        });
+      }
+      return false;
+    }
+
+    if (!currentAuth?.account?.sub || currentAuth.account.sub !== boundDrive.sub) {
+      await updateBackupSnapshotDriveMeta(snapshot.id, {
+        status: 'failed',
+        error: `Tài khoản TruyenForge này đang khóa với Google Drive ${boundDrive.email}. Hãy đăng nhập đúng Gmail đó rồi thử lại.`,
+      });
+      await refreshBackupHistory();
+      if (!options?.quiet) {
+        notifyApp({
+          tone: 'error',
+          message: `Sai Gmail Drive. Tài khoản này chỉ được phép backup vào ${boundDrive.email}.`,
+          groupKey: 'backup-drive-binding-mismatch',
         });
       }
       return false;
@@ -9047,7 +9225,7 @@ const AppContent = () => {
       }
       return false;
     }
-  }, [refreshBackupHistory]);
+  }, [driveBinding, loadBoundDriveBinding, refreshBackupHistory, user?.uid]);
 
   const createWorkspaceBackup = useCallback(async (
     reason: BackupReason,
@@ -9228,13 +9406,38 @@ const AppContent = () => {
   }, [createWorkspaceBackup, refreshBackupHistory, restorePayloadIntoWorkspace]);
 
   const handleConnectDrive = useCallback(async () => {
+    if (!user?.uid) {
+      notifyApp({
+        tone: 'warn',
+        message: 'Cần đăng nhập TruyenForge trước khi khóa Google Drive cho tài khoản này.',
+        groupKey: 'backup-drive-connect-login-required',
+      });
+      return;
+    }
+
     setBackupBusyAction('connect-drive');
     try {
+      const boundDrive = driveBinding || await loadBoundDriveBinding();
       const auth = await connectGoogleDriveInteractive();
+      const authBinding = toDriveBinding(auth.account, boundDrive);
+      if (boundDrive && authBinding.sub !== boundDrive.sub) {
+        await disconnectGoogleDrive();
+        setDriveAuth(null);
+        notifyApp({
+          tone: 'error',
+          message: `Tài khoản này đã khóa với Google Drive ${boundDrive.email}.`,
+          detail: `Bạn vừa chọn ${auth.account.email}. Hãy đăng nhập lại đúng Gmail đã khóa nếu muốn tiếp tục backup.`,
+          groupKey: 'backup-drive-binding-locked',
+        });
+        return;
+      }
+
+      await persistDriveBinding(authBinding);
       setDriveAuth(auth);
       notifyApp({
         tone: 'success',
-        message: 'Đã kết nối Google Drive. Backup JSON mới có thể tự đẩy lên Drive.',
+        message: `Đã khóa tài khoản này với Google Drive ${auth.account.email}.`,
+        detail: 'Từ giờ chỉ Gmail này mới được dùng để backup tự động cho tài khoản TruyenForge hiện tại.',
         groupKey: 'backup-drive-connect-success',
       });
       const latest = backupSnapshots[0];
@@ -9251,7 +9454,7 @@ const AppContent = () => {
     } finally {
       setBackupBusyAction('');
     }
-  }, [backupSettings.autoUploadToDrive, backupSnapshots, uploadSnapshotToDrive]);
+  }, [backupSettings.autoUploadToDrive, backupSnapshots, driveBinding, loadBoundDriveBinding, persistDriveBinding, uploadSnapshotToDrive, user?.uid]);
 
   const handleDisconnectDrive = useCallback(async () => {
     setBackupBusyAction('disconnect-drive');
@@ -9260,7 +9463,8 @@ const AppContent = () => {
       setDriveAuth(null);
       notifyApp({
         tone: 'info',
-        message: 'Đã ngắt kết nối Google Drive. Backup mới vẫn giữ cục bộ trong app.',
+        message: 'Đã ngắt phiên Google Drive trên trình duyệt này.',
+        detail: driveBinding ? `Tài khoản TruyenForge vẫn đang khóa với ${driveBinding.email}. Khi kết nối lại, bạn phải dùng đúng Gmail đó.` : 'Bạn có thể kết nối lại Google Drive sau.',
         groupKey: 'backup-drive-disconnect',
       });
     } catch (error) {
@@ -9274,7 +9478,7 @@ const AppContent = () => {
     } finally {
       setBackupBusyAction('');
     }
-  }, []);
+  }, [driveBinding]);
 
   const handleUploadSnapshotManually = useCallback(async (snapshotId: string) => {
     setBackupBusyAction(`drive-upload:${snapshotId}`);
@@ -9311,7 +9515,7 @@ const AppContent = () => {
     workspaceSyncRef.current.isHydrating = true;
     try {
       await createWorkspaceBackup('restore-point', { force: true, quiet: true });
-      const localSnapshot = buildAccountWorkspaceSnapshot(user.displayName || undefined, user.photoURL || undefined);
+      const localSnapshot = buildAccountWorkspaceSnapshot(user.displayName || undefined, user.photoURL || undefined, user.uid);
       const remoteSnapshot = await loadServerWorkspace<AccountWorkspaceSnapshot>(user.uid);
       const remotePayload = remoteSnapshot.payload
         ? {
@@ -9325,7 +9529,7 @@ const AppContent = () => {
         ? mergeAccountWorkspaceSnapshots(localSnapshot, remotePayload)
         : localSnapshot;
 
-      applyAccountWorkspaceSnapshot(mergedSnapshot, user.displayName || undefined, user.photoURL || undefined);
+      applyAccountWorkspaceSnapshot(mergedSnapshot, user.displayName || undefined, user.photoURL || undefined, user.uid);
       markLocalWorkspaceHydrated(mergedSnapshot.updatedAt, 'manual-sync', mergedSnapshot.sectionUpdatedAt);
       refreshWorkspaceUiFromStorage();
       await saveServerWorkspace(user.uid, mergedSnapshot);
@@ -9355,6 +9559,11 @@ const AppContent = () => {
   useEffect(() => {
     saveBackupSettings(backupSettings);
   }, [backupSettings]);
+
+  useEffect(() => {
+    setDriveBinding(loadDriveBindingForUser(user?.uid));
+    setDriveAuth(loadStoredDriveAuth());
+  }, [user?.uid]);
 
   useEffect(() => {
     void refreshBackupHistory();
@@ -9666,7 +9875,7 @@ const AppContent = () => {
   const syncWorkspaceToAccount = useCallback(async () => {
     if (!ACCOUNT_CLOUD_AUTOSYNC_ENABLED) return;
     if (!user || !hasSupabase || workspaceSyncRef.current.isHydrating) return;
-    const localSnapshot = buildAccountWorkspaceSnapshot(user.displayName || undefined, user.photoURL || undefined);
+    const localSnapshot = buildAccountWorkspaceSnapshot(user.displayName || undefined, user.photoURL || undefined, user.uid);
     const remoteSnapshot = await loadServerWorkspace<AccountWorkspaceSnapshot>(user.uid);
     const remotePayload = remoteSnapshot.payload
       ? {
@@ -9702,7 +9911,7 @@ const AppContent = () => {
     if (serialized !== localSerialized) {
       workspaceSyncRef.current.isHydrating = true;
       try {
-        applyAccountWorkspaceSnapshot(mergedSnapshot, user.displayName || undefined, user.photoURL || undefined);
+        applyAccountWorkspaceSnapshot(mergedSnapshot, user.displayName || undefined, user.photoURL || undefined, user.uid);
         setProfile(loadUiProfile(user.displayName || undefined, user.photoURL || undefined));
         setThemeMode(loadThemeMode());
         setViewportMode(loadViewportMode());
@@ -9732,7 +9941,7 @@ const AppContent = () => {
     const hydrateWorkspace = async () => {
       workspaceSyncRef.current.isHydrating = true;
       try {
-        const localSnapshot = buildAccountWorkspaceSnapshot(user.displayName || undefined, user.photoURL || undefined);
+        const localSnapshot = buildAccountWorkspaceSnapshot(user.displayName || undefined, user.photoURL || undefined, user.uid);
         const localSerialized = JSON.stringify(localSnapshot);
         const remoteSnapshot = await loadServerWorkspace<AccountWorkspaceSnapshot>(user.uid);
         if (cancelled) return;
@@ -9746,7 +9955,7 @@ const AppContent = () => {
           storeWorkspaceRecoverySnapshot(snapshotToSave, 'account-sync-bootstrap');
           workspaceSyncRef.current.lastSerialized = JSON.stringify(snapshotToSave);
           if (recovery && recovery.stories?.length) {
-            applyAccountWorkspaceSnapshot(snapshotToSave, user.displayName || undefined, user.photoURL || undefined);
+            applyAccountWorkspaceSnapshot(snapshotToSave, user.displayName || undefined, user.photoURL || undefined, user.uid);
             setProfile(loadUiProfile(user.displayName || undefined, user.photoURL || undefined));
             setThemeMode(loadThemeMode());
             setViewportMode(loadViewportMode());
@@ -9779,12 +9988,12 @@ const AppContent = () => {
         const mergedSerialized = JSON.stringify(mergedSnapshot);
 
         if (mergedSerialized !== localSerialized) {
-          applyAccountWorkspaceSnapshot(mergedSnapshot, user.displayName || undefined, user.photoURL || undefined);
+          applyAccountWorkspaceSnapshot(mergedSnapshot, user.displayName || undefined, user.photoURL || undefined, user.uid);
           setProfile(loadUiProfile(user.displayName || undefined, user.photoURL || undefined));
           setThemeMode(loadThemeMode());
           setViewportMode(loadViewportMode());
           storeWorkspaceRecoverySnapshot(mergedSnapshot, 'account-sync-hydrate');
-          workspaceSyncRef.current.lastSerialized = JSON.stringify(buildAccountWorkspaceSnapshot(user.displayName || undefined, user.photoURL || undefined));
+          workspaceSyncRef.current.lastSerialized = JSON.stringify(buildAccountWorkspaceSnapshot(user.displayName || undefined, user.photoURL || undefined, user.uid));
           notifyApp({
             tone: 'info',
             message: 'Đã nạp và hợp nhất dữ liệu từ tài khoản đăng nhập.',
@@ -11406,14 +11615,16 @@ const AppContent = () => {
               <div className="rounded-2xl border border-white/10 bg-slate-900/50 p-4 space-y-2">
                 <p className="text-xs uppercase tracking-[0.14em] text-slate-400">Google Drive</p>
                 <p className="text-lg font-bold text-white">
-                  {!driveConfigured ? 'Chưa cấu hình' : driveConnected ? 'Đang kết nối' : 'Chưa kết nối'}
+                  {!user ? 'Cần đăng nhập' : !driveConfigured ? 'Chưa cấu hình' : driveBinding ? 'Đã khóa Drive' : 'Chưa khóa Drive'}
                 </p>
                 <p className="text-sm text-slate-400">
-                  {driveConfigured
-                    ? driveConnected
-                      ? 'Snapshot mới có thể tự đẩy JSON lên appDataFolder của Drive.'
-                      : 'Cần kết nối lại để auto-upload tiếp tục chạy.'
-                    : 'Thiếu VITE_GOOGLE_DRIVE_CLIENT_ID nên chưa thể dùng Drive backup.'}
+                  {!user
+                    ? 'Đăng nhập TruyenForge trước để khóa đúng một Gmail cho tài khoản này.'
+                    : !driveConfigured
+                      ? 'Thiếu VITE_GOOGLE_DRIVE_CLIENT_ID nên chưa thể dùng Drive backup.'
+                      : driveBinding
+                        ? `Tài khoản này đang khóa với ${driveBinding.email}${driveConnected ? ` và hiện đang nối đúng Gmail đó` : ''}.`
+                        : 'Chưa khóa Gmail Drive nào cho tài khoản này.'}
                 </p>
               </div>
               <div className="rounded-2xl border border-white/10 bg-slate-900/50 p-4 space-y-2">
@@ -11493,15 +11704,19 @@ const AppContent = () => {
                     <h4 className="text-lg font-semibold">Google Drive backup</h4>
                   </div>
                   <p className="text-sm text-slate-400">
-                    Tính năng này dùng để giữ một bản JSON ẩn trong Google Drive mỗi lần bạn lưu dữ liệu. Nếu token hết hạn, app sẽ giữ bản cục bộ và chờ bạn kết nối lại.
+                    Mỗi tài khoản TruyenForge chỉ được khóa với đúng một Google Drive. Sau khi khóa xong, app chỉ chấp nhận backup vào đúng Gmail đó để tránh lưu nhầm dữ liệu.
                   </p>
                   <div className="flex flex-wrap gap-3">
                     <button
                       className="tf-btn tf-btn-primary"
                       onClick={handleConnectDrive}
-                      disabled={!driveConfigured || backupBusyAction === 'connect-drive'}
+                      disabled={!user || !driveConfigured || backupBusyAction === 'connect-drive'}
                     >
-                      {backupBusyAction === 'connect-drive' ? 'Đang kết nối Drive...' : driveConnected ? 'Kết nối lại Drive' : 'Kết nối Google Drive'}
+                      {backupBusyAction === 'connect-drive'
+                        ? 'Đang kết nối Drive...'
+                        : driveBinding
+                          ? (driveConnected ? 'Xác thực lại đúng Gmail' : 'Kết nối lại đúng Gmail đã khóa')
+                          : 'Khóa Google Drive cho tài khoản này'}
                     </button>
                     <button
                       className="tf-btn tf-btn-ghost"
@@ -11515,13 +11730,23 @@ const AppContent = () => {
                     <p className="text-sm text-amber-300">
                       Cần thêm `VITE_GOOGLE_DRIVE_CLIENT_ID` vào file môi trường trước khi dùng auto backup lên Drive.
                     </p>
+                  ) : !user ? (
+                    <p className="text-sm text-amber-300">
+                      Hãy đăng nhập TruyenForge trước. Drive backup giờ bị khóa theo từng tài khoản.
+                    </p>
                   ) : (
                     <div className="rounded-2xl border border-white/10 bg-slate-950/50 px-4 py-3 text-sm text-slate-300">
-                      <p className="font-semibold text-white">{driveConnected ? 'Drive đang sẵn sàng nhận backup.' : 'Drive chưa kết nối.'}</p>
+                      <p className="font-semibold text-white">
+                        {driveBinding
+                          ? `Google Drive đã khóa: ${driveBinding.email}`
+                          : 'Chưa khóa Google Drive cho tài khoản này.'}
+                      </p>
                       <p className="mt-1">
-                        {driveConnected
-                          ? 'Từ giờ snapshot mới sẽ được đẩy JSON sau mỗi lần lưu dữ liệu, miễn là bạn đang bật auto-upload.'
-                          : 'Hãy bấm kết nối một lần để app lấy quyền ghi vào appDataFolder của Google Drive.'}
+                        {driveBinding
+                          ? driveConnected
+                            ? `Drive đang kết nối bằng ${driveAuth?.account.email || driveBinding.email}. Snapshot mới sẽ chỉ được đẩy lên đúng Gmail đã khóa này.`
+                            : `Phiên Drive hiện đã ngắt. Khi kết nối lại, bạn bắt buộc phải chọn đúng ${driveBinding.email}.`
+                          : 'Bấm kết nối một lần để khóa vĩnh viễn một Gmail cho tài khoản TruyenForge hiện tại, rồi mới bật auto backup lên Drive.'}
                       </p>
                     </div>
                   )}
@@ -11687,6 +11912,7 @@ const AppContent = () => {
           setDriveAuth(loadStoredDriveAuth());
           setShowBackupCenterModal(true);
           void refreshBackupHistory();
+          void loadBoundDriveBinding();
         }}
       />
 

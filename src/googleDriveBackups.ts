@@ -1,8 +1,9 @@
 import type { StorageBackupPayload } from './storage';
 
-const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
+const GOOGLE_DRIVE_SCOPE = 'openid email profile https://www.googleapis.com/auth/drive.appdata';
 const GOOGLE_IDENTITY_SCRIPT = 'https://accounts.google.com/gsi/client';
 const DRIVE_AUTH_STORAGE_KEY = 'truyenforge:drive-auth-v1';
+const GOOGLE_USERINFO_ENDPOINT = 'https://openidconnect.googleapis.com/v1/userinfo';
 
 declare global {
   interface Window {
@@ -26,6 +27,15 @@ declare global {
 export interface GoogleDriveAuthState {
   accessToken: string;
   expiresAt: string;
+  account: GoogleDriveAccountProfile;
+}
+
+export interface GoogleDriveAccountProfile {
+  sub: string;
+  email: string;
+  emailVerified: boolean;
+  name: string;
+  picture: string;
 }
 
 export interface GoogleDriveUploadResult {
@@ -48,10 +58,17 @@ export function loadStoredDriveAuth(): GoogleDriveAuthState | null {
     const raw = localStorage.getItem(DRIVE_AUTH_STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<GoogleDriveAuthState>;
-    if (!parsed.accessToken || !parsed.expiresAt) return null;
+    if (!parsed.accessToken || !parsed.expiresAt || !parsed.account?.email || !parsed.account?.sub) return null;
     return {
       accessToken: String(parsed.accessToken),
       expiresAt: String(parsed.expiresAt),
+      account: {
+        sub: String(parsed.account.sub),
+        email: String(parsed.account.email),
+        emailVerified: Boolean(parsed.account.emailVerified),
+        name: String(parsed.account.name || ''),
+        picture: String(parsed.account.picture || ''),
+      },
     };
   } catch {
     return null;
@@ -98,6 +115,34 @@ async function loadGoogleIdentity(): Promise<NonNullable<Window['google']>> {
   return window.google;
 }
 
+async function fetchGoogleDriveAccountProfile(accessToken: string): Promise<GoogleDriveAccountProfile> {
+  const response = await fetch(GOOGLE_USERINFO_ENDPOINT, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || 'Không lấy được thông tin tài khoản Google Drive.');
+  }
+
+  const payload = await response.json() as Record<string, unknown>;
+  const email = String(payload.email || '').trim();
+  const sub = String(payload.sub || '').trim();
+  if (!email || !sub) {
+    throw new Error('Google không trả về email/sub để khóa tài khoản Drive.');
+  }
+
+  return {
+    sub,
+    email,
+    emailVerified: Boolean(payload.email_verified),
+    name: String(payload.name || ''),
+    picture: String(payload.picture || ''),
+  };
+}
+
 async function requestAccessToken(prompt: '' | 'consent'): Promise<GoogleDriveAuthState> {
   const clientId = getClientId();
   if (!clientId) {
@@ -113,13 +158,21 @@ async function requestAccessToken(prompt: '' | 'consent'): Promise<GoogleDriveAu
           reject(new Error(response.error_description || response.error || 'Không lấy được access token Google Drive.'));
           return;
         }
+        const accessToken = response.access_token;
         const expiresIn = Number(response.expires_in || 3600);
-        const state = {
-          accessToken: response.access_token,
-          expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
-        };
-        storeDriveAuth(state);
-        resolve(state);
+        void fetchGoogleDriveAccountProfile(accessToken)
+          .then((account) => {
+            const state = {
+              accessToken,
+              expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
+              account,
+            };
+            storeDriveAuth(state);
+            resolve(state);
+          })
+          .catch((error) => {
+            reject(error instanceof Error ? error : new Error('Không đọc được thông tin tài khoản Google.'));
+          });
       },
     });
     tokenClient.requestAccessToken({ prompt });
