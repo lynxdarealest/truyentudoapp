@@ -296,6 +296,7 @@ const UI_VIEWPORT_MODE_KEY = 'ui_viewport_mode_v1';
 const READER_PREFS_KEY = 'reader_prefs_v1';
 const STORIES_UPDATED_EVENT = 'stories:updated';
 const WORKSPACE_RECOVERY_KEY = 'truyenforge:workspace-recovery-v1';
+const ACCOUNT_CLOUD_AUTOSYNC_ENABLED = false;
 
 type ThemeMode = 'light' | 'dark';
 type ViewportMode = 'desktop' | 'mobile';
@@ -8750,6 +8751,8 @@ const AppContent = () => {
     isHydrating: false,
     lastSerialized: '',
   });
+  const syncDisabledNoticeShownRef = useRef(false);
+  const localBackupRestoreAttemptedRef = useRef(false);
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -9082,7 +9085,24 @@ const AppContent = () => {
     return () => window.removeEventListener(STORIES_UPDATED_EVENT, handler);
   }, []);
 
+  useEffect(() => {
+    if (localBackupRestoreAttemptedRef.current) return;
+    localBackupRestoreAttemptedRef.current = true;
+    const currentStories = storage.getStories();
+    if (currentStories.length > 0) return;
+    const latestBackup = storage.getLatestStoriesBackup();
+    if (!latestBackup.length) return;
+    storage.saveStories(latestBackup);
+    notifyApp({
+      tone: 'warn',
+      message: 'Đã tự khôi phục truyện từ backup cục bộ gần nhất trên máy này.',
+      groupKey: 'local-story-backup-restore',
+      timeoutMs: 5600,
+    });
+  }, []);
+
   const syncWorkspaceToAccount = useCallback(async () => {
+    if (!ACCOUNT_CLOUD_AUTOSYNC_ENABLED) return;
     if (!user || !hasSupabase || workspaceSyncRef.current.isHydrating) return;
     const localSnapshot = buildAccountWorkspaceSnapshot(user.displayName || undefined, user.photoURL || undefined);
     const remoteSnapshot = await loadServerWorkspace<AccountWorkspaceSnapshot>(user.uid);
@@ -9140,7 +9160,7 @@ const AppContent = () => {
   }, [user, hasSupabase]);
 
   useEffect(() => {
-    if (!user || !hasSupabase) {
+    if (!user || !hasSupabase || !ACCOUNT_CLOUD_AUTOSYNC_ENABLED) {
       workspaceSyncRef.current.lastSerialized = '';
       workspaceSyncRef.current.isHydrating = false;
       return;
@@ -9234,7 +9254,7 @@ const AppContent = () => {
   }, [user, hasSupabase]);
 
   useEffect(() => {
-    if (typeof window === 'undefined' || !user || !hasSupabase) return;
+    if (typeof window === 'undefined' || !user || !hasSupabase || !ACCOUNT_CLOUD_AUTOSYNC_ENABLED) return;
     let syncTimer: number | null = null;
     const handler = () => {
       if (workspaceSyncRef.current.isHydrating) return;
@@ -9258,6 +9278,18 @@ const AppContent = () => {
       window.removeEventListener(LOCAL_WORKSPACE_CHANGED_EVENT, handler as EventListener);
     };
   }, [syncWorkspaceToAccount, user, hasSupabase]);
+
+  useEffect(() => {
+    if (!user || !hasSupabase || ACCOUNT_CLOUD_AUTOSYNC_ENABLED || syncDisabledNoticeShownRef.current) return;
+    syncDisabledNoticeShownRef.current = true;
+    notifyApp({
+      tone: 'warn',
+      message: 'Đồng bộ tài khoản đang được tắt tạm thời để tránh mất dữ liệu. Hiện tại app chỉ lưu cục bộ trên máy này.',
+      detail: 'Mình ưu tiên an toàn dữ liệu trước, sẽ bật lại khi luồng sync được làm lại chắc chắn hơn.',
+      groupKey: 'account-sync-disabled',
+      timeoutMs: 6200,
+    });
+  }, [user, hasSupabase]);
 
   const readImportedStoryFile = async (file: File): Promise<string> => {
     if (file.name.endsWith('.pdf')) return parsePDF(file);

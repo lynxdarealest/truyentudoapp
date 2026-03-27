@@ -3,6 +3,8 @@ import { loadPromptLibraryState, savePromptLibraryState } from './promptLibraryS
 import { emitLocalWorkspaceChanged } from './localWorkspaceSync';
 
 const SAFE_IMPORT_BACKUP_KEY = 'safe_import_backup_v1';
+const STORIES_BACKUP_HISTORY_KEY = 'stories_backup_history_v1';
+const STORIES_BACKUP_LIMIT = 12;
 
 const normalizeDate = (value: any) => {
   if (!value) return new Date().toISOString();
@@ -71,6 +73,31 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+function backupStoriesSnapshot(stories: any[]): void {
+  try {
+    const normalizedStories = Array.isArray(stories) ? stories.map(normalizeStory) : [];
+    const nextSerialized = JSON.stringify(normalizedStories);
+    const existingRaw = localStorage.getItem(STORIES_BACKUP_HISTORY_KEY);
+    const existing = existingRaw ? JSON.parse(existingRaw) : [];
+    const history = Array.isArray(existing) ? existing : [];
+    const lastEntry = history[history.length - 1];
+    if (lastEntry?.serialized === nextSerialized) return;
+
+    const nextHistory = [
+      ...history,
+      {
+        savedAt: new Date().toISOString(),
+        stories: normalizedStories,
+        serialized: nextSerialized,
+      },
+    ].slice(-STORIES_BACKUP_LIMIT);
+
+    localStorage.setItem(STORIES_BACKUP_HISTORY_KEY, JSON.stringify(nextHistory));
+  } catch {
+    // Keep primary save path alive even if backup history fails.
+  }
+}
+
 export interface StorageExportReport {
   filename: string;
   excludedSecrets: string[];
@@ -87,8 +114,21 @@ export const storage = {
     const parsed = data ? JSON.parse(data) : [];
     return Array.isArray(parsed) ? parsed.map(normalizeStory) : [];
   },
+  getLatestStoriesBackup: () => {
+    try {
+      const raw = localStorage.getItem(STORIES_BACKUP_HISTORY_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      const history = Array.isArray(parsed) ? parsed : [];
+      const latest = history[history.length - 1];
+      return Array.isArray(latest?.stories) ? latest.stories.map(normalizeStory) : [];
+    } catch {
+      return [];
+    }
+  },
   saveStories: (stories: any[]) => {
-    localStorage.setItem('stories', JSON.stringify(stories));
+    const normalizedStories = Array.isArray(stories) ? stories.map(normalizeStory) : [];
+    localStorage.setItem('stories', JSON.stringify(normalizedStories));
+    backupStoriesSnapshot(normalizedStories);
     emitLocalWorkspaceChanged('stories');
   },
   getCharacters: () => safeParseArray(localStorage.getItem('characters')),
