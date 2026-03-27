@@ -5991,6 +5991,7 @@ const StoryDetail = ({
   onAddChapter,
   onUpdateStory,
   onExportStory,
+  onOpenReaderPrefs,
 }: { 
   story: Story, 
   onBack: () => void, 
@@ -5998,6 +5999,7 @@ const StoryDetail = ({
   onAddChapter: () => void,
   onUpdateStory: (story: Story) => void,
   onExportStory: (story: Story) => void,
+  onOpenReaderPrefs: () => void,
 }) => {
   const [selectedChapter, setSelectedChapter] = useState<Chapter | null>(null);
   const [isEditingChapter, setIsEditingChapter] = useState(false);
@@ -6106,7 +6108,16 @@ const StoryDetail = ({
         exit={{ opacity: 0, y: -20 }}
         className="max-w-4xl mx-auto pt-24 pb-12 px-6"
       >
-          <div className="flex items-center justify-between mb-8">
+        <button
+          onClick={onOpenReaderPrefs}
+          className="fixed bottom-5 right-5 z-[220] inline-flex items-center gap-2 rounded-2xl border border-indigo-200 bg-white/92 px-4 py-3 text-sm font-bold text-slate-700 shadow-[0_16px_40px_rgba(99,102,241,0.18)] backdrop-blur transition-all hover:-translate-y-0.5 hover:shadow-[0_20px_48px_rgba(99,102,241,0.24)]"
+          title="Cài đặt đọc"
+        >
+          <Settings className="h-4 w-4" />
+          <span>Cài đặt đọc</span>
+        </button>
+
+        <div className="flex items-center justify-between mb-8">
           <button 
             onClick={() => setSelectedChapter(null)}
             className="flex items-center gap-2 text-slate-500 hover:text-slate-900 transition-colors font-bold"
@@ -6139,14 +6150,15 @@ const StoryDetail = ({
               <h1 className="chapter-title text-4xl font-serif font-bold text-slate-900 mb-10">{getDisplayChapterTitle(selectedChapter)}</h1>
             
             <div
-              className="markdown-body text-lg leading-relaxed text-slate-700"
-              style={{
-                fontSize: 'var(--tf-reader-font-size)',
-                lineHeight: 'var(--tf-reader-line-height)',
-                fontFamily: 'var(--tf-reader-font-family)',
-                color: 'var(--tf-reader-text)',
-              }}
-            >
+            className="markdown-body text-lg leading-relaxed text-slate-700"
+            style={{
+              fontSize: 'var(--tf-reader-font-size)',
+              lineHeight: 'var(--tf-reader-line-height)',
+              fontFamily: 'var(--tf-reader-font-family)',
+              color: 'var(--tf-reader-text)',
+              backgroundColor: 'var(--tf-reader-bg)',
+            }}
+          >
               <ReactMarkdown>{formatContent(selectedChapter.content)}</ReactMarkdown>
             </div>
           </div>
@@ -10776,7 +10788,6 @@ const AppContent = () => {
           setEditingStory(null);
           setIsCreating(true);
         }}
-        onOpenReaderPrefs={() => setShowReaderPrefsModal(true)}
         themeMode={themeMode}
         onToggleTheme={handleToggleTheme}
         viewportMode={viewportMode}
@@ -10805,6 +10816,7 @@ const AppContent = () => {
             onAddChapter={() => setShowAIGen(true)}
             onUpdateStory={(updated) => setSelectedStory(updated)}
             onExportStory={handleOpenExportStory}
+            onOpenReaderPrefs={() => setShowReaderPrefsModal(true)}
           />
         ) : view === 'characters' ? (
           <CharacterManager key="characters" onBack={() => setView('stories')} onRequireAuth={() => setShowAuthModal(true)} />
@@ -10924,14 +10936,6 @@ const AppContent = () => {
       />
 
       <AppToastStack toasts={appToasts} onDismiss={dismissToast} />
-
-      <button
-        onClick={() => setShowReaderPrefsModal(true)}
-        className="fixed right-4 top-24 z-[230] inline-flex items-center gap-2 rounded-2xl border border-indigo-100 bg-white/90 px-4 py-2 text-sm font-bold text-slate-700 shadow-lg hover:-translate-y-0.5 hover:shadow-xl transition-all"
-        title="Cài đặt giao diện đọc"
-      >
-        <Settings className="w-4 h-4" /> Cài đặt đọc
-      </button>
 
       {showReaderPrefsModal ? (
         <div className="fixed inset-0 z-[240] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4">

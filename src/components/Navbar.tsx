@@ -25,7 +25,6 @@ interface NavbarProps {
   onCreateStory: () => void;
   onOpenPromptManager: () => void;
   onOpenReleaseHistory: () => void;
-  onOpenReaderPrefs: () => void;
   onShowAuth: () => void;
   onLogout: () => void;
   onOpenProfile: () => void;
@@ -46,7 +45,6 @@ export function Navbar({
   onCreateStory,
   onOpenPromptManager,
   onOpenReleaseHistory,
-  onOpenReaderPrefs,
   onShowAuth,
   onLogout,
   onOpenProfile,
@@ -102,9 +100,8 @@ export function Navbar({
       { key: 'prompt', label: 'Kho prompt', icon: Library, action: onOpenPromptManager, tone: 'neutral' as const },
       { key: 'release', label: 'Cập nhật', icon: History, action: onOpenReleaseHistory, tone: 'neutral' as const },
       { key: 'theme', label: isDark ? 'Nền sáng' : 'Nền tối', icon: isDark ? Sun : Moon, action: onToggleTheme, tone: 'neutral' as const },
-      { key: 'reader', label: 'Cài đặt đọc', icon: Settings, action: onOpenReaderPrefs, tone: 'neutral' as const },
     ],
-    [isDark, isMobile, onCreateStory, onHome, onOpenPromptManager, onOpenReaderPrefs, onOpenReleaseHistory, onToggleTheme, setView],
+    [isDark, isMobile, onCreateStory, onHome, onOpenPromptManager, onOpenReleaseHistory, onToggleTheme, setView],
   );
 
   const surfaceClass = isDark
@@ -449,13 +446,6 @@ export function Navbar({
             title={themeMode === 'dark' ? 'Đổi sang giao diện sáng' : 'Đổi sang giao diện tối'}
           >
             {themeMode === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-          </button>
-          <button
-            onClick={onOpenReaderPrefs}
-            className={cn('hidden lg:inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-sm font-bold transition-all duration-300', utilityButtonClass)}
-            title="Cài đặt đọc"
-          >
-            <Settings className="w-4 h-4" /> <span className="hidden xl:inline">Cài đặt đọc</span>
           </button>
           <div className={cn('app-navbar-divider h-8 w-[1px] mx-1 md:mx-2', dividerClass)} />
           <div className="flex items-center gap-3">
