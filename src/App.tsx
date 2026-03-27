@@ -1657,6 +1657,7 @@ function analyzeCharacterRosterLocally(input: { title: string; introduction: str
     .join('\n');
   if (!corpus.trim()) return [];
 
+  // Ưu tiên nhận diện tên riêng tiếng Việt/Trung viết hoa đầu mỗi từ, kèm bộ lọc từ khóa thường gặp.
   const candidatePattern = /\b([A-ZÀ-ỴĐ][a-zà-ỹđ]+(?:\s+[A-ZÀ-ỴĐ][a-zà-ỹđ]+){0,3})\b/g;
   const blockedTerms = new Set([
     'Chương',
@@ -1666,6 +1667,14 @@ function analyzeCharacterRosterLocally(input: { title: string; introduction: str
     'Bìa Truyện',
     'Tác Giả',
     'Truyện',
+    'Đấu La',
+    'Đường',
+    'La',
+    'Đại',
+    'Lục',
+    'Đấu',
+    'Lạc',
+    'Cốt Truyện',
   ]);
 
   const candidates = new Map<string, { count: number; firstIndex: number }>();
@@ -1692,7 +1701,7 @@ function analyzeCharacterRosterLocally(input: { title: string; introduction: str
 
   const takeContext = (name: string) => {
     const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const regex = new RegExp(`.{0,90}${escaped}.{0,160}`, 'i');
+    const regex = new RegExp(`.{0,160}${escaped}.{0,200}`, 'i');
     return corpus.match(regex)?.[0] || '';
   };
 
@@ -1702,16 +1711,20 @@ function analyzeCharacterRosterLocally(input: { title: string; introduction: str
     if (/sư phụ|sư tôn|thầy|đạo sư/.test(text)) return 'Sư phụ / người dẫn dắt';
     if (/bằng hữu|đồng đội|tri kỷ|bạn thân/.test(text)) return 'Bạn đồng hành';
     if (/muội|tỷ|chị|em gái|công chúa|thánh nữ/.test(text)) return 'Nhân vật nữ quan trọng';
+    if (/nữ chính|nữ chủ|thiếu nữ|thánh nữ/.test(text)) return 'Nữ chính / nữ chủ';
+    if (/nam chính|thiếu niên|thiếu hiệp|công tử/.test(text)) return 'Nam chính / trung tâm';
     if (rank === 0) return 'Nhân vật trung tâm';
     if (rank === 1) return 'Nhân vật nòng cốt';
     return 'Nhân vật thường xuất hiện';
   };
 
   const inferAge = (context: string): string => {
-    const ageMatch = context.match(/(\d{1,3})\s*tuổi/i);
+    const normalized = context.toLowerCase();
+    const ageMatch = normalized.match(/(\d{1,3})\s*(?:tuổi|age|years? old)/i);
     if (ageMatch?.[1]) return `${ageMatch[1]} tuổi`;
-    if (/thiếu niên|thiếu nữ/.test(context.toLowerCase())) return 'Thiếu niên';
-    if (/trung niên/.test(context.toLowerCase())) return 'Trung niên';
+    if (/thiếu niên|thiếu nữ|teen|trẻ/.test(normalized)) return 'Khoảng 16-20 tuổi';
+    if (/trung niên/.test(normalized)) return 'Khoảng 30-45 tuổi';
+    if (/lão|già|ông|bà|tiên sinh|lão giả/.test(normalized)) return 'Trên 45 tuổi';
     return '';
   };
 
