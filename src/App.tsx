@@ -58,6 +58,7 @@ import { APP_NOTICE_EVENT, notifyApp, type AppNoticePayload, type AppNoticeTone 
 import { loadPromptLibraryState, savePromptLibraryState, type PromptLibraryState } from './promptLibraryStore';
 import { LOCAL_WORKSPACE_CHANGED_EVENT, emitLocalWorkspaceChanged, loadLocalWorkspaceMeta, markLocalWorkspaceHydrated } from './localWorkspaceSync';
 import { loadServerWorkspace, saveQaReport, saveServerWorkspace, SUPABASE_STORAGE_TABLES } from './supabaseWorkspace';
+import { IMAGE_AI_PROVIDER_META, getDefaultImageAiModel, type ImageAiProvider } from './imageAiProviders';
 
 import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { handleRelayMessage, relayGenerateContent, setRelaySender, notifyRelayDisconnected } from './relayBridge';
@@ -276,10 +277,12 @@ interface ApiRuntimeConfig {
 
 interface ImageApiConfig {
   enabled: boolean;
-  apiKey: string;
-  provider: 'raphael';
-  model: string;
+  provider: ImageAiProvider;
   size: string;
+  providers: Record<ImageAiProvider, {
+    apiKey: string;
+    model: string;
+  }>;
 }
 
 const API_RUNTIME_CONFIG_KEY = 'api_runtime_config_v1';
@@ -623,27 +626,75 @@ function saveApiRuntimeConfig(config: ApiRuntimeConfig): void {
   localStorage.setItem(API_RUNTIME_CONFIG_KEY, JSON.stringify(config));
 }
 
+function getDefaultImageProviderApiKey(provider: ImageAiProvider): string {
+  if (provider === 'evolink') return readRaphaelEnv('VITE_RAPHAEL_API_KEY');
+  if (provider === 'openai') return ((import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_OPENAI_API_KEY || '').trim();
+  return '';
+}
+
+function createDefaultImageProvidersConfig(): ImageApiConfig['providers'] {
+  return {
+    evolink: {
+      apiKey: getDefaultImageProviderApiKey('evolink'),
+      model: readRaphaelEnv('VITE_RAPHAEL_MODEL') || getDefaultImageAiModel('evolink'),
+    },
+    openai: {
+      apiKey: getDefaultImageProviderApiKey('openai'),
+      model: getDefaultImageAiModel('openai'),
+    },
+    fal: {
+      apiKey: '',
+      model: getDefaultImageAiModel('fal'),
+    },
+    bfl: {
+      apiKey: '',
+      model: getDefaultImageAiModel('bfl'),
+    },
+  };
+}
+
 function getImageApiConfig(): ImageApiConfig {
+  const defaults = createDefaultImageProvidersConfig();
   try {
     const raw = localStorage.getItem(IMAGE_API_CONFIG_KEY);
     const parsed = raw ? (JSON.parse(raw) as Partial<ImageApiConfig>) : {};
-    const envKey = readRaphaelEnv('VITE_RAPHAEL_API_KEY');
-    const storedKey = String(parsed.apiKey || '').trim();
+    const provider = parsed.provider === 'openai' || parsed.provider === 'fal' || parsed.provider === 'bfl' ? parsed.provider : 'evolink';
+    const rawProviders = parsed.providers && typeof parsed.providers === 'object'
+      ? parsed.providers as Partial<Record<ImageAiProvider, { apiKey?: string; model?: string }>>
+      : {};
+    const legacyKey = String((parsed as { apiKey?: string }).apiKey || '').trim();
+    const legacyModel = String((parsed as { model?: string }).model || '').trim();
+    const providers = {
+      evolink: {
+        apiKey: String(rawProviders.evolink?.apiKey || legacyKey || defaults.evolink.apiKey).trim(),
+        model: String(rawProviders.evolink?.model || legacyModel || defaults.evolink.model).trim() || getDefaultImageAiModel('evolink'),
+      },
+      openai: {
+        apiKey: String(rawProviders.openai?.apiKey || defaults.openai.apiKey).trim(),
+        model: String(rawProviders.openai?.model || defaults.openai.model).trim() || getDefaultImageAiModel('openai'),
+      },
+      fal: {
+        apiKey: String(rawProviders.fal?.apiKey || defaults.fal.apiKey).trim(),
+        model: String(rawProviders.fal?.model || defaults.fal.model).trim() || getDefaultImageAiModel('fal'),
+      },
+      bfl: {
+        apiKey: String(rawProviders.bfl?.apiKey || defaults.bfl.apiKey).trim(),
+        model: String(rawProviders.bfl?.model || defaults.bfl.model).trim() || getDefaultImageAiModel('bfl'),
+      },
+    };
+    const hasAnyKey = Object.values(providers).some((entry) => entry.apiKey);
     return {
-      enabled: typeof parsed.enabled === 'boolean' ? parsed.enabled : Boolean(storedKey || envKey),
-      apiKey: storedKey || envKey,
-      provider: 'raphael',
-      model: String(parsed.model || '').trim() || readRaphaelEnv('VITE_RAPHAEL_MODEL') || DEFAULT_RAPHAEL_MODEL,
+      enabled: typeof parsed.enabled === 'boolean' ? parsed.enabled : hasAnyKey,
+      provider,
       size: String(parsed.size || '').trim() || readRaphaelEnv('VITE_RAPHAEL_SIZE') || DEFAULT_RAPHAEL_SIZE,
+      providers,
     };
   } catch {
-    const envKey = readRaphaelEnv('VITE_RAPHAEL_API_KEY');
     return {
-      enabled: Boolean(envKey),
-      apiKey: envKey,
-      provider: 'raphael',
-      model: readRaphaelEnv('VITE_RAPHAEL_MODEL') || DEFAULT_RAPHAEL_MODEL,
+      enabled: Object.values(defaults).some((entry) => entry.apiKey),
+      provider: 'evolink',
       size: readRaphaelEnv('VITE_RAPHAEL_SIZE') || DEFAULT_RAPHAEL_SIZE,
+      providers: defaults,
     };
   }
 }
@@ -1534,12 +1585,12 @@ function readRaphaelEnv(key: 'VITE_RAPHAEL_API_KEY' | 'VITE_RAPHAEL_MODEL' | 'VI
 
 function getRaphaelApiKey(): string {
   const config = getImageApiConfig();
-  if (!config.enabled) return '';
-  return config.apiKey || readRaphaelEnv('VITE_RAPHAEL_API_KEY');
+  if (!config.enabled || config.provider !== 'evolink') return '';
+  return config.providers.evolink.apiKey || getDefaultImageProviderApiKey('evolink');
 }
 
 function getRaphaelModel(): string {
-  return getImageApiConfig().model || readRaphaelEnv('VITE_RAPHAEL_MODEL') || DEFAULT_RAPHAEL_MODEL;
+  return getImageApiConfig().providers.evolink.model || readRaphaelEnv('VITE_RAPHAEL_MODEL') || DEFAULT_RAPHAEL_MODEL;
 }
 
 function getRaphaelSize(): string {
@@ -3537,7 +3588,7 @@ const ToolsManager = ({
     setEnablePromptCache(runtime.enableCache);
     const imageApi = getImageApiConfig();
     setImageAiEnabled(imageApi.enabled);
-    setImageAiApiKey(imageApi.apiKey);
+    setImageAiApiKey(imageApi.providers[imageApi.provider]?.apiKey || '');
     const token = (localStorage.getItem(RELAY_TOKEN_CACHE_KEY) || runtime.relayToken || '').trim();
     setRelayMaskedToken(token ? maskSensitive(token) : 'Chưa nhận token');
     setAiUsageStats(readMainAiUsage());
@@ -3672,16 +3723,24 @@ const ToolsManager = ({
   };
 
   const handleSaveImageAiConfig = () => {
+    const currentConfig = getImageApiConfig();
+    const activeProvider = currentConfig.provider;
     const nextConfig: ImageApiConfig = {
-      ...getImageApiConfig(),
+      ...currentConfig,
       enabled: imageAiEnabled,
-      apiKey: imageAiApiKey.trim(),
-      provider: 'raphael',
+      provider: activeProvider,
+      providers: {
+        ...currentConfig.providers,
+        [activeProvider]: {
+          ...currentConfig.providers[activeProvider],
+          apiKey: imageAiApiKey.trim(),
+        },
+      },
     };
     saveImageApiConfig(nextConfig);
     setImageAiEnabled(nextConfig.enabled);
-    setImageAiApiKey(nextConfig.apiKey);
-    if (nextConfig.enabled && nextConfig.apiKey) {
+    setImageAiApiKey(nextConfig.providers[activeProvider]?.apiKey || '');
+    if (nextConfig.enabled && nextConfig.providers[activeProvider]?.apiKey) {
       notifyApp({
         tone: 'success',
         message: 'AI Sinh ảnh đã sẵn sàng. Từ giờ nút tạo bìa sẽ ưu tiên gọi Evolink để sinh ảnh.',
