@@ -3,8 +3,6 @@ import { motion } from 'motion/react';
 import { BookOpen, Users, Settings, Sun, Moon, Menu, ChevronLeft, Zap, Plus, Library, History } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { storage } from '../storage';
-import { notifyApp } from '../notifications';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -25,6 +23,7 @@ interface NavbarProps {
   onCreateStory: () => void;
   onOpenPromptManager: () => void;
   onOpenReleaseHistory: () => void;
+  onOpenBackupCenter: () => void;
   onShowAuth: () => void;
   onLogout: () => void;
   onOpenProfile: () => void;
@@ -45,6 +44,7 @@ export function Navbar({
   onCreateStory,
   onOpenPromptManager,
   onOpenReleaseHistory,
+  onOpenBackupCenter,
   onShowAuth,
   onLogout,
   onOpenProfile,
@@ -171,52 +171,6 @@ export function Navbar({
     };
   }, []);
 
-  function handleExport() {
-    const result = storage.exportData();
-    notifyApp({
-      tone: 'success',
-      message: `Đã xuất backup ${result.filename}. Secret đã được loại khỏi file.`,
-      timeoutMs: 5200,
-    });
-  }
-
-  function handleImport() {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.json';
-    input.onchange = (e: Event) => {
-      const target = e.target as HTMLInputElement;
-      const file = target.files?.[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        try {
-          const data = JSON.parse((event.target?.result as string) || '{}');
-          const report = storage.importData(data);
-          notifyApp({
-            tone: 'success',
-            message: `Đã khôi phục ${report.restoredSections.join(', ')}${report.skippedSections.length ? `. Bỏ qua ${report.skippedSections.join(', ')} vì chứa secret.` : ''}`,
-            timeoutMs: 5200,
-          });
-          window.setTimeout(() => window.location.reload(), 600);
-        } catch {
-          notifyApp({ tone: 'error', message: 'Lỗi khi đọc hoặc khôi phục file backup.' });
-        }
-      };
-      reader.readAsText(file);
-    };
-    input.click();
-  }
-
-  function handleBackupJson() {
-    const shouldExport = window.confirm('Nhấn OK để xuất backup JSON, hoặc Cancel để nhập backup JSON.');
-    if (shouldExport) {
-      handleExport();
-      return;
-    }
-    handleImport();
-  }
-
   return (
     <>
       {isMobile && (
@@ -250,11 +204,11 @@ export function Navbar({
                 <button
                   onClick={() => {
                     setShowProfileMenu(false);
-                    handleBackupJson();
+                    onOpenBackupCenter();
                   }}
                   className={cn('w-full text-left px-3 py-2 rounded-lg text-sm font-semibold transition-colors', isDark ? 'hover:bg-white/10' : 'hover:bg-slate-100')}
                 >
-                  Backup JSON
+                  Sao lưu & khôi phục
                 </button>
                 <button
                   onClick={() => {
@@ -481,11 +435,11 @@ export function Navbar({
                   <button
                     onClick={() => {
                       setShowProfileMenu(false);
-                      handleBackupJson();
+                      onOpenBackupCenter();
                     }}
                     className={cn('w-full text-left px-3 py-2 rounded-lg text-sm font-semibold transition-colors', isDark ? 'hover:bg-white/10' : 'hover:bg-slate-100')}
                   >
-                    Backup JSON
+                    Sao lưu & khôi phục
                   </button>
                   <button
                     onClick={() => {

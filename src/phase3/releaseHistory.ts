@@ -12,9 +12,12 @@ export const CURRENT_WRITER_VERSION = APP_VERSION_LABEL;
 export const WRITER_RELEASE_NOTES: ReleaseNote[] = [
   {
     version: APP_VERSION_LABEL,
-    dateLabel: '2026-03-27',
+    dateLabel: '2026-03-28',
     title: 'Tăng AI trust, quan sát tiến trình và độ rõ ràng của workflow',
     items: [
+      'Thêm Trung tâm sao lưu mới: có nút Sao lưu ngay, lịch sử backup ngay trong app, khôi phục theo từng mốc thời gian và cảnh báo đỏ khi để quá lâu chưa backup.',
+      'Chuyển hướng từ autosync rủi ro sang manual sync: dữ liệu tài khoản giờ chỉ đồng bộ khi người dùng tự bấm tay, giúp tránh ghi đè âm thầm trong nền.',
+      'Dựng lớp backup cục bộ nhiều mốc bằng IndexedDB và cho phép đẩy file JSON lên Google Drive sau mỗi lần lưu dữ liệu khi người dùng đã kết nối Drive.',
       'Chuyển lưu trữ workspace tài khoản từ Firestore/Google sang Supabase: truyện, nhân vật, AI Rules, từ điển dịch, văn mẫu và các cấu hình cục bộ giờ đồng bộ về một server thống nhất hơn.',
       'Bổ sung schema Supabase mẫu cho user_workspaces và qa_reports để việc triển khai backend lưu trữ mới rõ ràng, dễ kiểm tra và ít phụ thuộc hơn vào cấu hình cũ của Firebase.',
       'Nâng overlay AI để hiển thị rõ giai đoạn xử lý, tiến độ thực tế và phần việc đang chạy thay vì chỉ có spinner và số giây.',

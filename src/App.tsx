@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth, AuthProvider } from './AuthContext';
 import { supabase, hasSupabase } from './supabaseClient';
-import { storage } from './storage';
+import { storage, type StorageBackupPayload, type StorageImportReport } from './storage';
 import { 
   Plus, 
   LogOut, 
@@ -59,6 +59,8 @@ import { loadPromptLibraryState, savePromptLibraryState, type PromptLibraryState
 import { LOCAL_WORKSPACE_CHANGED_EVENT, emitLocalWorkspaceChanged, loadLocalWorkspaceMeta, markLocalWorkspaceHydrated, type LocalWorkspaceSection } from './localWorkspaceSync';
 import { loadServerWorkspace, saveQaReport, saveServerWorkspace, SUPABASE_STORAGE_TABLES } from './supabaseWorkspace';
 import { IMAGE_AI_PROVIDER_META, getDefaultImageAiModel, type ImageAiProvider } from './imageAiProviders';
+import { createBackupSnapshot, getBackupSnapshot, listBackupSnapshots, updateBackupSnapshotDriveMeta, type BackupReason, type BackupSnapshot } from './backupVault';
+import { buildDriveBackupFilename, connectGoogleDriveInteractive, disconnectGoogleDrive, ensureGoogleDriveAccessToken, hasGoogleDriveBackupConfig, hasUsableDriveToken, loadStoredDriveAuth, uploadBackupSnapshotToDrive, type GoogleDriveAuthState } from './googleDriveBackups';
 
 import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { handleRelayMessage, relayGenerateContent, setRelaySender, notifyRelayDisconnected } from './relayBridge';
@@ -314,7 +316,102 @@ interface ReaderPrefs {
   textColor: string;
 }
 
+interface BackupSettings {
+  autoSnapshotEnabled: boolean;
+  autoUploadToDrive: boolean;
+  staleAfterHours: number;
+  lastSuccessfulBackupAt: string;
+  lastManualSyncAt: string;
+}
+
 const DEFAULT_PROFILE_AVATAR = 'https://api.dicebear.com/9.x/initials/svg?seed=User';
+const BACKUP_SETTINGS_KEY = 'truyenforge:backup-settings-v1';
+const DEFAULT_BACKUP_SETTINGS: BackupSettings = {
+  autoSnapshotEnabled: true,
+  autoUploadToDrive: true,
+  staleAfterHours: 6,
+  lastSuccessfulBackupAt: '',
+  lastManualSyncAt: '',
+};
+
+function loadBackupSettings(): BackupSettings {
+  if (typeof window === 'undefined') return DEFAULT_BACKUP_SETTINGS;
+  try {
+    const raw = localStorage.getItem(BACKUP_SETTINGS_KEY);
+    if (!raw) return DEFAULT_BACKUP_SETTINGS;
+    const parsed = JSON.parse(raw) as Partial<BackupSettings>;
+    return {
+      autoSnapshotEnabled: parsed.autoSnapshotEnabled !== false,
+      autoUploadToDrive: parsed.autoUploadToDrive !== false,
+      staleAfterHours: Number(parsed.staleAfterHours) > 0 ? Number(parsed.staleAfterHours) : DEFAULT_BACKUP_SETTINGS.staleAfterHours,
+      lastSuccessfulBackupAt: typeof parsed.lastSuccessfulBackupAt === 'string' ? parsed.lastSuccessfulBackupAt : '',
+      lastManualSyncAt: typeof parsed.lastManualSyncAt === 'string' ? parsed.lastManualSyncAt : '',
+    };
+  } catch {
+    return DEFAULT_BACKUP_SETTINGS;
+  }
+}
+
+function saveBackupSettings(settings: BackupSettings): void {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(BACKUP_SETTINGS_KEY, JSON.stringify(settings));
+}
+
+function createBackupFingerprint(payload: StorageBackupPayload): string {
+  return JSON.stringify({
+    ...payload,
+    exportDate: '',
+    note: '',
+  });
+}
+
+function getBackupReasonLabel(reason: BackupReason): string {
+  switch (reason) {
+    case 'manual':
+      return 'Sao lưu tay';
+    case 'restore-point':
+      return 'Mốc khôi phục';
+    default:
+      return 'Tự động';
+  }
+}
+
+function getDriveStatusLabel(snapshot: BackupSnapshot): string {
+  switch (snapshot.drive?.status) {
+    case 'uploaded':
+      return 'Đã lên Drive';
+    case 'failed':
+      return 'Lỗi Drive';
+    case 'skipped':
+      return 'Chưa đẩy Drive';
+    default:
+      return 'Chờ Drive';
+  }
+}
+
+function formatBackupTimestamp(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Không rõ';
+  return date.toLocaleString('vi-VN', {
+    hour12: false,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function buildBackupWarningMessage(latestBackupAt: string, staleAfterHours: number): string {
+  if (!latestBackupAt) {
+    return 'Chưa có bản sao lưu nào. Hãy bấm "Sao lưu ngay" hoặc kết nối Google Drive trước khi tiếp tục làm việc.';
+  }
+  const ageMs = Date.now() - new Date(latestBackupAt).getTime();
+  if (!Number.isFinite(ageMs) || ageMs <= staleAfterHours * 3600 * 1000) {
+    return '';
+  }
+  return `Đã quá ${staleAfterHours} giờ kể từ lần sao lưu gần nhất (${formatBackupTimestamp(latestBackupAt)}). Nên sao lưu lại ngay để tránh mất dữ liệu.`;
+}
 
 function loadUiProfile(defaultName?: string, defaultAvatar?: string): UiProfile {
   try {
@@ -8735,16 +8832,23 @@ const AppContent = () => {
   const [showPromptManager, setShowPromptManager] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showReleaseHistoryModal, setShowReleaseHistoryModal] = useState(false);
+  const [showBackupCenterModal, setShowBackupCenterModal] = useState(false);
   const [profileNameDraft, setProfileNameDraft] = useState(profile.displayName);
   const [profileAvatarDraft, setProfileAvatarDraft] = useState(profile.avatarUrl);
   const [profileAvatarError, setProfileAvatarError] = useState('');
   const [readerPrefs, setReaderPrefs] = useState<ReaderPrefs>(() => loadReaderPrefs());
   const [showReaderPrefsModal, setShowReaderPrefsModal] = useState(false);
+  const [backupSettings, setBackupSettings] = useState<BackupSettings>(() => loadBackupSettings());
+  const [backupSnapshots, setBackupSnapshots] = useState<BackupSnapshot[]>([]);
+  const [backupHistoryReady, setBackupHistoryReady] = useState(false);
+  const [backupBusyAction, setBackupBusyAction] = useState('');
+  const [driveAuth, setDriveAuth] = useState<GoogleDriveAuthState | null>(() => loadStoredDriveAuth());
   const [isUploadingProfileAvatar, setIsUploadingProfileAvatar] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [isExportingStory, setIsExportingStory] = useState(false);
   const profileAvatarInputRef = useRef<HTMLInputElement>(null);
+  const backupImportInputRef = useRef<HTMLInputElement>(null);
   const activeAiRunRef = useRef<ActiveAiRun | null>(null);
   const toastTimeoutsRef = useRef<Map<string, number>>(new Map());
   const workspaceSyncRef = useRef({
@@ -8753,6 +8857,11 @@ const AppContent = () => {
   });
   const syncDisabledNoticeShownRef = useRef(false);
   const localBackupRestoreAttemptedRef = useRef(false);
+  const backupAutomationRef = useRef({
+    isRestoring: false,
+    lastFingerprint: '',
+    startupSnapshotDone: false,
+  });
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -8825,6 +8934,459 @@ const AppContent = () => {
     toastTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
     toastTimeoutsRef.current.clear();
   }, []);
+
+  const refreshBackupHistory = useCallback(async () => {
+    try {
+      const items = await listBackupSnapshots(30);
+      setBackupSnapshots(items);
+      if (items[0]) {
+        backupAutomationRef.current.lastFingerprint = createBackupFingerprint(items[0].payload);
+        setBackupSettings((prev) => {
+          const shouldReplace =
+            !prev.lastSuccessfulBackupAt ||
+            new Date(items[0].createdAt).getTime() > new Date(prev.lastSuccessfulBackupAt).getTime();
+          return shouldReplace ? { ...prev, lastSuccessfulBackupAt: items[0].createdAt } : prev;
+        });
+      }
+    } catch (error) {
+      notifyApp({
+        tone: 'error',
+        message: 'Không đọc được lịch sử sao lưu cục bộ.',
+        detail: error instanceof Error ? error.message : undefined,
+        groupKey: 'backup-history-load-failed',
+      });
+    } finally {
+      setBackupHistoryReady(true);
+    }
+  }, []);
+
+  const refreshWorkspaceUiFromStorage = useCallback(() => {
+    setProfile(loadUiProfile(user?.displayName || undefined, user?.photoURL || undefined));
+    setThemeMode(loadThemeMode());
+    setViewportMode(loadViewportMode());
+    setReaderPrefs(loadReaderPrefs());
+    setSelectedStory(null);
+    setEditingStory(null);
+    setIsCreating(false);
+    bumpStoriesVersion();
+  }, [user?.displayName, user?.photoURL]);
+
+  const uploadSnapshotToDrive = useCallback(async (
+    snapshot: BackupSnapshot,
+    options?: { quiet?: boolean; interactive?: boolean },
+  ): Promise<boolean> => {
+    if (!hasGoogleDriveBackupConfig()) {
+      await updateBackupSnapshotDriveMeta(snapshot.id, {
+        status: 'skipped',
+        error: 'Thiếu VITE_GOOGLE_DRIVE_CLIENT_ID nên chưa thể đẩy lên Google Drive.',
+      });
+      await refreshBackupHistory();
+      if (!options?.quiet) {
+        notifyApp({
+          tone: 'warn',
+          message: 'Thiếu cấu hình Google Drive Client ID, chưa thể đẩy backup lên Drive.',
+          groupKey: 'backup-drive-config-missing',
+        });
+      }
+      return false;
+    }
+
+    const accessToken = await ensureGoogleDriveAccessToken(Boolean(options?.interactive));
+    setDriveAuth(loadStoredDriveAuth());
+    if (!accessToken) {
+      await updateBackupSnapshotDriveMeta(snapshot.id, {
+        status: 'failed',
+        error: 'Token Google Drive không còn hiệu lực. Hãy kết nối lại để tiếp tục auto backup.',
+      });
+      await refreshBackupHistory();
+      if (!options?.quiet) {
+        notifyApp({
+          tone: 'warn',
+          message: 'Google Drive chưa sẵn sàng. Hãy kết nối lại để tiếp tục sao lưu tự động.',
+          groupKey: 'backup-drive-token-missing',
+        });
+      }
+      return false;
+    }
+
+    try {
+      const uploaded = await uploadBackupSnapshotToDrive(
+        accessToken,
+        buildDriveBackupFilename(snapshot.createdAt, snapshot.reason),
+        snapshot.payload,
+      );
+      await updateBackupSnapshotDriveMeta(snapshot.id, {
+        status: 'uploaded',
+        fileId: uploaded.id,
+        fileName: uploaded.name,
+        uploadedAt: new Date().toISOString(),
+      });
+      await refreshBackupHistory();
+      if (!options?.quiet) {
+        notifyApp({
+          tone: 'success',
+          message: 'Đã đẩy bản sao lưu JSON lên Google Drive.',
+          detail: uploaded.name,
+          groupKey: 'backup-drive-upload-success',
+        });
+      }
+      return true;
+    } catch (error) {
+      await updateBackupSnapshotDriveMeta(snapshot.id, {
+        status: 'failed',
+        error: error instanceof Error ? error.message : 'Upload Google Drive thất bại.',
+      });
+      await refreshBackupHistory();
+      if (!options?.quiet) {
+        notifyApp({
+          tone: 'error',
+          message: 'Đẩy backup lên Google Drive thất bại.',
+          detail: error instanceof Error ? error.message : undefined,
+          groupKey: 'backup-drive-upload-failed',
+        });
+      }
+      return false;
+    }
+  }, [refreshBackupHistory]);
+
+  const createWorkspaceBackup = useCallback(async (
+    reason: BackupReason,
+    options?: {
+      force?: boolean;
+      quiet?: boolean;
+    },
+  ): Promise<BackupSnapshot | null> => {
+    if (backupAutomationRef.current.isRestoring) return null;
+    const payload = storage.buildBackupPayload();
+    const fingerprint = createBackupFingerprint(payload);
+    if (!options?.force && fingerprint === backupAutomationRef.current.lastFingerprint) {
+      return null;
+    }
+
+    const snapshot = await createBackupSnapshot(payload, reason);
+    backupAutomationRef.current.lastFingerprint = fingerprint;
+    setBackupSettings((prev) => ({ ...prev, lastSuccessfulBackupAt: snapshot.createdAt }));
+
+    if (backupSettings.autoUploadToDrive) {
+      await uploadSnapshotToDrive(snapshot, { quiet: true });
+    } else {
+      await updateBackupSnapshotDriveMeta(snapshot.id, {
+        status: 'skipped',
+        error: 'Tự động đẩy Google Drive đang tắt.',
+      });
+    }
+
+    await refreshBackupHistory();
+
+    if (!options?.quiet) {
+      notifyApp({
+        tone: 'success',
+        message: `Đã tạo bản sao lưu ${reason === 'manual' ? 'thủ công' : 'an toàn'} lúc ${formatBackupTimestamp(snapshot.createdAt)}.`,
+        groupKey: `backup-created:${reason}`,
+      });
+    }
+    return snapshot;
+  }, [backupSettings.autoUploadToDrive, refreshBackupHistory, uploadSnapshotToDrive]);
+
+  const handleBackupNow = useCallback(async () => {
+    setBackupBusyAction('backup-now');
+    try {
+      await createWorkspaceBackup('manual', { force: true });
+    } catch (error) {
+      notifyApp({
+        tone: 'error',
+        message: 'Tạo sao lưu thủ công thất bại.',
+        detail: error instanceof Error ? error.message : undefined,
+        groupKey: 'backup-manual-failed',
+      });
+    } finally {
+      setBackupBusyAction('');
+    }
+  }, [createWorkspaceBackup]);
+
+  const handleDownloadCurrentBackupJson = useCallback(() => {
+    setIsExporting(true);
+    try {
+      const payload = storage.buildBackupPayload();
+      const filename = storage.downloadBackupPayload(payload, `truyenforge-backup-${Date.now()}.json`);
+      notifyApp({
+        tone: 'success',
+        message: 'Đã xuất file JSON ra máy.',
+        detail: filename,
+        groupKey: 'backup-download-current',
+      });
+    } catch (error) {
+      notifyApp({
+        tone: 'error',
+        message: 'Xuất file JSON thất bại.',
+        detail: error instanceof Error ? error.message : undefined,
+        groupKey: 'backup-download-current-failed',
+      });
+    } finally {
+      setIsExporting(false);
+    }
+  }, []);
+
+  const handleDownloadBackupSnapshot = useCallback(async (snapshotId: string) => {
+    try {
+      const snapshot = await getBackupSnapshot(snapshotId);
+      if (!snapshot) throw new Error('Không tìm thấy snapshot cần tải.');
+      const filename = storage.downloadBackupPayload(
+        snapshot.payload,
+        `truyenforge-backup-${snapshot.reason}-${snapshot.createdAt.replace(/[:.]/g, '-')}.json`,
+      );
+      notifyApp({
+        tone: 'success',
+        message: 'Đã tải xuống snapshot đã chọn.',
+        detail: filename,
+        groupKey: `backup-download-snapshot:${snapshotId}`,
+      });
+    } catch (error) {
+      notifyApp({
+        tone: 'error',
+        message: 'Tải snapshot thất bại.',
+        detail: error instanceof Error ? error.message : undefined,
+        groupKey: `backup-download-snapshot-failed:${snapshotId}`,
+      });
+    }
+  }, []);
+
+  const restorePayloadIntoWorkspace = useCallback(async (
+    payload: StorageBackupPayload,
+  ): Promise<StorageImportReport> => {
+    backupAutomationRef.current.isRestoring = true;
+    try {
+      const report = storage.importData(payload);
+      refreshWorkspaceUiFromStorage();
+      return report;
+    } finally {
+      backupAutomationRef.current.isRestoring = false;
+    }
+  }, [refreshWorkspaceUiFromStorage]);
+
+  const handleRestoreBackupSnapshot = useCallback(async (snapshotId: string) => {
+    setBackupBusyAction(`restore:${snapshotId}`);
+    try {
+      const snapshot = await getBackupSnapshot(snapshotId);
+      if (!snapshot) {
+        throw new Error('Không tìm thấy mốc sao lưu này.');
+      }
+
+      await createWorkspaceBackup('restore-point', { force: true, quiet: true });
+      const report = await restorePayloadIntoWorkspace(snapshot.payload);
+      await createWorkspaceBackup('manual', { force: true, quiet: true });
+      await refreshBackupHistory();
+      notifyApp({
+        tone: 'success',
+        message: 'Đã khôi phục dữ liệu từ mốc thời gian đã chọn.',
+        detail: `Khôi phục ${report.restoredSections.join(', ')}.`,
+        groupKey: `backup-restore-success:${snapshotId}`,
+      });
+    } catch (error) {
+      notifyApp({
+        tone: 'error',
+        message: 'Khôi phục dữ liệu thất bại.',
+        detail: error instanceof Error ? error.message : undefined,
+        groupKey: `backup-restore-failed:${snapshotId}`,
+      });
+    } finally {
+      setBackupBusyAction('');
+    }
+  }, [createWorkspaceBackup, refreshBackupHistory, restorePayloadIntoWorkspace]);
+
+  const handleImportBackupFile = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    setIsImporting(true);
+    setBackupBusyAction('import-json');
+    try {
+      const raw = await file.text();
+      const payload = JSON.parse(raw) as StorageBackupPayload;
+      await createWorkspaceBackup('restore-point', { force: true, quiet: true });
+      const report = await restorePayloadIntoWorkspace(payload);
+      await createWorkspaceBackup('manual', { force: true, quiet: true });
+      await refreshBackupHistory();
+      notifyApp({
+        tone: 'success',
+        message: 'Đã nhập file backup JSON.',
+        detail: `Khôi phục ${report.restoredSections.join(', ')}.`,
+        groupKey: 'backup-import-success',
+      });
+    } catch (error) {
+      notifyApp({
+        tone: 'error',
+        message: 'Nhập file backup thất bại.',
+        detail: error instanceof Error ? error.message : undefined,
+        groupKey: 'backup-import-failed',
+      });
+    } finally {
+      setIsImporting(false);
+      setBackupBusyAction('');
+    }
+  }, [createWorkspaceBackup, refreshBackupHistory, restorePayloadIntoWorkspace]);
+
+  const handleConnectDrive = useCallback(async () => {
+    setBackupBusyAction('connect-drive');
+    try {
+      const auth = await connectGoogleDriveInteractive();
+      setDriveAuth(auth);
+      notifyApp({
+        tone: 'success',
+        message: 'Đã kết nối Google Drive. Backup JSON mới có thể tự đẩy lên Drive.',
+        groupKey: 'backup-drive-connect-success',
+      });
+      const latest = backupSnapshots[0];
+      if (latest && latest.drive?.status !== 'uploaded' && backupSettings.autoUploadToDrive) {
+        await uploadSnapshotToDrive(latest, { quiet: true });
+      }
+    } catch (error) {
+      notifyApp({
+        tone: 'error',
+        message: 'Kết nối Google Drive thất bại.',
+        detail: error instanceof Error ? error.message : undefined,
+        groupKey: 'backup-drive-connect-failed',
+      });
+    } finally {
+      setBackupBusyAction('');
+    }
+  }, [backupSettings.autoUploadToDrive, backupSnapshots, uploadSnapshotToDrive]);
+
+  const handleDisconnectDrive = useCallback(async () => {
+    setBackupBusyAction('disconnect-drive');
+    try {
+      await disconnectGoogleDrive();
+      setDriveAuth(null);
+      notifyApp({
+        tone: 'info',
+        message: 'Đã ngắt kết nối Google Drive. Backup mới vẫn giữ cục bộ trong app.',
+        groupKey: 'backup-drive-disconnect',
+      });
+    } catch (error) {
+      notifyApp({
+        tone: 'warn',
+        message: 'Ngắt kết nối Google Drive chưa trọn vẹn, nhưng token cục bộ đã được xóa.',
+        detail: error instanceof Error ? error.message : undefined,
+        groupKey: 'backup-drive-disconnect-warn',
+      });
+      setDriveAuth(loadStoredDriveAuth());
+    } finally {
+      setBackupBusyAction('');
+    }
+  }, []);
+
+  const handleUploadSnapshotManually = useCallback(async (snapshotId: string) => {
+    setBackupBusyAction(`drive-upload:${snapshotId}`);
+    try {
+      const snapshot = await getBackupSnapshot(snapshotId);
+      if (!snapshot) {
+        throw new Error('Không tìm thấy snapshot cần đẩy lên Drive.');
+      }
+      const uploaded = await uploadSnapshotToDrive(snapshot, { quiet: false });
+      if (!uploaded) return;
+    } catch (error) {
+      notifyApp({
+        tone: 'error',
+        message: 'Đẩy snapshot lên Drive thất bại.',
+        detail: error instanceof Error ? error.message : undefined,
+        groupKey: `backup-drive-manual-failed:${snapshotId}`,
+      });
+    } finally {
+      setBackupBusyAction('');
+    }
+  }, [uploadSnapshotToDrive]);
+
+  const handleManualAccountSync = useCallback(async () => {
+    if (!user || !hasSupabase) {
+      notifyApp({
+        tone: 'warn',
+        message: 'Cần đăng nhập tài khoản trước khi dùng đồng bộ thủ công.',
+        groupKey: 'backup-manual-sync-no-account',
+      });
+      return;
+    }
+
+    setBackupBusyAction('manual-sync');
+    workspaceSyncRef.current.isHydrating = true;
+    try {
+      await createWorkspaceBackup('restore-point', { force: true, quiet: true });
+      const localSnapshot = buildAccountWorkspaceSnapshot(user.displayName || undefined, user.photoURL || undefined);
+      const remoteSnapshot = await loadServerWorkspace<AccountWorkspaceSnapshot>(user.uid);
+      const remotePayload = remoteSnapshot.payload
+        ? {
+            ...(remoteSnapshot.payload as Partial<AccountWorkspaceSnapshot>),
+            updatedAt: typeof (remoteSnapshot.payload as Partial<AccountWorkspaceSnapshot>).updatedAt === 'string'
+              ? (remoteSnapshot.payload as Partial<AccountWorkspaceSnapshot>).updatedAt
+              : (remoteSnapshot.updatedAt || new Date(0).toISOString()),
+          }
+        : null;
+      const mergedSnapshot = remotePayload
+        ? mergeAccountWorkspaceSnapshots(localSnapshot, remotePayload)
+        : localSnapshot;
+
+      applyAccountWorkspaceSnapshot(mergedSnapshot, user.displayName || undefined, user.photoURL || undefined);
+      markLocalWorkspaceHydrated(mergedSnapshot.updatedAt, 'manual-sync', mergedSnapshot.sectionUpdatedAt);
+      refreshWorkspaceUiFromStorage();
+      await saveServerWorkspace(user.uid, mergedSnapshot);
+      storeWorkspaceRecoverySnapshot(mergedSnapshot, 'manual-sync');
+      workspaceSyncRef.current.lastSerialized = JSON.stringify(mergedSnapshot);
+      setBackupSettings((prev) => ({ ...prev, lastManualSyncAt: new Date().toISOString() }));
+      await createWorkspaceBackup('manual', { force: true, quiet: true });
+      notifyApp({
+        tone: 'success',
+        message: 'Đã đồng bộ thủ công an toàn với tài khoản.',
+        detail: 'Luồng này hợp nhất local và server theo từng nhóm dữ liệu thay vì autosync nền.',
+        groupKey: 'backup-manual-sync-success',
+      });
+    } catch (error) {
+      notifyApp({
+        tone: 'error',
+        message: 'Đồng bộ thủ công thất bại.',
+        detail: error instanceof Error ? error.message : undefined,
+        groupKey: 'backup-manual-sync-failed',
+      });
+    } finally {
+      workspaceSyncRef.current.isHydrating = false;
+      setBackupBusyAction('');
+    }
+  }, [createWorkspaceBackup, hasSupabase, refreshWorkspaceUiFromStorage, user]);
+
+  useEffect(() => {
+    saveBackupSettings(backupSettings);
+  }, [backupSettings]);
+
+  useEffect(() => {
+    void refreshBackupHistory();
+    setDriveAuth(loadStoredDriveAuth());
+  }, [refreshBackupHistory]);
+
+  useEffect(() => {
+    if (!backupHistoryReady || !backupSettings.autoSnapshotEnabled || backupAutomationRef.current.startupSnapshotDone) return;
+    backupAutomationRef.current.startupSnapshotDone = true;
+    void createWorkspaceBackup('auto', { quiet: true }).catch((error) => {
+      console.warn('Không thể tạo snapshot khởi động.', error);
+    });
+  }, [backupHistoryReady, backupSettings.autoSnapshotEnabled, createWorkspaceBackup]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !backupSettings.autoSnapshotEnabled) return;
+    let timer: number | null = null;
+    const handler = () => {
+      if (backupAutomationRef.current.isRestoring) return;
+      if (timer) window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        void createWorkspaceBackup('auto', { quiet: true }).catch((error) => {
+          console.warn('Không thể tạo auto backup.', error);
+        });
+      }, 1200);
+    };
+    window.addEventListener(LOCAL_WORKSPACE_CHANGED_EVENT, handler as EventListener);
+    return () => {
+      if (timer) window.clearTimeout(timer);
+      window.removeEventListener(LOCAL_WORKSPACE_CHANGED_EVENT, handler as EventListener);
+    };
+  }, [backupSettings.autoSnapshotEnabled, createWorkspaceBackup]);
 
   const beginAiRun = useCallback((
     initialMessage: string,
@@ -10624,6 +11186,12 @@ const AppContent = () => {
     }
   };
 
+  const latestBackup = backupSnapshots[0] || null;
+  const latestBackupAt = backupSettings.lastSuccessfulBackupAt || latestBackup?.createdAt || '';
+  const backupWarningMessage = buildBackupWarningMessage(latestBackupAt, backupSettings.staleAfterHours);
+  const driveConfigured = hasGoogleDriveBackupConfig();
+  const driveConnected = hasUsableDriveToken(driveAuth);
+
   if (loading) return <div className="min-h-screen flex items-center justify-center font-serif">Đang khởi động...</div>;
 
   return (
@@ -10671,6 +11239,14 @@ const AppContent = () => {
         isOpen={showPromptManager}
         onClose={() => setShowPromptManager(false)}
         onSelect={() => setShowPromptManager(false)}
+      />
+
+      <input
+        ref={backupImportInputRef}
+        type="file"
+        accept=".json,application/json"
+        className="hidden"
+        onChange={handleImportBackupFile}
       />
 
       <ExportStoryModal
@@ -10785,6 +11361,280 @@ const AppContent = () => {
           </div>
         </div>
       )}
+      {showBackupCenterModal && (
+        <div className="fixed inset-0 z-[266] tf-modal-overlay bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="tf-modal-panel w-full max-w-6xl tf-card p-6 space-y-5">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div className="space-y-2">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Trung tâm sao lưu</p>
+                <h3 className="text-2xl font-bold">Sao lưu, khôi phục và đồng bộ thủ công</h3>
+                <p className="text-sm text-slate-400 max-w-3xl">
+                  Từ giờ app ưu tiên giữ dữ liệu an toàn: backup cục bộ theo mốc thời gian, có thể đẩy JSON lên Google Drive sau mỗi lần lưu, và chỉ đồng bộ tài khoản khi bạn bấm tay.
+                </p>
+              </div>
+              <button
+                className="tf-btn tf-btn-ghost px-3 py-1 self-start"
+                onClick={() => {
+                  setShowBackupCenterModal(false);
+                  void refreshBackupHistory();
+                }}
+              >
+                Đóng
+              </button>
+            </div>
+
+            {backupWarningMessage ? (
+              <div className="rounded-2xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+                  <div className="space-y-1">
+                    <p className="font-semibold text-rose-50">Cảnh báo sao lưu</p>
+                    <p>{backupWarningMessage}</p>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            <div className="grid gap-3 md:grid-cols-3">
+              <div className="rounded-2xl border border-white/10 bg-slate-900/50 p-4 space-y-2">
+                <p className="text-xs uppercase tracking-[0.14em] text-slate-400">Lần backup gần nhất</p>
+                <p className="text-lg font-bold text-white">{latestBackupAt ? formatBackupTimestamp(latestBackupAt) : 'Chưa có'}</p>
+                <p className="text-sm text-slate-400">
+                  {latestBackup ? `${(latestBackup.payload.stories || []).length} truyện · ${(latestBackup.payload.characters || []).length} nhân vật` : 'Chưa ghi được snapshot nào trong app.'}
+                </p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-slate-900/50 p-4 space-y-2">
+                <p className="text-xs uppercase tracking-[0.14em] text-slate-400">Google Drive</p>
+                <p className="text-lg font-bold text-white">
+                  {!driveConfigured ? 'Chưa cấu hình' : driveConnected ? 'Đang kết nối' : 'Chưa kết nối'}
+                </p>
+                <p className="text-sm text-slate-400">
+                  {driveConfigured
+                    ? driveConnected
+                      ? 'Snapshot mới có thể tự đẩy JSON lên appDataFolder của Drive.'
+                      : 'Cần kết nối lại để auto-upload tiếp tục chạy.'
+                    : 'Thiếu VITE_GOOGLE_DRIVE_CLIENT_ID nên chưa thể dùng Drive backup.'}
+                </p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-slate-900/50 p-4 space-y-2">
+                <p className="text-xs uppercase tracking-[0.14em] text-slate-400">Đồng bộ tài khoản</p>
+                <p className="text-lg font-bold text-white">
+                  {backupSettings.lastManualSyncAt ? formatBackupTimestamp(backupSettings.lastManualSyncAt) : 'Chưa sync tay'}
+                </p>
+                <p className="text-sm text-slate-400">
+                  Autosync đã bị tắt. Dữ liệu server chỉ đổi khi bạn bấm đồng bộ thủ công.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid gap-4 xl:grid-cols-[1.05fr_1.35fr]">
+              <div className="space-y-4">
+                <div className="rounded-2xl border border-white/10 bg-slate-900/40 p-4 space-y-4">
+                  <div className="flex items-center gap-2">
+                    <Shield className="h-5 w-5 text-cyan-300" />
+                    <h4 className="text-lg font-semibold">Sao lưu ngay</h4>
+                  </div>
+                  <div className="flex flex-wrap gap-3">
+                    <button
+                      className="tf-btn tf-btn-primary"
+                      onClick={handleBackupNow}
+                      disabled={backupBusyAction === 'backup-now'}
+                    >
+                      {backupBusyAction === 'backup-now' ? 'Đang sao lưu...' : 'Nút Sao lưu ngay'}
+                    </button>
+                    <button
+                      className="tf-btn tf-btn-ghost"
+                      onClick={handleDownloadCurrentBackupJson}
+                      disabled={isExporting}
+                    >
+                      {isExporting ? 'Đang xuất JSON...' : 'Xuất JSON ra máy'}
+                    </button>
+                    <button
+                      className="tf-btn tf-btn-ghost"
+                      onClick={() => backupImportInputRef.current?.click()}
+                      disabled={isImporting}
+                    >
+                      {isImporting ? 'Đang nhập JSON...' : 'Nhập JSON từ máy'}
+                    </button>
+                  </div>
+                  <div className="space-y-3">
+                    <label className="flex items-start gap-3 rounded-2xl border border-white/10 bg-slate-950/50 px-4 py-3 text-sm text-slate-300">
+                      <input
+                        type="checkbox"
+                        className="mt-1"
+                        checked={backupSettings.autoSnapshotEnabled}
+                        onChange={(e) => setBackupSettings((prev) => ({ ...prev, autoSnapshotEnabled: e.target.checked }))}
+                      />
+                      <span>
+                        <strong className="text-white">Tự tạo snapshot cục bộ sau mỗi lần thay đổi dữ liệu</strong>
+                        <br />
+                        Mỗi lần lưu truyện, prompt, nhân vật, theme hoặc dữ liệu chính, app sẽ chụp lại một mốc khôi phục trong app.
+                      </span>
+                    </label>
+                    <label className="flex items-start gap-3 rounded-2xl border border-white/10 bg-slate-950/50 px-4 py-3 text-sm text-slate-300">
+                      <input
+                        type="checkbox"
+                        className="mt-1"
+                        checked={backupSettings.autoUploadToDrive}
+                        onChange={(e) => setBackupSettings((prev) => ({ ...prev, autoUploadToDrive: e.target.checked }))}
+                      />
+                      <span>
+                        <strong className="text-white">Tự đẩy file JSON mới nhất lên Google Drive</strong>
+                        <br />
+                        Nếu Drive đã kết nối, mỗi snapshot mới sẽ được upload JSON lên `appDataFolder` mà không bật tab khác.
+                      </span>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-white/10 bg-slate-900/40 p-4 space-y-4">
+                  <div className="flex items-center gap-2">
+                    <Link2 className="h-5 w-5 text-emerald-300" />
+                    <h4 className="text-lg font-semibold">Google Drive backup</h4>
+                  </div>
+                  <p className="text-sm text-slate-400">
+                    Tính năng này dùng để giữ một bản JSON ẩn trong Google Drive mỗi lần bạn lưu dữ liệu. Nếu token hết hạn, app sẽ giữ bản cục bộ và chờ bạn kết nối lại.
+                  </p>
+                  <div className="flex flex-wrap gap-3">
+                    <button
+                      className="tf-btn tf-btn-primary"
+                      onClick={handleConnectDrive}
+                      disabled={!driveConfigured || backupBusyAction === 'connect-drive'}
+                    >
+                      {backupBusyAction === 'connect-drive' ? 'Đang kết nối Drive...' : driveConnected ? 'Kết nối lại Drive' : 'Kết nối Google Drive'}
+                    </button>
+                    <button
+                      className="tf-btn tf-btn-ghost"
+                      onClick={handleDisconnectDrive}
+                      disabled={!driveConnected || backupBusyAction === 'disconnect-drive'}
+                    >
+                      {backupBusyAction === 'disconnect-drive' ? 'Đang ngắt Drive...' : 'Ngắt kết nối'}
+                    </button>
+                  </div>
+                  {!driveConfigured ? (
+                    <p className="text-sm text-amber-300">
+                      Cần thêm `VITE_GOOGLE_DRIVE_CLIENT_ID` vào file môi trường trước khi dùng auto backup lên Drive.
+                    </p>
+                  ) : (
+                    <div className="rounded-2xl border border-white/10 bg-slate-950/50 px-4 py-3 text-sm text-slate-300">
+                      <p className="font-semibold text-white">{driveConnected ? 'Drive đang sẵn sàng nhận backup.' : 'Drive chưa kết nối.'}</p>
+                      <p className="mt-1">
+                        {driveConnected
+                          ? 'Từ giờ snapshot mới sẽ được đẩy JSON sau mỗi lần lưu dữ liệu, miễn là bạn đang bật auto-upload.'
+                          : 'Hãy bấm kết nối một lần để app lấy quyền ghi vào appDataFolder của Google Drive.'}
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-2xl border border-white/10 bg-slate-900/40 p-4 space-y-4">
+                  <div className="flex items-center gap-2">
+                    <Database className="h-5 w-5 text-indigo-300" />
+                    <h4 className="text-lg font-semibold">Manual sync thay cho autosync</h4>
+                  </div>
+                  <p className="text-sm text-slate-400">
+                    Autosync đã bị khóa để tránh tự ghi đè. Khi cần, bạn bấm nút này để hợp nhất bản local hiện tại với dữ liệu đang có trên tài khoản rồi lưu lại an toàn.
+                  </p>
+                  <button
+                    className="tf-btn tf-btn-primary"
+                    onClick={handleManualAccountSync}
+                    disabled={!user || !hasSupabase || backupBusyAction === 'manual-sync'}
+                  >
+                    {backupBusyAction === 'manual-sync' ? 'Đang đồng bộ thủ công...' : 'Đồng bộ thủ công ngay'}
+                  </button>
+                  {!user ? (
+                    <p className="text-sm text-amber-300">Cần đăng nhập để dùng manual sync với tài khoản.</p>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-white/10 bg-slate-900/40 p-4 space-y-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h4 className="text-lg font-semibold">Lịch sử backup trong app</h4>
+                    <p className="text-sm text-slate-400">Bạn có thể đọc mốc thời gian, tải JSON từng snapshot, hoặc khôi phục ngay từ đây.</p>
+                  </div>
+                  <button
+                    className="tf-btn tf-btn-ghost"
+                    onClick={() => void refreshBackupHistory()}
+                  >
+                    Làm mới
+                  </button>
+                </div>
+
+                {!backupHistoryReady ? (
+                  <div className="rounded-2xl border border-white/10 bg-slate-950/50 px-4 py-8 text-center text-sm text-slate-400">
+                    Đang nạp lịch sử backup...
+                  </div>
+                ) : backupSnapshots.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-white/15 bg-slate-950/50 px-4 py-8 text-center text-sm text-slate-400">
+                    Chưa có snapshot nào trong app. Hãy bấm <strong className="text-white">Sao lưu ngay</strong> để tạo mốc đầu tiên.
+                  </div>
+                ) : (
+                  <div className="max-h-[55vh] space-y-3 overflow-y-auto pr-2">
+                    {backupSnapshots.map((snapshot) => {
+                      const restoreBusy = backupBusyAction === `restore:${snapshot.id}`;
+                      const driveBusy = backupBusyAction === `drive-upload:${snapshot.id}`;
+                      return (
+                        <div key={snapshot.id} className="rounded-2xl border border-white/10 bg-slate-950/50 p-4 space-y-3">
+                          <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+                            <div className="space-y-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="rounded-full bg-indigo-500/15 px-3 py-1 text-xs font-semibold text-indigo-200">
+                                  {getBackupReasonLabel(snapshot.reason)}
+                                </span>
+                                <span className={cn(
+                                  'rounded-full px-3 py-1 text-xs font-semibold',
+                                  snapshot.drive?.status === 'uploaded'
+                                    ? 'bg-emerald-500/15 text-emerald-200'
+                                    : snapshot.drive?.status === 'failed'
+                                      ? 'bg-rose-500/15 text-rose-200'
+                                      : 'bg-slate-800 text-slate-300'
+                                )}>
+                                  {getDriveStatusLabel(snapshot)}
+                                </span>
+                              </div>
+                              <p className="text-base font-semibold text-white">{formatBackupTimestamp(snapshot.createdAt)}</p>
+                              <p className="text-sm text-slate-400">
+                                {(snapshot.payload.stories || []).length} truyện · {(snapshot.payload.characters || []).length} nhân vật · {(snapshot.payload.translation_names || []).length} tên dịch
+                              </p>
+                              {snapshot.drive?.error ? (
+                                <p className="text-xs text-amber-300">{snapshot.drive.error}</p>
+                              ) : null}
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                className="tf-btn tf-btn-ghost"
+                                onClick={() => void handleDownloadBackupSnapshot(snapshot.id)}
+                              >
+                                Tải JSON
+                              </button>
+                              <button
+                                className="tf-btn tf-btn-ghost"
+                                onClick={() => void handleUploadSnapshotManually(snapshot.id)}
+                                disabled={!driveConfigured || driveBusy}
+                              >
+                                {driveBusy ? 'Đang đẩy Drive...' : 'Đẩy lên Drive'}
+                              </button>
+                              <button
+                                className="tf-btn tf-btn-primary"
+                                onClick={() => void handleRestoreBackupSnapshot(snapshot.id)}
+                                disabled={restoreBusy}
+                              >
+                                {restoreBusy ? 'Đang khôi phục...' : 'Khôi phục từ mốc thời gian'}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       <AuthModal
         isOpen={showAuthModal}
         onClose={() => setShowAuthModal(false)}
@@ -10833,9 +11683,27 @@ const AppContent = () => {
         onOpenProfile={() => setShowProfileModal(true)} 
         onOpenPromptManager={() => setShowPromptManager(true)}
         onOpenReleaseHistory={() => setShowReleaseHistoryModal(true)}
+        onOpenBackupCenter={() => {
+          setDriveAuth(loadStoredDriveAuth());
+          setShowBackupCenterModal(true);
+          void refreshBackupHistory();
+        }}
       />
 
       <div className="app-shell__body">
+      {backupWarningMessage ? (
+        <div className="mx-auto max-w-7xl px-6 pt-6">
+          <div className="rounded-2xl border border-rose-400/35 bg-rose-500/12 px-4 py-3 text-sm text-rose-100">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+              <div className="space-y-1">
+                <p className="font-semibold text-rose-50">Bạn đã lâu chưa backup</p>
+                <p>{backupWarningMessage}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
       <AnimatePresence mode="wait">
         {selectedStory ? (
           <StoryDetail 

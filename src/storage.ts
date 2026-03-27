@@ -108,6 +108,58 @@ export interface StorageImportReport {
   skippedSections: string[];
 }
 
+export interface StorageBackupPayload {
+  schemaVersion: number;
+  stories: any[];
+  characters: any[];
+  ai_rules: any[];
+  style_references: any[];
+  translation_names: any[];
+  prompt_library: ReturnType<typeof loadPromptLibraryState>;
+  ui_profile: Record<string, unknown> | null;
+  ui_theme: string;
+  ui_viewport_mode: string;
+  reader_prefs: Record<string, unknown> | null;
+  finops_budget: BudgetState;
+  exportDate: string;
+  note: string;
+}
+
+function buildBackupPayload(): StorageBackupPayload {
+  const profileRaw = localStorage.getItem('ui_profile_v1');
+  const themeRaw = localStorage.getItem('ui_theme_v1');
+  const viewportRaw = localStorage.getItem('ui_viewport_mode_v1');
+  const readerPrefsRaw = localStorage.getItem('reader_prefs_v1');
+  return {
+    schemaVersion: 2,
+    stories: storage.getStories(),
+    characters: storage.getCharacters(),
+    ai_rules: storage.getAIRules(),
+    style_references: storage.getStyleReferences(),
+    translation_names: storage.getTranslationNames(),
+    prompt_library: loadPromptLibraryState(),
+    ui_profile: profileRaw ? JSON.parse(profileRaw) : null,
+    ui_theme: themeRaw || 'light',
+    ui_viewport_mode: viewportRaw || 'desktop',
+    reader_prefs: readerPrefsRaw ? JSON.parse(readerPrefsRaw) : null,
+    finops_budget: loadBudgetState(),
+    exportDate: new Date().toISOString(),
+    note: 'API keys va runtime secrets duoc loai khoi backup de tranh ro ri thong tin nhay cam.',
+  };
+}
+
+function downloadBackupPayload(payload: StorageBackupPayload, filename?: string): string {
+  const resolvedFilename = filename || `truyenforge-backup-${new Date().toISOString().split('T')[0]}.json`;
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = resolvedFilename;
+  a.click();
+  URL.revokeObjectURL(url);
+  return resolvedFilename;
+}
+
 export const storage = {
   getStories: () => {
     const data = localStorage.getItem('stories');
@@ -157,39 +209,15 @@ export const storage = {
   },
 
   exportData: (): StorageExportReport => {
-    const profileRaw = localStorage.getItem('ui_profile_v1');
-    const themeRaw = localStorage.getItem('ui_theme_v1');
-    const viewportRaw = localStorage.getItem('ui_viewport_mode_v1');
-    const finops = loadBudgetState();
-    const promptLibrary = loadPromptLibraryState();
-    const data = {
-      schemaVersion: 2,
-      stories: storage.getStories(),
-      characters: storage.getCharacters(),
-      ai_rules: storage.getAIRules(),
-      style_references: storage.getStyleReferences(),
-      translation_names: storage.getTranslationNames(),
-      prompt_library: promptLibrary,
-      ui_profile: profileRaw ? JSON.parse(profileRaw) : null,
-      ui_theme: themeRaw || 'light',
-      ui_viewport_mode: viewportRaw || 'desktop',
-      finops_budget: finops,
-      exportDate: new Date().toISOString(),
-      note: 'API keys va runtime secrets duoc loai khoi backup de tranh ro ri thong tin nhay cam.',
-    };
-    const filename = `truyenforge-backup-${new Date().toISOString().split('T')[0]}.json`;
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
+    const payload = buildBackupPayload();
+    const filename = downloadBackupPayload(payload);
     return {
       filename,
       excludedSecrets: ['api_keys', 'api_runtime_config'],
     };
   },
+  buildBackupPayload,
+  downloadBackupPayload,
 
   importData: (jsonData: any): StorageImportReport => {
     if (!isPlainObject(jsonData)) {
@@ -207,6 +235,7 @@ export const storage = {
       ui_profile: localStorage.getItem('ui_profile_v1'),
       ui_theme: localStorage.getItem('ui_theme_v1'),
       ui_viewport_mode: localStorage.getItem('ui_viewport_mode_v1'),
+      reader_prefs: localStorage.getItem('reader_prefs_v1'),
       finops_budget: loadBudgetState(),
     };
     localStorage.setItem(SAFE_IMPORT_BACKUP_KEY, JSON.stringify(backupSnapshot));
@@ -253,6 +282,10 @@ export const storage = {
     if (typeof jsonData.ui_viewport_mode === 'string') {
       localStorage.setItem('ui_viewport_mode_v1', jsonData.ui_viewport_mode);
       restoredSections.push('ui_viewport_mode');
+    }
+    if (isPlainObject(jsonData.reader_prefs)) {
+      localStorage.setItem('reader_prefs_v1', JSON.stringify(jsonData.reader_prefs));
+      restoredSections.push('reader_prefs');
     }
     if (isPlainObject(jsonData.finops_budget)) {
       saveBudgetState(jsonData.finops_budget as unknown as BudgetState);
