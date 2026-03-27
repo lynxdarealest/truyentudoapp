@@ -274,7 +274,16 @@ interface ApiRuntimeConfig {
   enableCache: boolean;
 }
 
+interface ImageApiConfig {
+  enabled: boolean;
+  apiKey: string;
+  provider: 'raphael';
+  model: string;
+  size: string;
+}
+
 const API_RUNTIME_CONFIG_KEY = 'api_runtime_config_v1';
+const IMAGE_API_CONFIG_KEY = 'image_api_config_v1';
 const RELAY_TOKEN_CACHE_KEY = 'relay_token_cache_v1';
 const GEMINI_RESPONSE_CACHE_KEY = 'gemini_response_cache_v1';
 const MAIN_AI_USAGE_KEY = 'main_ai_usage_v1';
@@ -612,6 +621,35 @@ function getApiRuntimeConfig(): ApiRuntimeConfig {
 
 function saveApiRuntimeConfig(config: ApiRuntimeConfig): void {
   localStorage.setItem(API_RUNTIME_CONFIG_KEY, JSON.stringify(config));
+}
+
+function getImageApiConfig(): ImageApiConfig {
+  try {
+    const raw = localStorage.getItem(IMAGE_API_CONFIG_KEY);
+    const parsed = raw ? (JSON.parse(raw) as Partial<ImageApiConfig>) : {};
+    const envKey = readRaphaelEnv('VITE_RAPHAEL_API_KEY');
+    const storedKey = String(parsed.apiKey || '').trim();
+    return {
+      enabled: typeof parsed.enabled === 'boolean' ? parsed.enabled : Boolean(storedKey || envKey),
+      apiKey: storedKey || envKey,
+      provider: 'raphael',
+      model: String(parsed.model || '').trim() || readRaphaelEnv('VITE_RAPHAEL_MODEL') || DEFAULT_RAPHAEL_MODEL,
+      size: String(parsed.size || '').trim() || readRaphaelEnv('VITE_RAPHAEL_SIZE') || DEFAULT_RAPHAEL_SIZE,
+    };
+  } catch {
+    const envKey = readRaphaelEnv('VITE_RAPHAEL_API_KEY');
+    return {
+      enabled: Boolean(envKey),
+      apiKey: envKey,
+      provider: 'raphael',
+      model: readRaphaelEnv('VITE_RAPHAEL_MODEL') || DEFAULT_RAPHAEL_MODEL,
+      size: readRaphaelEnv('VITE_RAPHAEL_SIZE') || DEFAULT_RAPHAEL_SIZE,
+    };
+  }
+}
+
+function saveImageApiConfig(config: ImageApiConfig): void {
+  localStorage.setItem(IMAGE_API_CONFIG_KEY, JSON.stringify(config));
 }
 
 function normalizeDateValue(value: unknown): string {
@@ -1495,15 +1533,17 @@ function readRaphaelEnv(key: 'VITE_RAPHAEL_API_KEY' | 'VITE_RAPHAEL_MODEL' | 'VI
 }
 
 function getRaphaelApiKey(): string {
-  return readRaphaelEnv('VITE_RAPHAEL_API_KEY');
+  const config = getImageApiConfig();
+  if (!config.enabled) return '';
+  return config.apiKey || readRaphaelEnv('VITE_RAPHAEL_API_KEY');
 }
 
 function getRaphaelModel(): string {
-  return readRaphaelEnv('VITE_RAPHAEL_MODEL') || DEFAULT_RAPHAEL_MODEL;
+  return getImageApiConfig().model || readRaphaelEnv('VITE_RAPHAEL_MODEL') || DEFAULT_RAPHAEL_MODEL;
 }
 
 function getRaphaelSize(): string {
-  return readRaphaelEnv('VITE_RAPHAEL_SIZE') || DEFAULT_RAPHAEL_SIZE;
+  return getImageApiConfig().size || readRaphaelEnv('VITE_RAPHAEL_SIZE') || DEFAULT_RAPHAEL_SIZE;
 }
 
 function extractRaphaelResultUrls(payload: unknown): string[] {
@@ -3452,6 +3492,8 @@ const ToolsManager = ({
   const [apiEntryBaseUrl, setApiEntryBaseUrl] = useState('');
   const [testingApiId, setTestingApiId] = useState<string | null>(null);
   const [enablePromptCache, setEnablePromptCache] = useState(true);
+  const [imageAiEnabled, setImageAiEnabled] = useState(false);
+  const [imageAiApiKey, setImageAiApiKey] = useState('');
   const relaySocketRef = useRef<WebSocket | null>(null);
   const relayPingRef = useRef<number | null>(null);
   const relayReconnectRef = useRef<number | null>(null);
@@ -3493,6 +3535,9 @@ const ToolsManager = ({
     setSelectedModel(active?.model || runtime.selectedModel || getDefaultModelForProvider(active?.provider || runtime.selectedProvider || 'gemini', runtime.aiProfile));
     setActiveApiKeyId(active?.id || runtime.activeApiKeyId || '');
     setEnablePromptCache(runtime.enableCache);
+    const imageApi = getImageApiConfig();
+    setImageAiEnabled(imageApi.enabled);
+    setImageAiApiKey(imageApi.apiKey);
     const token = (localStorage.getItem(RELAY_TOKEN_CACHE_KEY) || runtime.relayToken || '').trim();
     setRelayMaskedToken(token ? maskSensitive(token) : 'Chưa nhận token');
     setAiUsageStats(readMainAiUsage());
@@ -3624,6 +3669,36 @@ const ToolsManager = ({
     setApiEntryProvider(provider);
     setApiEntryModel(model);
     setQuickImportResult('API đã được lưu và chọn làm kết nối hiện tại.');
+  };
+
+  const handleSaveImageAiConfig = () => {
+    const nextConfig: ImageApiConfig = {
+      ...getImageApiConfig(),
+      enabled: imageAiEnabled,
+      apiKey: imageAiApiKey.trim(),
+      provider: 'raphael',
+    };
+    saveImageApiConfig(nextConfig);
+    setImageAiEnabled(nextConfig.enabled);
+    setImageAiApiKey(nextConfig.apiKey);
+    if (nextConfig.enabled && nextConfig.apiKey) {
+      notifyApp({
+        tone: 'success',
+        message: 'AI Sinh ảnh đã sẵn sàng. Từ giờ nút tạo bìa sẽ ưu tiên gọi Evolink để sinh ảnh.',
+      });
+      return;
+    }
+    if (nextConfig.enabled) {
+      notifyApp({
+        tone: 'warn',
+        message: 'AI Sinh ảnh đã bật nhưng chưa có API key Evolink, nên hệ thống sẽ phải dùng đường dự phòng.',
+      });
+      return;
+    }
+    notifyApp({
+      tone: 'success',
+      message: 'Đã tắt AI Sinh ảnh riêng. TruyenForge sẽ bỏ qua nhánh Evolink khi tạo bìa.',
+    });
   };
 
   const handleDeleteApiEntry = (id: string) => {
@@ -4392,11 +4467,23 @@ const ToolsManager = ({
           aiUsageTokens={aiUsageStats.estTokens}
           quickImportText={quickImportText}
           quickImportResult={quickImportResult}
+          imageAiEnabled={imageAiEnabled}
+          imageAiApiKey={imageAiApiKey}
+          imageAiStatusLabel={
+            imageAiEnabled
+              ? (imageAiApiKey.trim()
+                ? 'Đang bật và sẽ ưu tiên dùng Evolink cho tạo ảnh bìa.'
+                : 'Đang bật nhưng chưa có API key, nên vẫn sẽ rơi xuống nhánh dự phòng.')
+              : 'Đang tắt. TruyenForge sẽ bỏ qua nhánh AI sinh ảnh riêng khi tạo bìa.'
+          }
           onApiEntryNameChange={setApiEntryName}
           onApiEntryTextChange={setApiEntryText}
           onApiEntryProviderChange={setApiEntryProvider}
           onApiEntryModelChange={setApiEntryModel}
           onApiEntryBaseUrlChange={setApiEntryBaseUrl}
+          onImageAiEnabledChange={setImageAiEnabled}
+          onImageAiApiKeyChange={setImageAiApiKey}
+          onSaveImageAiConfig={handleSaveImageAiConfig}
           onSaveApiEntry={handleSaveApiEntry}
           onTestApiEntry={handleTestApiEntry}
           onActivateApiEntry={handleActivateApiEntry}

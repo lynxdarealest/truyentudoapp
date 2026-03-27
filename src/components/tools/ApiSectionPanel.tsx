@@ -17,6 +17,9 @@ function maskSensitive(value: string, head = 6, tail = 4): string {
 }
 
 const AIS_AUTH_BASE = 'https://ais-dev-qbnyavxszwzdl6ugpdjaxp-279055114293.asia-northeast1.run.app/';
+const EVOLINK_HOME_URL = 'https://evolink.ai';
+const EVOLINK_SIGNUP_URL = 'https://evolink.ai/signup';
+const EVOLINK_IMAGE_DOCS_URL = 'https://docs.evolink.ai/en/api-manual/image-series/z-image-turbo/z-image-turbo-image-generate';
 const CODE_REGEX = /\b(\d{4,8})\b/;
 
 function toWsUrl(url: string): string {
@@ -90,11 +93,17 @@ interface ApiSectionPanelProps {
   aiUsageTokens?: number;
   quickImportText?: string;
   quickImportResult?: string;
+  imageAiEnabled: boolean;
+  imageAiApiKey: string;
+  imageAiStatusLabel: string;
   onApiEntryNameChange: (value: string) => void;
   onApiEntryTextChange: (value: string) => void;
   onApiEntryProviderChange: (value: ApiProvider) => void;
   onApiEntryModelChange: (value: string) => void;
   onApiEntryBaseUrlChange: (value: string) => void;
+  onImageAiEnabledChange: (value: boolean) => void;
+  onImageAiApiKeyChange: (value: string) => void;
+  onSaveImageAiConfig: () => void;
   onSaveApiEntry: () => void;
   onTestApiEntry: (id: string) => void;
   onActivateApiEntry: (id: string) => void;
@@ -142,11 +151,17 @@ export function ApiSectionPanel({
   relayWebBase,
   relaySocketBase,
   manualRelayTokenInput,
+  imageAiEnabled,
+  imageAiApiKey,
+  imageAiStatusLabel,
   onApiEntryNameChange,
   onApiEntryTextChange,
   onApiEntryProviderChange,
   onApiEntryModelChange,
   onApiEntryBaseUrlChange,
+  onImageAiEnabledChange,
+  onImageAiApiKeyChange,
+  onSaveImageAiConfig,
   onSaveApiEntry,
   onTestApiEntry,
   onActivateApiEntry,
@@ -468,6 +483,76 @@ export function ApiSectionPanel({
             </div>
           </div>
         )}
+      </div>
+
+      <div className="tf-card p-6 space-y-4 border border-sky-400/20">
+        <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <div className="rounded-xl bg-sky-500/15 p-2 text-sky-200">
+                <Zap className="w-4 h-4" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-white">AI Sinh ảnh</p>
+                <p className="text-xs text-slate-300">Kênh riêng chỉ dùng cho việc tạo ảnh bìa. Không ảnh hưởng đến dịch truyện, Writer Pro hay các lệnh text AI khác.</p>
+              </div>
+            </div>
+            <p className="text-sm text-slate-300">
+              Khi bật và có API key, nút <span className="font-semibold text-white">Tạo bìa bằng AI</span> sẽ ưu tiên gửi prompt sang Evolink để sinh ảnh trong nền.
+              Khi tắt, TruyenForge sẽ bỏ qua nhánh này và chuyển sang các đường tạo ảnh dự phòng khác.
+            </p>
+          </div>
+
+          <label className="inline-flex items-center gap-3 rounded-2xl border border-white/10 bg-slate-950/40 px-4 py-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={imageAiEnabled}
+              onChange={(e) => onImageAiEnabledChange(e.target.checked)}
+              className="h-4 w-4 rounded border-white/20 bg-slate-900 text-indigo-500 focus:ring-indigo-400"
+            />
+            <span className="text-sm font-semibold text-white">{imageAiEnabled ? 'Đang bật' : 'Đang tắt'}</span>
+          </label>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_auto]">
+          <input
+            value={imageAiApiKey}
+            onChange={(e) => onImageAiApiKeyChange(e.target.value)}
+            className="tf-input"
+            placeholder="Dán API key Evolink cho AI sinh ảnh (sk-...)"
+          />
+          <button onClick={onSaveImageAiConfig} className="tf-btn tf-btn-primary">
+            Lưu AI Sinh ảnh
+          </button>
+        </div>
+
+        <div className="rounded-2xl border border-white/10 bg-slate-950/30 p-4 space-y-2">
+          <p className="text-xs uppercase tracking-wide text-slate-400 font-semibold">Trạng thái hiện tại</p>
+          <p className="text-sm text-white">{imageAiStatusLabel}</p>
+          <p className="text-xs text-slate-400">API key này chỉ được lưu cục bộ trên trình duyệt/máy hiện tại, không dùng để thay thế khóa AI viết và dịch.</p>
+        </div>
+
+        <div className="flex flex-wrap gap-3 text-sm">
+          <a href={EVOLINK_HOME_URL} target="_blank" rel="noreferrer" className="tf-btn tf-btn-ghost">
+            Mở Evolink
+          </a>
+          <a href={EVOLINK_SIGNUP_URL} target="_blank" rel="noreferrer" className="tf-btn tf-btn-ghost">
+            Đăng ký / Đăng nhập
+          </a>
+          <a href={EVOLINK_IMAGE_DOCS_URL} target="_blank" rel="noreferrer" className="tf-btn tf-btn-ghost">
+            Xem tài liệu API ảnh
+          </a>
+        </div>
+
+        <div className="rounded-2xl border border-indigo-400/20 bg-indigo-500/5 p-4 space-y-2">
+          <p className="text-sm font-semibold text-white">Cách lấy API key Evolink</p>
+          <ol className="list-decimal pl-5 space-y-1 text-sm text-slate-300">
+            <li>Mở trang <a href={EVOLINK_SIGNUP_URL} target="_blank" rel="noreferrer" className="text-sky-300 underline underline-offset-2">evolink.ai/signup</a> rồi đăng ký hoặc đăng nhập.</li>
+            <li>Vào dashboard Evolink và mở khu vực quản lý API key của tài khoản.</li>
+            <li>Tạo hoặc sao chép khóa có dạng <span className="font-mono text-white">sk-...</span>.</li>
+            <li>Dán khóa vào ô phía trên, bật <span className="font-semibold text-white">AI Sinh ảnh</span>, rồi bấm <span className="font-semibold text-white">Lưu AI Sinh ảnh</span>.</li>
+          </ol>
+        </div>
       </div>
     </div>
   );
