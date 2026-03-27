@@ -1,3 +1,5 @@
+import { emitLocalWorkspaceChanged } from './localWorkspaceSync';
+
 export type PromptLibraryTabKey = 'core' | 'genre';
 
 export interface PromptLibraryItem {
@@ -91,6 +93,7 @@ export function savePromptLibraryState(state: PromptLibraryState): void {
     genre: sanitizePromptItems(state.genre, DEFAULT_PROMPT_LIBRARY.genre),
   };
   localStorage.setItem(PROMPT_LIBRARY_STORAGE_KEY, JSON.stringify(normalized));
+  emitLocalWorkspaceChanged('prompt_library');
 }
 
 export function resetPromptLibraryState(): PromptLibraryState {

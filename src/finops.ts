@@ -1,3 +1,5 @@
+import { emitLocalWorkspaceChanged } from './localWorkspaceSync';
+
 export type AiProvider = 'openai' | 'anthropic' | 'gemini' | 'custom';
 
 export interface BudgetState {
@@ -99,6 +101,7 @@ export function loadBudgetState(): BudgetState {
 
 export function saveBudgetState(state: BudgetState): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  emitLocalWorkspaceChanged('finops_budget');
 }
 
 function pickPricing(provider: AiProvider, model: string): PricingRow {

@@ -1,5 +1,6 @@
 import { loadBudgetState, saveBudgetState, type BudgetState } from './finops';
 import { loadPromptLibraryState, savePromptLibraryState } from './promptLibraryStore';
+import { emitLocalWorkspaceChanged } from './localWorkspaceSync';
 
 const SAFE_IMPORT_BACKUP_KEY = 'safe_import_backup_v1';
 
@@ -26,12 +27,21 @@ const normalizeCoverImageUrl = (value: any) => {
   return value.trim();
 };
 
+const normalizeTranslationMemory = (rows: any[]) =>
+  (Array.isArray(rows) ? rows : [])
+    .map((row) => ({
+      original: String(row?.original || '').trim(),
+      translation: String(row?.translation || '').trim(),
+    }))
+    .filter((row) => row.original && row.translation);
+
 const normalizeStory = (story: any) => ({
   ...story,
   coverImageUrl: normalizeCoverImageUrl(story?.coverImageUrl),
   createdAt: normalizeDate(story?.createdAt),
   updatedAt: normalizeDate(story?.updatedAt),
   chapters: normalizeChapters(story?.chapters),
+  translationMemory: normalizeTranslationMemory(story?.translationMemory),
 });
 
 function safeParseArray(raw: string | null): any[] {
@@ -78,10 +88,12 @@ export const storage = {
   getStyleReferences: () => safeParseArray(localStorage.getItem('style_references')),
   saveStyleReferences: (refs: any[]) => {
     localStorage.setItem('style_references', JSON.stringify(refs));
+    emitLocalWorkspaceChanged('style_references');
   },
   getTranslationNames: () => safeParseArray(localStorage.getItem('translation_names')),
   saveTranslationNames: (names: any[]) => {
     localStorage.setItem('translation_names', JSON.stringify(names));
+    emitLocalWorkspaceChanged('translation_names');
   },
   getApiKeys: () => safeParseArray(localStorage.getItem('api_keys')),
   saveApiKeys: (keys: any[]) => {

@@ -10,6 +10,7 @@ import {
   Wand2,
 } from 'lucide-react';
 import { CURRENT_WRITER_VERSION, WRITER_RELEASE_NOTES } from './releaseHistory';
+import { ReleaseHistoryAccordion } from '../components/ReleaseHistoryAccordion';
 import {
   extractWiki,
   generateAutocomplete,
@@ -832,21 +833,12 @@ export default function Phase3App() {
                   {CURRENT_WRITER_VERSION}
                 </span>
               </div>
-              <div className="mt-3 space-y-3">
-                {WRITER_RELEASE_NOTES.map((note) => (
-                  <div key={note.version} className="rounded-lg border border-[#D9E2EC] bg-[#F6F7F4] p-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="font-semibold text-[#1F2933]">v{note.version}</p>
-                      <span>{note.dateLabel}</span>
-                    </div>
-                    <p className="mt-1 text-[#1F2933]">{note.title}</p>
-                    <div className="mt-2 space-y-1">
-                      {note.items.map((item, idx) => (
-                        <p key={`${note.version}-${idx}`}>- {item}</p>
-                      ))}
-                    </div>
-                  </div>
-                ))}
+              <div className="mt-3">
+                <ReleaseHistoryAccordion
+                  notes={WRITER_RELEASE_NOTES}
+                  currentVersion={CURRENT_WRITER_VERSION}
+                  variant="light"
+                />
               </div>
             </div>
           </aside>

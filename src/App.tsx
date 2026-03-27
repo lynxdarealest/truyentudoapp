@@ -3,7 +3,7 @@ import { useAuth, AuthProvider } from './AuthContext';
 import { supabase, hasSupabase } from './supabaseClient';
 import { storage } from './storage';
 import { db } from './firebase';
-import { collection, addDoc, getDocs, query, where, getDocFromServer, doc, Timestamp, updateDoc, orderBy, onSnapshot } from 'firebase/firestore';
+import { collection, addDoc, getDocs, query, where, getDocFromServer, doc, Timestamp, updateDoc, orderBy, onSnapshot, setDoc } from 'firebase/firestore';
 import { 
   Plus, 
   LogOut, 
@@ -50,12 +50,15 @@ import ReactMarkdown from 'react-markdown';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { Navbar } from './components/Navbar';
-import { loadBudgetState } from './finops';
+import { ReleaseHistoryAccordion } from './components/ReleaseHistoryAccordion';
+import { loadBudgetState, saveBudgetState } from './finops';
 import { ApiSectionPanel } from './components/tools/ApiSectionPanel';
 import { ToolsPage } from './features/tools/ToolsPage';
 import { PromptLibraryModal as PromptLibraryModalNew } from './features/prompt/PromptLibrary';
 import { CURRENT_WRITER_VERSION, WRITER_RELEASE_NOTES } from './phase3/releaseHistory';
 import { APP_NOTICE_EVENT, notifyApp, type AppNoticePayload, type AppNoticeTone } from './notifications';
+import { loadPromptLibraryState, savePromptLibraryState, type PromptLibraryState } from './promptLibraryStore';
+import { LOCAL_WORKSPACE_CHANGED_EVENT, emitLocalWorkspaceChanged, loadLocalWorkspaceMeta, markLocalWorkspaceHydrated } from './localWorkspaceSync';
 
 import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { handleRelayMessage, relayGenerateContent, setRelaySender, notifyRelayDisconnected } from './relayBridge';
@@ -306,6 +309,7 @@ function loadUiProfile(defaultName?: string, defaultAvatar?: string): UiProfile 
 
 function saveUiProfile(profile: UiProfile): void {
   localStorage.setItem(UI_PROFILE_KEY, JSON.stringify(profile));
+  emitLocalWorkspaceChanged('ui_profile');
 }
 
 async function resizeAvatarFile(file: File): Promise<string> {
@@ -356,6 +360,7 @@ function loadThemeMode(): ThemeMode {
 
 function saveThemeMode(mode: ThemeMode): void {
   localStorage.setItem(UI_THEME_KEY, mode);
+  emitLocalWorkspaceChanged('ui_theme');
 }
 
 function loadViewportMode(): ViewportMode {
@@ -365,6 +370,63 @@ function loadViewportMode(): ViewportMode {
 
 function saveViewportMode(mode: ViewportMode): void {
   localStorage.setItem(UI_VIEWPORT_MODE_KEY, mode);
+  emitLocalWorkspaceChanged('ui_viewport_mode');
+}
+
+interface AccountWorkspaceSnapshot {
+  schemaVersion: number;
+  updatedAt: string;
+  uiProfile: UiProfile;
+  uiTheme: ThemeMode;
+  uiViewportMode: ViewportMode;
+  styleReferences: any[];
+  translationNames: any[];
+  promptLibrary: PromptLibraryState;
+  finopsBudget: ReturnType<typeof loadBudgetState>;
+}
+
+function buildAccountWorkspaceSnapshot(defaultName?: string, defaultAvatar?: string): AccountWorkspaceSnapshot {
+  const meta = loadLocalWorkspaceMeta();
+  return {
+    schemaVersion: 1,
+    updatedAt: meta.updatedAt || new Date().toISOString(),
+    uiProfile: loadUiProfile(defaultName, defaultAvatar),
+    uiTheme: loadThemeMode(),
+    uiViewportMode: loadViewportMode(),
+    styleReferences: storage.getStyleReferences(),
+    translationNames: storage.getTranslationNames(),
+    promptLibrary: loadPromptLibraryState(),
+    finopsBudget: loadBudgetState(),
+  };
+}
+
+function applyAccountWorkspaceSnapshot(snapshot: Partial<AccountWorkspaceSnapshot>, defaultName?: string, defaultAvatar?: string): void {
+  const nextProfileRaw = snapshot.uiProfile;
+  if (nextProfileRaw && typeof nextProfileRaw === 'object') {
+    saveUiProfile({
+      displayName: String(nextProfileRaw.displayName || defaultName || 'Người dùng').trim() || 'Người dùng',
+      avatarUrl: String(nextProfileRaw.avatarUrl || defaultAvatar || DEFAULT_PROFILE_AVATAR).trim() || DEFAULT_PROFILE_AVATAR,
+    });
+  }
+  if (snapshot.uiTheme === 'dark' || snapshot.uiTheme === 'light') {
+    saveThemeMode(snapshot.uiTheme);
+  }
+  if (snapshot.uiViewportMode === 'desktop' || snapshot.uiViewportMode === 'mobile') {
+    saveViewportMode(snapshot.uiViewportMode);
+  }
+  if (Array.isArray(snapshot.styleReferences)) {
+    storage.saveStyleReferences(snapshot.styleReferences);
+  }
+  if (Array.isArray(snapshot.translationNames)) {
+    storage.saveTranslationNames(snapshot.translationNames);
+  }
+  if (snapshot.promptLibrary && typeof snapshot.promptLibrary === 'object') {
+    savePromptLibraryState(snapshot.promptLibrary);
+  }
+  if (snapshot.finopsBudget && typeof snapshot.finopsBudget === 'object') {
+    saveBudgetState(snapshot.finopsBudget);
+  }
+  markLocalWorkspaceHydrated(snapshot.updatedAt || new Date().toISOString());
 }
 
 function parseLongIdFromText(input: string): string {
@@ -1023,6 +1085,16 @@ function normalizeTranslationDictionary(
       seen.add(key);
       return true;
     });
+}
+
+function buildStoryTranslationContext(dictionary: Array<{ original?: string; translation?: string }>): string {
+  const normalized = normalizeTranslationDictionary(dictionary);
+  if (!normalized.length) return '';
+  return [
+    'TỪ ĐIỂN RIÊNG CỦA BỘ TRUYỆN NÀY (phải giữ tuyệt đối nhất quán giữa các chương của đúng bộ truyện này):',
+    ...normalized.map((entry) => `- ${entry.original} -> ${entry.translation}`),
+    'Không tự ý dùng cách dịch khác cho các mục trên.',
+  ].join('\n');
 }
 
 function applyTranslationDictionaryToText(
@@ -1959,6 +2031,7 @@ interface Story {
   isPublic: boolean;
   isAdult?: boolean;
   isAI?: boolean;
+  translationMemory?: TranslationDictionaryEntry[];
   createdAt: any;
   updatedAt: any;
 }
@@ -7467,6 +7540,10 @@ const AppContent = () => {
   const profileAvatarInputRef = useRef<HTMLInputElement>(null);
   const activeAiRunRef = useRef<ActiveAiRun | null>(null);
   const toastTimeoutsRef = useRef<Map<string, number>>(new Map());
+  const workspaceSyncRef = useRef({
+    isHydrating: false,
+    lastSerialized: '',
+  });
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -7796,6 +7873,102 @@ const AppContent = () => {
     return () => window.removeEventListener(STORIES_UPDATED_EVENT, handler);
   }, []);
 
+  const syncWorkspaceToAccount = useCallback(async () => {
+    if (!user || workspaceSyncRef.current.isHydrating) return;
+    const payload = buildAccountWorkspaceSnapshot(user.displayName || undefined, user.photoURL || undefined);
+    const serialized = JSON.stringify(payload);
+    if (serialized === workspaceSyncRef.current.lastSerialized) return;
+    await setDoc(doc(db, 'user_settings', user.uid), payload, { merge: true });
+    workspaceSyncRef.current.lastSerialized = serialized;
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) {
+      workspaceSyncRef.current.lastSerialized = '';
+      workspaceSyncRef.current.isHydrating = false;
+      return;
+    }
+
+    let cancelled = false;
+    const hydrateWorkspace = async () => {
+      workspaceSyncRef.current.isHydrating = true;
+      try {
+        const localSnapshot = buildAccountWorkspaceSnapshot(user.displayName || undefined, user.photoURL || undefined);
+        const localSerialized = JSON.stringify(localSnapshot);
+        const localUpdatedAt = new Date(localSnapshot.updatedAt || new Date(0).toISOString()).getTime();
+        const workspaceRef = doc(db, 'user_settings', user.uid);
+        const remoteSnapshot = await getDocFromServer(workspaceRef);
+        if (cancelled) return;
+
+        if (!remoteSnapshot.exists()) {
+          await setDoc(workspaceRef, localSnapshot, { merge: true });
+          workspaceSyncRef.current.lastSerialized = localSerialized;
+          return;
+        }
+
+        const remoteData = remoteSnapshot.data() as Partial<AccountWorkspaceSnapshot> & { updatedAt?: any };
+        const remoteUpdatedAt = typeof remoteData.updatedAt === 'string'
+          ? remoteData.updatedAt
+          : (remoteData.updatedAt && typeof remoteData.updatedAt.toDate === 'function'
+            ? remoteData.updatedAt.toDate().toISOString()
+            : new Date(0).toISOString());
+        const remoteUpdatedMs = new Date(remoteUpdatedAt).getTime();
+
+        if (remoteUpdatedMs > localUpdatedAt) {
+          applyAccountWorkspaceSnapshot({ ...remoteData, updatedAt: remoteUpdatedAt }, user.displayName || undefined, user.photoURL || undefined);
+          setProfile(loadUiProfile(user.displayName || undefined, user.photoURL || undefined));
+          setThemeMode(loadThemeMode());
+          setViewportMode(loadViewportMode());
+          workspaceSyncRef.current.lastSerialized = JSON.stringify(buildAccountWorkspaceSnapshot(user.displayName || undefined, user.photoURL || undefined));
+          notifyApp({
+            tone: 'info',
+            message: 'Đã nạp dữ liệu cục bộ từ tài khoản đăng nhập.',
+            groupKey: 'account-sync-loaded',
+          });
+          return;
+        }
+
+        await setDoc(workspaceRef, localSnapshot, { merge: true });
+        workspaceSyncRef.current.lastSerialized = localSerialized;
+      } catch (error) {
+        console.warn('Không thể đồng bộ workspace theo tài khoản.', error);
+        notifyApp({
+          tone: 'warn',
+          message: 'Không thể đồng bộ dữ liệu cục bộ lên tài khoản ở thời điểm này.',
+          detail: error instanceof Error ? error.message : undefined,
+          groupKey: 'account-sync-failed',
+          timeoutMs: 4800,
+        });
+      } finally {
+        workspaceSyncRef.current.isHydrating = false;
+      }
+    };
+
+    void hydrateWorkspace();
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !user) return;
+    let syncTimer: number | null = null;
+    const handler = () => {
+      if (workspaceSyncRef.current.isHydrating) return;
+      if (syncTimer) window.clearTimeout(syncTimer);
+      syncTimer = window.setTimeout(() => {
+        void syncWorkspaceToAccount().catch((error) => {
+          console.warn('Tự động lưu workspace lên tài khoản thất bại.', error);
+        });
+      }, 700);
+    };
+    window.addEventListener(LOCAL_WORKSPACE_CHANGED_EVENT, handler as EventListener);
+    return () => {
+      if (syncTimer) window.clearTimeout(syncTimer);
+      window.removeEventListener(LOCAL_WORKSPACE_CHANGED_EVENT, handler as EventListener);
+    };
+  }, [syncWorkspaceToAccount, user]);
+
   const readImportedStoryFile = async (file: File): Promise<string> => {
     if (file.name.endsWith('.pdf')) return parsePDF(file);
     if (file.name.endsWith('.epub')) return parseEPUB(file);
@@ -7949,6 +8122,7 @@ const AppContent = () => {
           }
         }
       }
+      const storyTranslationMemory = normalizeTranslationDictionary(dictionaryEntries);
 
       const sourceWordCount = countWords(translateFileContent);
       const sourceCharCount = String(translateFileContent || '').length;
@@ -8063,6 +8237,7 @@ const AppContent = () => {
           type: 'translated',
           isAdult: Boolean(options.isAdult),
           isPublic: false,
+          translationMemory: storyTranslationMemory,
           createdAt: Timestamp.now(),
           updatedAt: Timestamp.now(),
           chapters: []
@@ -8359,6 +8534,7 @@ const AppContent = () => {
         type: 'translated',
         isAdult: Boolean(options.isAdult),
         isPublic: false,
+        translationMemory: storyTranslationMemory,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         chapters: localChapters
@@ -8731,6 +8907,7 @@ const AppContent = () => {
       const predictInstruction = predictPlot 
         ? "AI TỰ DỰ ĐOÁN: Dựa trên dàn ý và nội dung THỰC TẾ của các chương trước (được cung cấp trong phần BỐI CẢNH THỰC TẾ), hãy tự sáng tạo và dự đoán các tình tiết tiếp theo một cách logic. LƯU Ý: Tuyệt đối không lặp lại các tình tiết đã xảy ra, hãy tập trung vào diễn biến MỚI."
         : "BÁM SÁT DÀN Ý: Hãy viết chính xác theo các tình tiết đã được cung cấp trong dàn ý, không tự ý thay đổi mạch truyện chính.";
+      const storyTranslationContext = buildStoryTranslationContext(selectedStory.translationMemory || []);
 
       updateAiRun(aiRun, {
         message: 'Đang tổng hợp chỉ dẫn viết chương...',
@@ -8759,6 +8936,7 @@ const AppContent = () => {
         ${styleReference ? `PHONG CÁCH VĂN MẪU (Hãy bắt chước giọng văn này):\n${styleReference}\n` : ""}
         ${finalInstructions ? `CHỈ DẪN THÊM CHO AI:\n${finalInstructions}\n` : ""}
         ${chapterScript ? `KỊCH BẢN CHI TIẾT CHO CHƯƠNG NÀY:\n${chapterScript}\n` : ""}
+        ${storyTranslationContext ? `${storyTranslationContext}\n` : ""}
 
         BỐI CẢNH VÀ NHÂN VẬT:
         ${charContext ? `THÔNG TIN NHÂN VẬT THAM CHIẾU:\n${charContext}\n` : ""}
@@ -9288,24 +9466,11 @@ const AppContent = () => {
               <button className="tf-btn tf-btn-ghost px-3 py-1" onClick={() => setShowReleaseHistoryModal(false)}>Đóng</button>
             </div>
             <div className="space-y-3">
-              {WRITER_RELEASE_NOTES.map((note) => (
-                <div key={note.version} className="rounded-2xl border border-white/10 bg-slate-900/40 p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <p className="text-sm font-semibold text-white">v{note.version}</p>
-                      <p className="text-xs text-slate-400">{note.dateLabel}</p>
-                    </div>
-                    <span className="rounded-full bg-indigo-500/15 px-3 py-1 text-xs font-semibold text-indigo-200">
-                      {note.title}
-                    </span>
-                  </div>
-                  <div className="mt-3 space-y-2 text-sm text-slate-200">
-                    {note.items.map((item, idx) => (
-                      <p key={`${note.version}-${idx}`}>- {item}</p>
-                    ))}
-                  </div>
-                </div>
-              ))}
+              <ReleaseHistoryAccordion
+                notes={WRITER_RELEASE_NOTES}
+                currentVersion={CURRENT_WRITER_VERSION}
+                variant="dark"
+              />
             </div>
           </div>
         </div>

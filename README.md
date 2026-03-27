@@ -76,6 +76,9 @@ npm run build
 - Cải thiện `Kho Prompt`: có trạng thái `Chưa lưu` / `Đã đồng bộ`, tự động lưu khi đổi mục hoặc đóng, và nút `Lưu thay đổi` chỉ bật khi thật sự có chỉnh sửa.
 - Làm rõ `Công cụ` là bộ trợ giúp cục bộ: gắn nhãn không gọi AI, đổi các mô tả dễ gây hiểu nhầm và thêm lối mở sang AI nâng cao.
 - Rút gọn cảm giác quá tải ở form tạo chương bằng checklist các trường quan trọng và tách phần `Tùy chỉnh nâng cao` để người dùng biết nên điền gì trước.
+- Đổi `Lịch sử cập nhật` sang kiểu accordion theo phiên bản: mặc định chỉ hiện tên version, bấm vào mới mở nội dung và chỉ mở một phiên bản tại một thời điểm.
+- Tự động lưu các cấu hình cục bộ quan trọng vào tài khoản đã đăng nhập, gồm hồ sơ giao diện, từ điển dịch, văn mẫu, kho prompt và budget AI.
+- Thêm translation memory theo từng bộ truyện để tên riêng/thuật ngữ đã khóa ở truyện này không làm ảnh hưởng truyện khác nhưng vẫn giữ consistency cho các chương sau của chính truyện đó.
 
 ### v0.0a
 - Nâng prompt và context pack của Writer Pro để AI bám objective, timeline, glossary và Universe Wiki chắc hơn.
