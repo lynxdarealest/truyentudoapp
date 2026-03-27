@@ -42,6 +42,15 @@ export interface GoogleDriveUploadResult {
   id: string;
   name: string;
   createdTime?: string;
+  modifiedTime?: string;
+  replacedExisting?: boolean;
+  cleanedDuplicates?: number;
+}
+
+interface GoogleDriveFileRef {
+  id: string;
+  name: string;
+  modifiedTime?: string;
 }
 
 function getClientId(): string {
@@ -218,23 +227,54 @@ export async function disconnectGoogleDrive(): Promise<void> {
   }
 }
 
-export function buildDriveBackupFilename(createdAt: string, reason: string): string {
-  const stamp = createdAt.replace(/[:.]/g, '-');
-  return `truyenforge-backup-${reason}-${stamp}.json`;
+function escapeDriveQueryValue(input: string): string {
+  return input.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
 
-export async function uploadBackupSnapshotToDrive(
-  accessToken: string,
-  fileName: string,
+async function listBackupFilesByName(accessToken: string, fileName: string): Promise<GoogleDriveFileRef[]> {
+  const query = `'appDataFolder' in parents and name = '${escapeDriveQueryValue(fileName)}' and trashed = false`;
+  const url = new URL('https://www.googleapis.com/drive/v3/files');
+  url.searchParams.set('spaces', 'appDataFolder');
+  url.searchParams.set('pageSize', '20');
+  url.searchParams.set('fields', 'files(id,name,modifiedTime)');
+  url.searchParams.set('q', query);
+
+  const response = await fetch(url.toString(), {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || 'Không thể kiểm tra file backup hiện có trên Google Drive.');
+  }
+
+  const payload = await response.json() as { files?: GoogleDriveFileRef[] };
+  return Array.isArray(payload.files)
+    ? payload.files.sort((a, b) => new Date(b.modifiedTime || 0).getTime() - new Date(a.modifiedTime || 0).getTime())
+    : [];
+}
+
+async function deleteDriveFile(accessToken: string, fileId: string): Promise<void> {
+  const response = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, {
+    method: 'DELETE',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || 'Không thể dọn file backup Google Drive cũ.');
+  }
+}
+
+function buildMultipartBody(
+  boundary: string,
+  metadata: Record<string, unknown>,
   payload: StorageBackupPayload,
-): Promise<GoogleDriveUploadResult> {
-  const boundary = `truyenforge-${Date.now()}`;
-  const metadata = {
-    name: fileName,
-    parents: ['appDataFolder'],
-    mimeType: 'application/json',
-  };
-  const body = [
+): string {
+  return [
     `--${boundary}`,
     'Content-Type: application/json; charset=UTF-8',
     '',
@@ -246,9 +286,37 @@ export async function uploadBackupSnapshotToDrive(
     `--${boundary}--`,
     '',
   ].join('\r\n');
+}
 
-  const response = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,createdTime', {
-    method: 'POST',
+export function buildDriveBackupFilename(ownerKey: string): string {
+  const safeOwnerKey = String(ownerKey || 'default').trim().replace(/[^a-zA-Z0-9_-]+/g, '-');
+  return `truyenforge-backup-${safeOwnerKey}.json`;
+}
+
+export async function uploadBackupSnapshotToDrive(
+  accessToken: string,
+  fileName: string,
+  payload: StorageBackupPayload,
+): Promise<GoogleDriveUploadResult> {
+  const boundary = `truyenforge-${Date.now()}`;
+  const existingFiles = await listBackupFilesByName(accessToken, fileName);
+  const current = existingFiles[0];
+  const metadata = current
+    ? {
+        name: fileName,
+        mimeType: 'application/json',
+      }
+    : {
+        name: fileName,
+        parents: ['appDataFolder'],
+        mimeType: 'application/json',
+      };
+  const body = buildMultipartBody(boundary, metadata, payload);
+  const endpoint = current
+    ? `https://www.googleapis.com/upload/drive/v3/files/${current.id}?uploadType=multipart&fields=id,name,createdTime,modifiedTime`
+    : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,createdTime,modifiedTime';
+  const response = await fetch(endpoint, {
+    method: current ? 'PATCH' : 'POST',
     headers: {
       Authorization: `Bearer ${accessToken}`,
       'Content-Type': `multipart/related; boundary=${boundary}`,
@@ -261,5 +329,19 @@ export async function uploadBackupSnapshotToDrive(
     throw new Error(text || 'Không thể upload backup lên Google Drive.');
   }
 
-  return await response.json() as GoogleDriveUploadResult;
+  const uploaded = await response.json() as GoogleDriveUploadResult;
+  const duplicates = existingFiles.slice(1);
+  for (const file of duplicates) {
+    try {
+      await deleteDriveFile(accessToken, file.id);
+    } catch {
+      // Keep the latest backup safe even if old duplicates couldn't be removed.
+    }
+  }
+
+  return {
+    ...uploaded,
+    replacedExisting: Boolean(current),
+    cleanedDuplicates: duplicates.length,
+  };
 }

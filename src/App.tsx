@@ -9190,7 +9190,7 @@ const AppContent = () => {
     try {
       const uploaded = await uploadBackupSnapshotToDrive(
         accessToken,
-        buildDriveBackupFilename(snapshot.createdAt, snapshot.reason),
+        buildDriveBackupFilename(user.uid),
         snapshot.payload,
       );
       await updateBackupSnapshotDriveMeta(snapshot.id, {
@@ -9203,8 +9203,12 @@ const AppContent = () => {
       if (!options?.quiet) {
         notifyApp({
           tone: 'success',
-          message: 'Đã đẩy bản sao lưu JSON lên Google Drive.',
-          detail: uploaded.name,
+          message: uploaded.replacedExisting
+            ? 'Đã ghi đè file backup hiện hành trên Google Drive.'
+            : 'Đã tạo file backup hiện hành trên Google Drive.',
+          detail: uploaded.cleanedDuplicates
+            ? `${uploaded.name} · đã dọn ${uploaded.cleanedDuplicates} file backup cũ trùng tên`
+            : uploaded.name,
           groupKey: 'backup-drive-upload-success',
         });
       }
@@ -11690,9 +11694,9 @@ const AppContent = () => {
                         onChange={(e) => setBackupSettings((prev) => ({ ...prev, autoUploadToDrive: e.target.checked }))}
                       />
                       <span>
-                        <strong className="text-white">Tự đẩy file JSON mới nhất lên Google Drive</strong>
+                        <strong className="text-white">Tự ghi đè file backup hiện hành trên Google Drive</strong>
                         <br />
-                        Nếu Drive đã kết nối, mỗi snapshot mới sẽ được upload JSON lên `appDataFolder` mà không bật tab khác.
+                        Nếu Drive đã kết nối, app sẽ cập nhật lại đúng một file JSON trong `appDataFolder`, không tạo thêm file mới mỗi lần sao lưu.
                       </span>
                     </label>
                   </div>
@@ -11704,7 +11708,7 @@ const AppContent = () => {
                     <h4 className="text-lg font-semibold">Google Drive backup</h4>
                   </div>
                   <p className="text-sm text-slate-400">
-                    Mỗi tài khoản TruyenForge chỉ được khóa với đúng một Google Drive. Sau khi khóa xong, app chỉ chấp nhận backup vào đúng Gmail đó để tránh lưu nhầm dữ liệu.
+                    Mỗi tài khoản TruyenForge chỉ được khóa với đúng một Google Drive. Sau khi khóa xong, app chỉ chấp nhận backup vào đúng Gmail đó và sẽ luôn ghi đè file backup hiện hành thay vì đẻ thêm file mới.
                   </p>
                   <div className="flex flex-wrap gap-3">
                     <button
@@ -11744,7 +11748,7 @@ const AppContent = () => {
                       <p className="mt-1">
                         {driveBinding
                           ? driveConnected
-                            ? `Drive đang kết nối bằng ${driveAuth?.account.email || driveBinding.email}. Snapshot mới sẽ chỉ được đẩy lên đúng Gmail đã khóa này.`
+                            ? `Drive đang kết nối bằng ${driveAuth?.account.email || driveBinding.email}. Từ giờ app sẽ luôn cập nhật lại đúng một file backup hiện hành trên Gmail đã khóa này.`
                             : `Phiên Drive hiện đã ngắt. Khi kết nối lại, bạn bắt buộc phải chọn đúng ${driveBinding.email}.`
                           : 'Bấm kết nối một lần để khóa vĩnh viễn một Gmail cho tài khoản TruyenForge hiện tại, rồi mới bật auto backup lên Drive.'}
                       </p>
