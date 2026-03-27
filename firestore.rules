@@ -64,6 +64,19 @@
 //   - translation: string (required)
 //   - createdAt: timestamp
 //
+// Collection: user_settings
+// Document ID: {userId}
+// Fields:
+//   - schemaVersion: number
+//   - updatedAt: string
+//   - uiProfile: map
+//   - uiTheme: string
+//   - uiViewportMode: string
+//   - styleReferences: list
+//   - translationNames: list
+//   - promptLibrary: map
+//   - finopsBudget: map
+//
 // ===============================================================
 
 rules_version = '2';
@@ -145,6 +158,34 @@ service cloud.firestore {
              data.translation is string && data.translation.size() > 0 && data.translation.size() < 500;
     }
 
+    function isValidUserSettings(data, userId) {
+      return data.keys().hasOnly([
+               'schemaVersion',
+               'updatedAt',
+               'uiProfile',
+               'uiTheme',
+               'uiViewportMode',
+               'styleReferences',
+               'translationNames',
+               'promptLibrary',
+               'finopsBudget'
+             ]) &&
+             (!('schemaVersion' in data) || data.schemaVersion is int) &&
+             (!('updatedAt' in data) || data.updatedAt is string) &&
+             (!('uiProfile' in data) || (
+               data.uiProfile is map &&
+               (!('displayName' in data.uiProfile) || data.uiProfile.displayName is string) &&
+               (!('avatarUrl' in data.uiProfile) || data.uiProfile.avatarUrl is string)
+             )) &&
+             (!('uiTheme' in data) || data.uiTheme in ['light', 'dark']) &&
+             (!('uiViewportMode' in data) || data.uiViewportMode in ['desktop', 'mobile']) &&
+             (!('styleReferences' in data) || data.styleReferences is list) &&
+             (!('translationNames' in data) || data.translationNames is list) &&
+             (!('promptLibrary' in data) || data.promptLibrary is map) &&
+             (!('finopsBudget' in data) || data.finopsBudget is map) &&
+             isOwner(userId);
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
@@ -188,6 +229,12 @@ service cloud.firestore {
       allow create: if isAuthenticated() && isValidTranslationName(request.resource.data);
       allow update: if (isDocOwner(resource.data.authorId) || isAdmin()) && isValidTranslationName(request.resource.data);
       allow delete: if isDocOwner(resource.data.authorId) || isAdmin();
+    }
+
+    match /user_settings/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create, update: if isValidUserSettings(request.resource.data, userId);
+      allow delete: if isOwner(userId) || isAdmin();
     }
   }
 }
