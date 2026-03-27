@@ -207,6 +207,15 @@ export function Navbar({
     input.click();
   }
 
+  function handleBackupJson() {
+    const shouldExport = window.confirm('Nhấn OK để xuất backup JSON, hoặc Cancel để nhập backup JSON.');
+    if (shouldExport) {
+      handleExport();
+      return;
+    }
+    handleImport();
+  }
+
   return (
     <>
       {isMobile && (
@@ -223,7 +232,6 @@ export function Navbar({
             {showProfileMenu ? (
               <div className={cn('absolute right-0 mt-2 w-56 rounded-2xl border z-50 p-2 backdrop-blur-xl', dropdownClass)}>
                 <div className="px-3 py-2">
-                  <p className="text-xs text-slate-500">Đăng nhập với Supabase</p>
                   <p className="font-bold text-slate-800 truncate">{authEmail || 'Chưa đăng nhập'}</p>
                   {versionLabel ? (
                     <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-indigo-500">{versionLabel}</p>
@@ -241,29 +249,11 @@ export function Navbar({
                 <button
                   onClick={() => {
                     setShowProfileMenu(false);
-                    onOpenReleaseHistory();
+                    handleBackupJson();
                   }}
                   className={cn('w-full text-left px-3 py-2 rounded-lg text-sm font-semibold transition-colors', isDark ? 'hover:bg-white/10' : 'hover:bg-slate-100')}
                 >
-                  Lịch sử cập nhật
-                </button>
-                <button
-                  onClick={() => {
-                    setShowProfileMenu(false);
-                    handleExport();
-                  }}
-                  className={cn('w-full text-left px-3 py-2 rounded-lg text-sm font-semibold transition-colors', isDark ? 'hover:bg-white/10' : 'hover:bg-slate-100')}
-                >
-                  Xuất backup JSON
-                </button>
-                <button
-                  onClick={() => {
-                    setShowProfileMenu(false);
-                    handleImport();
-                  }}
-                  className={cn('w-full text-left px-3 py-2 rounded-lg text-sm font-semibold transition-colors', isDark ? 'hover:bg-white/10' : 'hover:bg-slate-100')}
-                >
-                  Nhập backup JSON
+                  Backup JSON
                 </button>
                 <button
                   onClick={() => {
@@ -469,7 +459,6 @@ export function Navbar({
               {showProfileMenu ? (
                 <div className={cn('absolute right-0 mt-2 w-56 rounded-2xl border z-50 p-2 backdrop-blur-xl', dropdownClass)}>
                   <div className="px-3 py-2">
-                    <p className="text-xs text-slate-500">Đăng nhập với Supabase</p>
                     <p className="font-bold text-slate-800 truncate">{authEmail || 'Khách/Local'}</p>
                     {versionLabel ? (
                       <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-indigo-500">{versionLabel}</p>
@@ -487,38 +476,11 @@ export function Navbar({
                   <button
                     onClick={() => {
                       setShowProfileMenu(false);
-                      onOpenReleaseHistory();
+                      handleBackupJson();
                     }}
                     className={cn('w-full text-left px-3 py-2 rounded-lg text-sm font-semibold transition-colors', isDark ? 'hover:bg-white/10' : 'hover:bg-slate-100')}
                   >
-                    Lịch sử cập nhật
-                  </button>
-                  <button
-                    onClick={() => {
-                      setShowProfileMenu(false);
-                      onOpenPromptManager();
-                    }}
-                    className={cn('w-full text-left px-3 py-2 rounded-lg text-sm font-semibold transition-colors', isDark ? 'hover:bg-white/10' : 'hover:bg-slate-100')}
-                  >
-                    Kho Prompt
-                  </button>
-                  <button
-                    onClick={() => {
-                      setShowProfileMenu(false);
-                      handleExport();
-                    }}
-                    className={cn('w-full text-left px-3 py-2 rounded-lg text-sm font-semibold transition-colors', isDark ? 'hover:bg-white/10' : 'hover:bg-slate-100')}
-                  >
-                    Xuất backup JSON
-                  </button>
-                  <button
-                    onClick={() => {
-                      setShowProfileMenu(false);
-                      handleImport();
-                    }}
-                  className={cn('w-full text-left px-3 py-2 rounded-lg text-sm font-semibold transition-colors', isDark ? 'hover:bg-white/10' : 'hover:bg-slate-100')}
-                  >
-                    Nhập backup JSON
+                    Backup JSON
                   </button>
                   <button
                     onClick={() => {
