@@ -35,6 +35,17 @@ const normalizeTranslationMemory = (rows: any[]) =>
     }))
     .filter((row) => row.original && row.translation);
 
+const normalizeCharacterRoster = (rows: any[]) =>
+  (Array.isArray(rows) ? rows : [])
+    .map((row, index) => ({
+      id: String(row?.id || `roster-${index}-${Date.now()}`),
+      name: String(row?.name || '').trim(),
+      role: String(row?.role || '').trim(),
+      age: String(row?.age || '').trim(),
+      identity: String(row?.identity || '').trim(),
+    }))
+    .filter((row) => row.name);
+
 const normalizeStory = (story: any) => ({
   ...story,
   coverImageUrl: normalizeCoverImageUrl(story?.coverImageUrl),
@@ -42,6 +53,8 @@ const normalizeStory = (story: any) => ({
   updatedAt: normalizeDate(story?.updatedAt),
   chapters: normalizeChapters(story?.chapters),
   translationMemory: normalizeTranslationMemory(story?.translationMemory),
+  storyPromptNotes: String(story?.storyPromptNotes || '').trim(),
+  characterRoster: normalizeCharacterRoster(story?.characterRoster),
 });
 
 function safeParseArray(raw: string | null): any[] {

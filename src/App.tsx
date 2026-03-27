@@ -1257,6 +1257,152 @@ function normalizeTranslationBatchResponse(
   };
 }
 
+function parseStoryGenreAndPrompt(rawGenre: string, existingPrompt = ''): { genreLabel: string; promptNotes: string } {
+  const source = String(rawGenre || '').trim();
+  const inheritedPrompt = String(existingPrompt || '').trim();
+  if (!source) {
+    return {
+      genreLabel: '',
+      promptNotes: inheritedPrompt,
+    };
+  }
+
+  const lines = source
+    .split(/\r?\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const promptHintRe = /giọng văn|xưng hô|vai trò|yêu cầu|prompt|quy tắc|cảnh báo|phong cách/i;
+  const looksLikePrompt = lines.length > 1 || /^[-*]/.test(source) || (source.length > 56 && promptHintRe.test(source));
+
+  if (!looksLikePrompt) {
+    return {
+      genreLabel: source,
+      promptNotes: inheritedPrompt,
+    };
+  }
+
+  const cleanGenre = lines.find((line) => {
+    if (/^[-*]/.test(line)) return false;
+    if (promptHintRe.test(line)) return false;
+    return line.length <= 40;
+  }) || '';
+
+  const promptLines = lines.filter((line) => line !== cleanGenre);
+  const mergedPrompt = [inheritedPrompt, ...promptLines].filter(Boolean).join('\n').trim();
+
+  return {
+    genreLabel: cleanGenre,
+    promptNotes: mergedPrompt,
+  };
+}
+
+function toCharacterProfileId(): string {
+  return createClientId('roster');
+}
+
+function normalizeCharacterRosterRows(rows: StoryCharacterProfile[]): StoryCharacterProfile[] {
+  return (Array.isArray(rows) ? rows : [])
+    .map((row) => ({
+      id: String(row?.id || toCharacterProfileId()).trim() || toCharacterProfileId(),
+      name: String(row?.name || '').trim(),
+      role: String(row?.role || '').trim(),
+      age: String(row?.age || '').trim(),
+      identity: String(row?.identity || '').trim(),
+    }))
+    .filter((row) => row.name);
+}
+
+function analyzeCharacterRosterLocally(input: { title: string; introduction: string; content: string }): StoryCharacterProfile[] {
+  const corpus = [input.title, input.introduction, input.content]
+    .map((chunk) => String(chunk || '').replace(/\r/g, ' '))
+    .join('\n');
+  if (!corpus.trim()) return [];
+
+  const candidatePattern = /\b([A-ZÀ-ỴĐ][a-zà-ỹđ]+(?:\s+[A-ZÀ-ỴĐ][a-zà-ỹđ]+){0,3})\b/g;
+  const blockedTerms = new Set([
+    'Chương',
+    'Thiên Mệnh',
+    'Giới Thiệu',
+    'Nội Dung',
+    'Bìa Truyện',
+    'Tác Giả',
+    'Truyện',
+  ]);
+
+  const candidates = new Map<string, { count: number; firstIndex: number }>();
+  let match: RegExpExecArray | null;
+  while ((match = candidatePattern.exec(corpus)) !== null) {
+    const rawName = String(match[1] || '').trim();
+    if (!rawName || rawName.length < 3 || blockedTerms.has(rawName)) continue;
+    const parts = rawName.split(/\s+/);
+    if (parts.length === 1 && rawName.length < 5) continue;
+    const current = candidates.get(rawName) || { count: 0, firstIndex: match.index };
+    current.count += 1;
+    current.firstIndex = Math.min(current.firstIndex, match.index);
+    candidates.set(rawName, current);
+  }
+
+  const topNames = Array.from(candidates.entries())
+    .filter(([, info]) => info.count >= 2)
+    .sort((a, b) => {
+      if (b[1].count !== a[1].count) return b[1].count - a[1].count;
+      return a[1].firstIndex - b[1].firstIndex;
+    })
+    .slice(0, 8)
+    .map(([name]) => name);
+
+  const takeContext = (name: string) => {
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`.{0,90}${escaped}.{0,160}`, 'i');
+    return corpus.match(regex)?.[0] || '';
+  };
+
+  const inferRole = (context: string, rank: number): string => {
+    const text = context.toLowerCase();
+    if (/phản diện|kẻ địch|tà tu|ma đầu|đối thủ/.test(text)) return 'Phản diện / đối thủ';
+    if (/sư phụ|sư tôn|thầy|đạo sư/.test(text)) return 'Sư phụ / người dẫn dắt';
+    if (/bằng hữu|đồng đội|tri kỷ|bạn thân/.test(text)) return 'Bạn đồng hành';
+    if (/muội|tỷ|chị|em gái|công chúa|thánh nữ/.test(text)) return 'Nhân vật nữ quan trọng';
+    if (rank === 0) return 'Nhân vật trung tâm';
+    if (rank === 1) return 'Nhân vật nòng cốt';
+    return 'Nhân vật thường xuất hiện';
+  };
+
+  const inferAge = (context: string): string => {
+    const ageMatch = context.match(/(\d{1,3})\s*tuổi/i);
+    if (ageMatch?.[1]) return `${ageMatch[1]} tuổi`;
+    if (/thiếu niên|thiếu nữ/.test(context.toLowerCase())) return 'Thiếu niên';
+    if (/trung niên/.test(context.toLowerCase())) return 'Trung niên';
+    return '';
+  };
+
+  const inferIdentity = (context: string): string => {
+    const identityPatterns = [
+      /(thiếu chủ|thánh nữ|thánh tử|công chúa|hoàng tử|vương gia|đế quân|đế tử)/i,
+      /(đệ tử|trưởng lão|tông chủ|gia chủ|đường chủ|bang chủ|cung chủ)/i,
+      /(giáo viên|học sinh|sinh viên|bác sĩ|cảnh sát|sát thủ|đạo sĩ|tu sĩ)/i,
+    ];
+    for (const pattern of identityPatterns) {
+      const identity = context.match(pattern)?.[1];
+      if (identity) return identity;
+    }
+    const isMatch = context.match(/\blà\s+([^,.:\n]{4,48})/i)?.[1];
+    if (isMatch) return isMatch.trim();
+    return '';
+  };
+
+  return topNames.map((name, index) => {
+    const context = takeContext(name);
+    return {
+      id: toCharacterProfileId(),
+      name,
+      role: inferRole(context, index),
+      age: inferAge(context),
+      identity: inferIdentity(context),
+    };
+  });
+}
+
 function sanitizePromptForUrl(prompt: string): string {
   const raw = String(prompt || '');
   if (!raw) return '';
@@ -2057,6 +2203,14 @@ interface Chapter {
   createdAt: any;
 }
 
+interface StoryCharacterProfile {
+  id: string;
+  name: string;
+  role: string;
+  age: string;
+  identity: string;
+}
+
 interface Story {
   id: string;
   authorId: string;
@@ -2072,6 +2226,8 @@ interface Story {
   isPublic: boolean;
   isAdult?: boolean;
   isAI?: boolean;
+  storyPromptNotes?: string;
+  characterRoster?: StoryCharacterProfile[];
   translationMemory?: TranslationDictionaryEntry[];
   createdAt: any;
   updatedAt: any;
@@ -4452,12 +4608,15 @@ const StyleReferenceLibrary = ({
 };
 
 const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data: Partial<Story>) => void, onCancel: () => void }) => {
+  const parsedStoryMeta = parseStoryGenreAndPrompt(story?.genre || '', story?.storyPromptNotes || '');
   const [title, setTitle] = useState(story?.title || '');
-  const [genre, setGenre] = useState(story?.genre || '');
+  const [genre, setGenre] = useState(parsedStoryMeta.genreLabel || '');
   const [introduction, setIntroduction] = useState(story?.introduction || '');
   const [content, setContent] = useState(story?.content || '');
   const [coverImageUrl, setCoverImageUrl] = useState(story?.coverImageUrl || '');
   const [coverPrompt, setCoverPrompt] = useState('');
+  const [storyPromptNotes, setStoryPromptNotes] = useState(parsedStoryMeta.promptNotes || '');
+  const [characterRoster, setCharacterRoster] = useState<StoryCharacterProfile[]>(normalizeCharacterRosterRows(story?.characterRoster || []));
   const [expectedChapters, setExpectedChapters] = useState(story?.expectedChapters || 0);
   const [expectedWordCount, setExpectedWordCount] = useState(story?.expectedWordCount || 0);
   const [isPublic, setIsPublic] = useState(story?.isPublic ?? false);
@@ -4465,6 +4624,7 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
   const [preview, setPreview] = useState(false);
   const [isSuggesting, setIsSuggesting] = useState(false);
   const [isGeneratingCover, setIsGeneratingCover] = useState(false);
+  const [isAnalyzingCharacters, setIsAnalyzingCharacters] = useState(false);
   const coverInputRef = useRef<HTMLInputElement>(null);
 
   const buildCoverPrompt = () => {
@@ -4695,6 +4855,52 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
     }
   };
 
+  const handleAnalyzeCharactersLocal = () => {
+    setIsAnalyzingCharacters(true);
+    try {
+      const detected = analyzeCharacterRosterLocally({
+        title,
+        introduction,
+        content,
+      });
+      if (!detected.length) {
+        notifyApp({
+          tone: 'warn',
+          message: 'Chưa đủ dữ liệu để phân tích nhân vật cục bộ. Hãy thêm giới thiệu hoặc nội dung truyện trước.',
+        });
+        return;
+      }
+      setCharacterRoster(detected);
+      notifyApp({
+        tone: 'success',
+        message: `Đã phân tích cục bộ ${detected.length} nhân vật thường xuất hiện.`,
+      });
+    } finally {
+      setIsAnalyzingCharacters(false);
+    }
+  };
+
+  const updateCharacterRosterRow = (id: string, field: keyof StoryCharacterProfile, value: string) => {
+    setCharacterRoster((prev) => prev.map((row) => (row.id === id ? { ...row, [field]: value } : row)));
+  };
+
+  const addCharacterRosterRow = () => {
+    setCharacterRoster((prev) => [
+      ...prev,
+      {
+        id: toCharacterProfileId(),
+        name: '',
+        role: '',
+        age: '',
+        identity: '',
+      },
+    ]);
+  };
+
+  const removeCharacterRosterRow = (id: string) => {
+    setCharacterRoster((prev) => prev.filter((row) => row.id !== id));
+  };
+
   return (
     <motion.div 
       initial={{ opacity: 0, y: 20 }}
@@ -4738,7 +4944,19 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
             {isPublic ? 'Công khai' : 'Riêng tư'}
           </button>
           <button 
-            onClick={() => onSave({ title, genre, introduction, content, coverImageUrl: coverImageUrl.trim() || undefined, expectedChapters, expectedWordCount, isPublic, isAdult })}
+            onClick={() => onSave({
+              title,
+              genre,
+              introduction,
+              content,
+              storyPromptNotes: storyPromptNotes.trim() || undefined,
+              characterRoster: normalizeCharacterRosterRows(characterRoster),
+              coverImageUrl: coverImageUrl.trim() || undefined,
+              expectedChapters,
+              expectedWordCount,
+              isPublic,
+              isAdult,
+            })}
             disabled={!title}
             className="flex items-center gap-2 px-6 py-2 rounded-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white transition-colors text-sm font-medium shadow-md"
           >
@@ -4758,31 +4976,117 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
               onChange={(e) => setTitle(e.target.value)}
               className="w-full text-4xl font-serif font-bold border-none focus:ring-0 placeholder:text-slate-300"
             />
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <input 
-                type="text" 
-                placeholder="Thể loại (ví dụ: Tiên hiệp...)"
-                value={genre}
-                onChange={(e) => setGenre(e.target.value)}
-                className="w-full text-lg font-bold border-none focus:ring-0 placeholder:text-slate-300 text-indigo-600"
-              />
-              <div className="flex items-center gap-2 px-4 py-2 bg-slate-50 rounded-xl border border-slate-100">
-                <span className="text-xs font-bold text-slate-400 uppercase whitespace-nowrap">Số chương dự kiến:</span>
-                <input 
-                  type="number" 
-                  value={expectedChapters}
-                  onChange={(e) => setExpectedChapters(parseInt(e.target.value) || 0)}
-                  className="w-full bg-transparent border-none focus:ring-0 text-sm font-bold text-slate-700"
+            <div className="grid grid-cols-1 gap-4">
+              <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                <label className="mb-2 block text-xs font-bold uppercase tracking-widest text-slate-400">Thể loại / nhãn truyện</label>
+                <textarea
+                  placeholder="Ví dụ: Tiên hiệp, huyền huyễn, xuyên không..."
+                  value={genre}
+                  onChange={(e) => setGenre(e.target.value)}
+                  rows={2}
+                  className="w-full resize-none border-none bg-transparent p-0 text-base font-semibold text-indigo-600 focus:ring-0 placeholder:text-slate-300 tf-mobile-textarea"
                 />
               </div>
-              <div className="flex items-center gap-2 px-4 py-2 bg-slate-50 rounded-xl border border-slate-100">
-                <span className="text-xs font-bold text-slate-400 uppercase whitespace-nowrap">Số chữ dự kiến:</span>
-                <input 
-                  type="number" 
-                  value={expectedWordCount}
-                  onChange={(e) => setExpectedWordCount(parseInt(e.target.value) || 0)}
-                  className="w-full bg-transparent border-none focus:ring-0 text-sm font-bold text-slate-700"
-                />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="px-4 py-3 bg-slate-50 rounded-xl border border-slate-100">
+                  <label className="mb-2 block text-xs font-bold text-slate-400 uppercase tracking-widest">Số chương dự kiến</label>
+                  <input 
+                    type="number" 
+                    value={expectedChapters}
+                    onChange={(e) => setExpectedChapters(parseInt(e.target.value) || 0)}
+                    className="w-full bg-transparent border-none focus:ring-0 text-sm font-bold text-slate-700 p-0"
+                  />
+                </div>
+                <div className="px-4 py-3 bg-slate-50 rounded-xl border border-slate-100">
+                  <label className="mb-2 block text-xs font-bold text-slate-400 uppercase tracking-widest">Số chữ dự kiến</label>
+                  <input 
+                    type="number" 
+                    value={expectedWordCount}
+                    onChange={(e) => setExpectedWordCount(parseInt(e.target.value) || 0)}
+                    className="w-full bg-transparent border-none focus:ring-0 text-sm font-bold text-slate-700 p-0"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <label className="text-xs font-bold text-slate-400 uppercase tracking-widest">Bảng nhân vật thường xuất hiện</label>
+                <p className="mt-1 text-sm text-slate-500">Phân tích chạy cục bộ trên máy từ tiêu đề, giới thiệu và nội dung truyện, không gọi AI.</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={handleAnalyzeCharactersLocal}
+                  disabled={isAnalyzingCharacters}
+                  className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 disabled:opacity-60 flex items-center gap-2"
+                >
+                  {isAnalyzingCharacters ? <Loader2 className="w-4 h-4 animate-spin" /> : <Database className="w-4 h-4" />}
+                  Phân tích local
+                </button>
+                <button
+                  type="button"
+                  onClick={addCharacterRosterRow}
+                  className="px-4 py-2 rounded-xl border border-slate-200 text-sm font-semibold hover:bg-slate-50"
+                >
+                  Thêm dòng
+                </button>
+              </div>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+              <div className="hidden md:grid md:grid-cols-[1.3fr_1fr_0.8fr_1.2fr_auto] gap-3 px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-400 bg-slate-50 border-b border-slate-200">
+                <span>Tên nhân vật</span>
+                <span>Vai trò</span>
+                <span>Tuổi</span>
+                <span>Thân phận</span>
+                <span></span>
+              </div>
+              <div className="divide-y divide-slate-100">
+                {characterRoster.length ? characterRoster.map((row) => (
+                  <div key={row.id} className="grid grid-cols-1 md:grid-cols-[1.3fr_1fr_0.8fr_1.2fr_auto] gap-3 px-4 py-4 items-start">
+                    <input
+                      type="text"
+                      value={row.name}
+                      onChange={(e) => updateCharacterRosterRow(row.id, 'name', e.target.value)}
+                      placeholder="Tên nhân vật"
+                      className="rounded-xl border border-slate-200 px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
+                    />
+                    <input
+                      type="text"
+                      value={row.role}
+                      onChange={(e) => updateCharacterRosterRow(row.id, 'role', e.target.value)}
+                      placeholder="Vai trò"
+                      className="rounded-xl border border-slate-200 px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
+                    />
+                    <input
+                      type="text"
+                      value={row.age}
+                      onChange={(e) => updateCharacterRosterRow(row.id, 'age', e.target.value)}
+                      placeholder="Ví dụ: 18 tuổi"
+                      className="rounded-xl border border-slate-200 px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
+                    />
+                    <input
+                      type="text"
+                      value={row.identity}
+                      onChange={(e) => updateCharacterRosterRow(row.id, 'identity', e.target.value)}
+                      placeholder="Thân phận / xuất thân"
+                      className="rounded-xl border border-slate-200 px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeCharacterRosterRow(row.id)}
+                      className="px-3 py-2 rounded-xl border border-rose-200 text-rose-600 text-sm font-semibold hover:bg-rose-50"
+                    >
+                      Xóa
+                    </button>
+                  </div>
+                )) : (
+                  <div className="px-4 py-10 text-center text-sm italic text-slate-400">
+                    Chưa có dữ liệu nhân vật. Bạn có thể tự thêm tay hoặc bấm `Phân tích local`.
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -4820,12 +5124,6 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
                     onChange={(e) => setCoverImageUrl(e.target.value)}
                     placeholder="Dán URL ảnh bìa (https://...)"
                     className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 tf-break-all"
-                  />
-                  <textarea
-                    value={coverPrompt}
-                    onChange={(e) => setCoverPrompt(e.target.value)}
-                    placeholder="Prompt ảnh bìa (tùy chọn). Bỏ trống để tự tạo từ tiêu đề/thể loại."
-                    className="w-full min-h-[88px] rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 resize-none tf-mobile-textarea"
                   />
                   <div className="flex flex-col sm:flex-row flex-wrap gap-2 tf-actions-mobile">
                     <button
@@ -4888,6 +5186,26 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
               className="w-full min-h-[40vh] text-lg leading-relaxed border-none focus:ring-0 placeholder:text-slate-300 resize-none tf-editor-textarea"
             />
           </div>
+
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-slate-400 uppercase tracking-widest">Prompt nội bộ / ghi chú vận hành</label>
+            <textarea
+              placeholder="Các prompt, quy tắc giọng văn hoặc chỉ dẫn nội bộ sẽ nằm ở đây và không hiển thị ở trang xem thông tin chung."
+              value={storyPromptNotes}
+              onChange={(e) => setStoryPromptNotes(e.target.value)}
+              className="w-full min-h-[120px] rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-500 resize-none tf-mobile-textarea"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-slate-400 uppercase tracking-widest">Prompt tạo bìa</label>
+            <textarea
+              value={coverPrompt}
+              onChange={(e) => setCoverPrompt(e.target.value)}
+              placeholder="Prompt ảnh bìa (tùy chọn). Bỏ trống để tự tạo từ tiêu đề/thể loại."
+              className="w-full min-h-[88px] rounded-2xl border border-slate-200 px-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 resize-none tf-mobile-textarea"
+            />
+          </div>
         </div>
       ) : (
         <div className="prose prose-slate max-w-none">
@@ -4908,9 +5226,27 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
               <ReactMarkdown>{introduction || '*Chưa có giới thiệu*'}</ReactMarkdown>
             </div>
           </div>
-          <div className="markdown-body">
-            <ReactMarkdown>{content || '*Chưa có nội dung*'}</ReactMarkdown>
-          </div>
+          {characterRoster.length ? (
+            <div className="not-prose rounded-3xl border border-slate-200 bg-white p-5">
+              <h3 className="mb-4 text-lg font-bold text-slate-900">Bảng nhân vật thường xuất hiện</h3>
+              <div className="space-y-3">
+                {characterRoster.map((row) => (
+                  <div key={row.id} className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-base font-bold text-slate-900">{row.name}</p>
+                      {row.role ? <span className="rounded-full bg-indigo-100 px-2.5 py-1 text-[11px] font-semibold text-indigo-700">{row.role}</span> : null}
+                      {row.age ? <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-semibold text-amber-700">{row.age}</span> : null}
+                    </div>
+                    {row.identity ? <p className="mt-2 text-sm text-slate-600">Thân phận: {row.identity}</p> : null}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-3xl border border-dashed border-slate-200 bg-slate-50 px-5 py-8 text-sm italic text-slate-400">
+              Chưa có bảng nhân vật. Bạn có thể quay lại phần chỉnh sửa và bấm `Phân tích local`.
+            </div>
+          )}
         </div>
       )}
     </motion.div>
@@ -4990,6 +5326,7 @@ const StoryDetail = ({
   const [isEditingChapter, setIsEditingChapter] = useState(false);
   const [editTitle, setEditTitle] = useState('');
   const [editContent, setEditContent] = useState('');
+  const displayGenre = parseStoryGenreAndPrompt(story.genre || '', story.storyPromptNotes || '').genreLabel || 'Chưa phân loại';
 
   const getRenderableChapterContent = (content: string) => {
     if (!content) return '';
@@ -5260,7 +5597,7 @@ const StoryDetail = ({
               <div className="flex-1">
                 <div className="flex items-center gap-2 mb-4 flex-wrap">
                   <span className="px-3 py-1 bg-indigo-50 text-indigo-600 text-xs font-bold rounded-full uppercase tracking-wider">
-                    {story.genre || 'Chưa phân loại'}
+                    {displayGenre}
                   </span>
                   {story.isAdult && (
                     <span className="px-3 py-1 bg-red-100 text-red-600 text-[10px] font-black rounded-full uppercase tracking-tighter flex items-center gap-1 border border-red-200">
@@ -5280,6 +5617,23 @@ const StoryDetail = ({
                       <ReactMarkdown>{formatContent(story.introduction || '*Chưa có giới thiệu*')}</ReactMarkdown>
                     </div>
                   </div>
+                  {story.characterRoster?.length ? (
+                    <div>
+                      <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-3">Nhân vật thường xuất hiện</h3>
+                      <div className="space-y-3">
+                        {story.characterRoster.map((row) => (
+                          <div key={row.id} className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="text-base font-bold text-slate-900">{row.name}</p>
+                              {row.role ? <span className="rounded-full bg-indigo-100 px-2.5 py-1 text-[11px] font-semibold text-indigo-700">{row.role}</span> : null}
+                              {row.age ? <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-semibold text-amber-700">{row.age}</span> : null}
+                            </div>
+                            {row.identity ? <p className="mt-2 text-sm text-slate-600">Thân phận: {row.identity}</p> : null}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               </div>
             </div>
@@ -5518,7 +5872,7 @@ const StoryList = ({ onView, refreshKey }: { onView: (story: Story) => void; ref
                         className="text-slate-500 text-sm whitespace-pre-line"
                         style={{ display: '-webkit-box', WebkitLineClamp: story.coverImageUrl ? 4 : 5, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
                       >
-                        {story.content}
+                        {story.introduction || 'Chưa có giới thiệu ngắn.'}
                       </p>
                     </div>
                   </div>
