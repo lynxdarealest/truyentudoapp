@@ -162,6 +162,7 @@ export const PromptLibraryModal: React.FC<PromptLibraryProps> = ({ isOpen, onClo
             tabs={[
               { key: "core", label: "Quy tắc Cốt lõi" },
               { key: "genre", label: "Theo Thể loại" },
+              { key: "adult", label: "Prompt 18+" },
             ]}
             active={selectedGroup}
             onChange={(k) => handleSwitchGroup(k as PromptLibraryTabKey)}
@@ -193,7 +194,12 @@ export const PromptLibraryModal: React.FC<PromptLibraryProps> = ({ isOpen, onClo
                 const id = `new-${Date.now()}`;
                 const newItem = {
                   id,
-                  title: selectedGroup === "core" ? "Quy tắc mới" : "Nhóm mới",
+                  title:
+                    selectedGroup === "core"
+                      ? "Quy tắc mới"
+                      : selectedGroup === "adult"
+                        ? "Prompt 18+ mới"
+                        : "Nhóm mới",
                   content: "",
                 };
                 const nextList = [...baseList, newItem];
@@ -205,7 +211,7 @@ export const PromptLibraryModal: React.FC<PromptLibraryProps> = ({ isOpen, onClo
               }}
               className="w-full mt-3 tf-btn tf-btn-ghost justify-center"
             >
-              + Thêm {selectedGroup === "core" ? "quy tắc" : "nhóm"}
+              + Thêm {selectedGroup === "core" ? "quy tắc" : selectedGroup === "adult" ? "prompt 18+" : "nhóm"}
             </button>
           </div>
 

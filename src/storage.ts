@@ -198,6 +198,7 @@ export const storage = {
       savePromptLibraryState({
         core: Array.isArray(jsonData.prompt_library.core) ? jsonData.prompt_library.core : [],
         genre: Array.isArray(jsonData.prompt_library.genre) ? jsonData.prompt_library.genre : [],
+        adult: Array.isArray(jsonData.prompt_library.adult) ? jsonData.prompt_library.adult : [],
       });
       restoredSections.push('prompt_library');
     }

@@ -6450,7 +6450,7 @@ const AppToastStack = ({
   );
 };
 
-type PromptGroup = 'translate' | 'write' | 'common' | 'tone_rules';
+type PromptGroup = 'translate' | 'write' | 'common' | 'tone_rules' | 'adult';
 
 const PREDEFINED_PROMPTS: Array<{ group: PromptGroup, category: string, prompts: Array<{ title: string, content: string }> }> = [
   // Translate prompts (Trung Quốc, Nhật Bản)
@@ -6491,7 +6491,7 @@ const PREDEFINED_PROMPTS: Array<{ group: PromptGroup, category: string, prompts:
     ],
   },
   {
-    group: 'translate',
+    group: 'adult',
     category: 'Dịch · Truyện sắc 18+ / Ngôn tình trưởng thành',
     prompts: [
       { title: 'Căng thẳng cảm xúc rất chi tiết', content: 'Dịch theo giọng trưởng thành 18+, ưu tiên câu chữ giàu cảm giác nhưng vẫn mượt và có kiểm soát. Làm rõ từng lớp tâm lý: chờ đợi, giằng co, khao khát, ngập ngừng, mất bình tĩnh. Khi vào cảnh nóng, giữ nhịp tăng dần, không tóm tắt, không lướt nhanh; chú ý ánh mắt, hơi thở, khoảng cách cơ thể, phản ứng ngắt quãng và sự thay đổi trong giọng nói.' },
@@ -6555,7 +6555,7 @@ const PREDEFINED_PROMPTS: Array<{ group: PromptGroup, category: string, prompts:
     ],
   },
   {
-    group: 'write',
+    group: 'adult',
     category: 'Viết · Truyện sắc 18+ / Tình cảm trưởng thành',
     prompts: [
       { title: 'Cảnh 18+ nhiều lớp cảm xúc', content: 'Viết theo nhịp chạm nhẹ -> thử giới hạn -> căng thẳng dồn lên -> bùng nổ -> dư âm sau cảnh. Tập trung mạnh vào nội tâm, cách nhân vật tự kiềm chế rồi đánh mất kiểm soát, phản ứng với từng đụng chạm, thay đổi trong nhịp thở, ánh mắt, âm lượng giọng nói và cử chỉ. Mỗi hành động phải kéo theo một phản ứng cảm xúc rõ ràng.' },
@@ -6613,6 +6613,7 @@ const PREDEFINED_PROMPTS: Array<{ group: PromptGroup, category: string, prompts:
 const PROMPT_GROUP_TABS: Array<{ key: PromptGroup, label: string }> = [
   { key: 'common', label: 'Quy tắc Cốt lõi' },
   { key: 'tone_rules', label: 'Theo Thể loại' },
+  { key: 'adult', label: 'Prompt 18+' },
 ];
 
 type MasterItem = { id: string; title: string; content: string };
@@ -6629,19 +6630,60 @@ const PromptLibraryModal = ({ isOpen, onClose, onSelect }: { isOpen: boolean, on
     { id: 'hien-dai', title: 'Hiện đại / Hào môn', content: '- Giọng văn: Nhanh, trực diện; hào môn lạnh/sang.\n- Xưng hô: tôi/anh/em/cô + chức danh (sếp/giám đốc).\n- Từ vựng: business/showbiz đúng cảnh; tránh Hán Việt cổ.\n- Cấu trúc: đoạn 3-6 câu, nhiều thoại.\n- Cấm: viết tắt chat (ko, j), lạm dụng brand >2/đoạn.' },
     { id: 'khoa-hoc', title: 'Võng du / Khoa học', content: '- Giọng văn: Lý tính, hệ thống rõ.\n- Xưng hô: linh hoạt theo thế giới thật/ảo.\n- Từ vựng: game chuẩn (level, cooldown, buff/debuff, PK), sci-fi (cơ giáp, gene, warp).\n- Cấu trúc: log/bảng trạng thái ngắn; ví dụ sau mô tả.\n- Cấm: bùa/thuật tiên hiệp mơ hồ; số liệu không khớp.' },
   ]);
+  const [adultRules, setAdultRules] = useState<MasterItem[]>([
+    { id: 'adult-emotion', title: '18+ · Cảm xúc rất chi tiết', content: '- Giọng văn: trưởng thành, gợi cảm, mượt; tránh thô và tránh liệt kê cơ học.\n- Trọng tâm: lớp cảm xúc nối tiếp nhau như chờ đợi, giằng co, mất kiểm soát, xấu hổ, lệ thuộc, day dứt.\n- Miêu tả: ánh mắt, hơi thở, khoảng cách cơ thể, nhịp tim, cử chỉ ngập ngừng, thay đổi trong giọng nói.\n- Cấu trúc cảnh: mở nhịp → leo thang → cao trào → dư âm sau cảnh.\n- Cấm: nhảy cảnh quá gấp, lặp từ thô, làm nhân vật phản ứng vô hồn.' },
+    { id: 'adult-consent', title: '18+ · Consent & phản ứng', content: '- Luôn làm rõ tín hiệu đồng thuận, ngập ngừng, chủ động/bị động và điểm chuyển cảm xúc.\n- Hành động phải kéo theo phản ứng nội tâm hoặc phản ứng thân thể rõ ràng.\n- Hội thoại cần giữ sắc thái quyến rũ, căng thẳng hoặc chiếm hữu đúng bối cảnh.\n- Sau cảnh thân mật phải có dư âm: bối rối, nghiện cảm giác, hối hận, ám ảnh hoặc muốn tiến thêm.\n- Cấm: biến cảnh nóng thành mô tả khô, rỗng hoặc không có hậu quả tâm lý.' },
+    { id: 'adult-tone', title: '18+ · Câu chữ sang, nhịp nóng', content: '- Ưu tiên câu văn có nhịp, có khoảng lặng và có sức gợi.\n- Dùng từ chọn lọc để giữ sự cuốn hút và cảm giác gần gũi, không rơi vào giọng máy hoặc giọng chợ.\n- Khi viết/dịch cảnh nóng, giữ mạch cảm xúc liền nhau và liên kết với quan hệ giữa hai nhân vật.\n- Mỗi cảnh 18+ phải phục vụ phát triển quan hệ, mâu thuẫn hoặc bước ngoặt cảm xúc.\n- Cấm: cắt rời cảnh thân mật khỏi cốt truyện, hoặc chỉ mô tả động tác mà thiếu nội tâm.' },
+  ]);
   const [selectedCoreId, setSelectedCoreId] = useState('terms');
   const [selectedGenreId, setSelectedGenreId] = useState('co-dai');
+  const [selectedAdultId, setSelectedAdultId] = useState('adult-emotion');
   const [draftContent, setDraftContent] = useState<string>('');
 
-  useEffect(() => {
-    const list = selectedGroup === 'common' ? coreRules : genreRules;
-    const picked = list.find((i) => i.id === (selectedGroup === 'common' ? selectedCoreId : selectedGenreId)) || list[0];
-    setDraftContent(picked?.content || '');
-  }, [selectedGroup, selectedCoreId, selectedGenreId]);
+  const getGroupList = (group: PromptGroup) => {
+    if (group === 'common') return coreRules;
+    if (group === 'adult') return adultRules;
+    return genreRules;
+  };
 
-  const currentList = selectedGroup === 'common' ? coreRules : genreRules;
-  const selectedId = selectedGroup === 'common' ? selectedCoreId : selectedGenreId;
-  const setList = selectedGroup === 'common' ? setCoreRules : setGenreRules;
+  const getSelectedIdForGroup = (group: PromptGroup) => {
+    if (group === 'common') return selectedCoreId;
+    if (group === 'adult') return selectedAdultId;
+    return selectedGenreId;
+  };
+
+  const setSelectedIdForGroup = (group: PromptGroup, id: string) => {
+    if (group === 'common') {
+      setSelectedCoreId(id);
+      return;
+    }
+    if (group === 'adult') {
+      setSelectedAdultId(id);
+      return;
+    }
+    setSelectedGenreId(id);
+  };
+
+  const setListForGroup = (group: PromptGroup, nextList: MasterItem[]) => {
+    if (group === 'common') {
+      setCoreRules(nextList);
+      return;
+    }
+    if (group === 'adult') {
+      setAdultRules(nextList);
+      return;
+    }
+    setGenreRules(nextList);
+  };
+
+  useEffect(() => {
+    const list = getGroupList(selectedGroup);
+    const picked = list.find((i) => i.id === getSelectedIdForGroup(selectedGroup)) || list[0];
+    setDraftContent(picked?.content || '');
+  }, [adultRules, coreRules, genreRules, selectedAdultId, selectedCoreId, selectedGenreId, selectedGroup]);
+
+  const currentList = getGroupList(selectedGroup);
+  const selectedId = getSelectedIdForGroup(selectedGroup);
   const selectedItem = currentList.find((i) => i.id === selectedId) || currentList[0];
 
   if (!isOpen) return null;
@@ -6683,17 +6725,16 @@ const PromptLibraryModal = ({ isOpen, onClose, onSelect }: { isOpen: boolean, on
         <div className="tf-modal-content flex flex-col md:flex-row flex-1 overflow-hidden min-h-[420px] bg-slate-950 text-slate-100">
           {/* Sidebar */}
           <div className="w-full md:w-[32%] border-b md:border-b-0 md:border-r border-slate-800 bg-slate-900 overflow-y-auto p-4 space-y-2">
-            {(selectedGroup === 'common' ? coreRules : genreRules).map((item) => (
+            {currentList.map((item) => (
               <button
                 key={item.id}
                 onClick={() => {
-                  if (selectedGroup === 'common') setSelectedCoreId(item.id);
-                  else setSelectedGenreId(item.id);
+                  setSelectedIdForGroup(selectedGroup, item.id);
                   setDraftContent(item.content);
                 }}
                 className={cn(
                   "w-full text-left px-4 py-3 rounded-xl font-semibold transition-all border border-transparent tf-break-long",
-                  (selectedGroup === 'common' ? selectedCoreId : selectedGenreId) === item.id
+                  selectedId === item.id
                     ? "bg-indigo-600 text-white border-indigo-500 shadow"
                     : "bg-slate-800 hover:bg-slate-700 text-slate-200"
                 )}
@@ -6704,20 +6745,15 @@ const PromptLibraryModal = ({ isOpen, onClose, onSelect }: { isOpen: boolean, on
             <button
               onClick={() => {
                 const id = `new-${Date.now()}`;
-                const title = selectedGroup === 'common' ? 'Quy tắc mới' : 'Nhóm mới';
+                const title = selectedGroup === 'common' ? 'Quy tắc mới' : selectedGroup === 'adult' ? 'Prompt 18+ mới' : 'Nhóm mới';
                 const newItem: MasterItem = { id, title, content: '' };
-                if (selectedGroup === 'common') {
-                  setCoreRules((p) => [...p, newItem]);
-                  setSelectedCoreId(id);
-                } else {
-                  setGenreRules((p) => [...p, newItem]);
-                  setSelectedGenreId(id);
-                }
+                setListForGroup(selectedGroup, [...currentList, newItem]);
+                setSelectedIdForGroup(selectedGroup, id);
                 setDraftContent('');
               }}
               className="mt-4 w-full px-4 py-3 rounded-xl border border-dashed border-indigo-500 text-indigo-200 hover:bg-indigo-500/10"
             >
-              + Thêm {selectedGroup === 'common' ? 'quy tắc' : 'nhóm'} mới
+              + Thêm {selectedGroup === 'common' ? 'quy tắc' : selectedGroup === 'adult' ? 'prompt 18+' : 'nhóm'} mới
             </button>
           </div>
           
@@ -6728,7 +6764,7 @@ const PromptLibraryModal = ({ isOpen, onClose, onSelect }: { isOpen: boolean, on
                 value={selectedItem?.title || ''}
                 onChange={(e) => {
                   const nextList = currentList.map((i) => i.id === selectedId ? { ...i, title: e.target.value } : i);
-                  setList(nextList);
+                  setListForGroup(selectedGroup, nextList);
                 }}
                 className="text-xl font-bold bg-transparent border-b border-slate-700 focus:border-indigo-400 outline-none w-full tf-break-long"
               />
@@ -6738,6 +6774,8 @@ const PromptLibraryModal = ({ isOpen, onClose, onSelect }: { isOpen: boolean, on
               onChange={(e) => setDraftContent(e.target.value)}
               placeholder={selectedGroup === 'common'
                 ? '- Ghi rõ quy tắc bắt buộc...\n- ...'
+                : selectedGroup === 'adult'
+                  ? '- Giọng văn 18+: ...\n- Nội tâm: ...\n- Phản ứng: ...\n- Điều cấm: ...'
                 : '- Giọng văn: ...\n- Xưng hô: ...\n- Từ vựng: ...\n- Cấm: ...'}
             className="w-full min-h-[260px] rounded-2xl border border-slate-800 bg-slate-900 text-slate-100 p-4 text-sm leading-relaxed focus:border-indigo-400 focus:ring-1 focus:ring-indigo-500 outline-none resize-y tf-mobile-textarea"
             />
@@ -6754,7 +6792,7 @@ const PromptLibraryModal = ({ isOpen, onClose, onSelect }: { isOpen: boolean, on
               <button
                 onClick={() => {
                   const nextList = currentList.map((i) => i.id === selectedId ? { ...i, content: draftContent } : i);
-                  setList(nextList);
+                  setListForGroup(selectedGroup, nextList);
                   notifyApp({ tone: 'success', message: 'Đã lưu thay đổi' });
                 }}
                 className="px-5 py-2 rounded-xl bg-emerald-600 text-white font-bold text-sm hover:bg-emerald-700"

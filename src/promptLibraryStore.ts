@@ -1,6 +1,6 @@
 import { emitLocalWorkspaceChanged } from './localWorkspaceSync';
 
-export type PromptLibraryTabKey = 'core' | 'genre';
+export type PromptLibraryTabKey = 'core' | 'genre' | 'adult';
 
 export interface PromptLibraryItem {
   id: string;
@@ -11,6 +11,7 @@ export interface PromptLibraryItem {
 export interface PromptLibraryState {
   core: PromptLibraryItem[];
   genre: PromptLibraryItem[];
+  adult: PromptLibraryItem[];
 }
 
 const PROMPT_LIBRARY_STORAGE_KEY = 'prompt_library_v1';
@@ -50,6 +51,23 @@ const DEFAULT_PROMPT_LIBRARY: PromptLibraryState = {
       content: '- Giọng văn: Lý tính, mô tả hệ thống rõ.\n- Xưng hô: linh hoạt theo thế giới thật/ảo.\n- Từ vựng: game chuẩn (level, cooldown, buff/debuff, PK), sci-fi (cơ giáp, gene, warp).\n- Cấu trúc: log/bảng trạng thái ngắn; ví dụ sau mô tả.\n- Cấm: bùa tiên hiệp mơ hồ; số liệu không khớp.',
     },
   ],
+  adult: [
+    {
+      id: 'adult-emotion',
+      title: '18+ · Cảm xúc rất chi tiết',
+      content: '- Giọng văn: trưởng thành, gợi cảm, mượt; tránh thô và tránh liệt kê cơ học.\n- Trọng tâm: lớp cảm xúc nối tiếp nhau như chờ đợi, giằng co, mất kiểm soát, xấu hổ, lệ thuộc, day dứt.\n- Miêu tả: ánh mắt, hơi thở, khoảng cách cơ thể, nhịp tim, cử chỉ ngập ngừng, thay đổi trong giọng nói.\n- Cấu trúc cảnh: mở nhịp -> leo thang -> cao trào -> dư âm sau cảnh.\n- Cấm: nhảy cảnh quá gấp, lặp từ thô, làm nhân vật phản ứng vô hồn.',
+    },
+    {
+      id: 'adult-consent',
+      title: '18+ · Consent & phản ứng',
+      content: '- Luôn làm rõ tín hiệu đồng thuận, ngập ngừng, chủ động/bị động và điểm chuyển cảm xúc.\n- Hành động phải kéo theo phản ứng nội tâm hoặc phản ứng thân thể rõ ràng.\n- Hội thoại cần giữ sắc thái quyến rũ, căng thẳng hoặc chiếm hữu đúng bối cảnh.\n- Sau cảnh thân mật phải có dư âm: bối rối, nghiện cảm giác, hối hận, ám ảnh hoặc muốn tiến thêm.\n- Cấm: biến cảnh nóng thành mô tả khô, rỗng hoặc không có hậu quả tâm lý.',
+    },
+    {
+      id: 'adult-tone',
+      title: '18+ · Câu chữ sang, nhịp nóng',
+      content: '- Ưu tiên câu văn có nhịp, có khoảng lặng và có sức gợi.\n- Dùng từ chọn lọc để giữ sự cuốn hút và cảm giác gần gũi, không rơi vào giọng máy hoặc giọng chợ.\n- Khi viết/dịch cảnh nóng, giữ mạch cảm xúc liền nhau và liên kết với quan hệ giữa hai nhân vật.\n- Mỗi cảnh 18+ phải phục vụ phát triển quan hệ, mâu thuẫn hoặc bước ngoặt cảm xúc.\n- Cấm: cắt rời cảnh thân mật khỏi cốt truyện, hoặc chỉ mô tả động tác mà thiếu nội tâm.',
+    },
+  ],
 };
 
 function sanitizePromptItems(items: unknown, fallback: PromptLibraryItem[]): PromptLibraryItem[] {
@@ -80,6 +98,7 @@ export function loadPromptLibraryState(): PromptLibraryState {
     return {
       core: sanitizePromptItems(parsed.core, DEFAULT_PROMPT_LIBRARY.core),
       genre: sanitizePromptItems(parsed.genre, DEFAULT_PROMPT_LIBRARY.genre),
+      adult: sanitizePromptItems(parsed.adult, DEFAULT_PROMPT_LIBRARY.adult),
     };
   } catch {
     return DEFAULT_PROMPT_LIBRARY;
@@ -91,6 +110,7 @@ export function savePromptLibraryState(state: PromptLibraryState): void {
   const normalized: PromptLibraryState = {
     core: sanitizePromptItems(state.core, DEFAULT_PROMPT_LIBRARY.core),
     genre: sanitizePromptItems(state.genre, DEFAULT_PROMPT_LIBRARY.genre),
+    adult: sanitizePromptItems(state.adult, DEFAULT_PROMPT_LIBRARY.adult),
   };
   localStorage.setItem(PROMPT_LIBRARY_STORAGE_KEY, JSON.stringify(normalized));
   emitLocalWorkspaceChanged('prompt_library');
