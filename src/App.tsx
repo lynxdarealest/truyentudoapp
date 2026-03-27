@@ -2330,12 +2330,12 @@ function getGeminiFallbackModels(baseModel: string, kind: 'fast' | 'quality'): s
   const preferred = isFlashLiteFamily
     ? ['gemini-2.5-flash-lite', 'gemini-2.0-flash-lite']
     : isFlashFamily
-    ? ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-1.5-flash']
+    ? ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-2.5-flash-lite']
     : isProFamily
-      ? ['gemini-3.1-pro-preview', 'gemini-1.5-pro']
+      ? ['gemini-3.1-pro-preview', 'gemini-2.5-pro', 'gemini-2.5-flash']
       : kind === 'fast'
         ? ['gemini-2.5-flash-lite', 'gemini-2.0-flash-lite', 'gemini-2.0-flash', 'gemini-2.5-flash']
-        : ['gemini-3.1-pro-preview', 'gemini-1.5-pro', 'gemini-2.5-flash'];
+        : ['gemini-3.1-pro-preview', 'gemini-2.5-pro', 'gemini-2.5-flash'];
   const merged = [baseModel, ...preferred].map((item) => String(item || '').trim()).filter(Boolean);
   return Array.from(new Set(merged));
 }

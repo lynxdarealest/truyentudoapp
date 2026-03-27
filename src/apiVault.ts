@@ -133,8 +133,7 @@ export const API_PROVIDER_META: Record<Exclude<ApiProvider, 'unknown'>, ApiProvi
 
 export const PROVIDER_MODEL_OPTIONS: Record<Exclude<ApiProvider, 'unknown'>, ApiModelOption[]> = {
   gemini: [
-    { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash', description: 'Đời cũ hơn nhưng vẫn hữu ích khi cần tốc độ và độ ổn định quen thuộc.' },
-    { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro', description: 'Model cũ nhưng mạnh về ngữ cảnh dài và biên tập văn bản.' },
+    // Gemini v1.5 deprecated trên API v1beta, giữ họ 2.x trở lên để tránh lỗi 404
     { value: 'gemini-2.0-flash-lite', label: 'Gemini 2.0 Flash-Lite', description: 'Rất tiết kiệm, hợp dịch nhanh hoặc xử lý khối lượng lớn với chi phí thấp hơn.' },
     { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash', description: 'Nhanh, tiết kiệm, hợp viết gợi ý và thao tác thường xuyên.' },
     { value: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite', description: 'Nhanh nhất và tiết kiệm nhất trong họ 2.5, hợp file dài khi ưu tiên giảm chi phí hơn độ mượt.' },
@@ -142,8 +141,7 @@ export const PROVIDER_MODEL_OPTIONS: Record<Exclude<ApiProvider, 'unknown'>, Api
     { value: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro Preview', description: 'Ưu tiên chất lượng cho viết dài và xử lý phức tạp.' },
   ],
   gcli: [
-    { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash', description: 'Dùng mã truy cập Google cho luồng nhanh và tiết kiệm.' },
-    { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro', description: 'Phù hợp khi cần độ sâu hơn trên Google AI Studio.' },
+    // Loại bỏ model 1.5 vì v1beta không còn hỗ trợ generateContent
     { value: 'gemini-2.0-flash-lite', label: 'Gemini 2.0 Flash-Lite', description: 'Tiết kiệm hơn, hợp batch lớn khi bạn muốn giảm chi phí tối đa.' },
     { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash', description: 'Dùng mã truy cập Google `ya29...` để gọi Gemini nhanh.' },
     { value: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite', description: 'Nhanh và budget-friendly trong họ 2.5 khi dùng đăng nhập Google.' },
