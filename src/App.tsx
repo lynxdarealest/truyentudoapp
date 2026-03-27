@@ -1171,6 +1171,38 @@ function buildAnalysisExcerpt(rawText: string, units: ChapterTranslationUnit[]):
   return excerpt.substring(0, 14000);
 }
 
+function buildBalancedStoryExcerpt(rawText: string, maxChars = 16000): string {
+  const normalized = String(rawText || '').replace(/\r\n/g, '\n').trim();
+  if (!normalized) return '';
+  if (normalized.length <= maxChars) return normalized;
+
+  const detected = detectChapterSections(normalized);
+  if (detected.length >= 2) {
+    const selectedSections = [...detected.slice(0, 2), ...detected.slice(-2)].filter(
+      (section, index, arr) =>
+        index === arr.findIndex((candidate) => candidate.title === section.title && candidate.content === section.content),
+    );
+    const perSectionChars = Math.max(900, Math.floor(maxChars / Math.max(selectedSections.length, 1)) - 140);
+    const excerpt = selectedSections
+      .map((section, index) => {
+        const label =
+          index < 2
+            ? `Phần đầu · ${section.title || `Chương ${index + 1}`}`
+            : `Diễn biến gần cuối · ${section.title || `Chương ${index + 1}`}`;
+        return `[${label}]\n${String(section.content || '').trim().substring(0, perSectionChars)}`;
+      })
+      .join('\n\n');
+    if (excerpt.trim()) return excerpt.substring(0, maxChars);
+  }
+
+  const headChars = Math.max(2200, Math.floor(maxChars * 0.48));
+  const tailChars = Math.max(1800, Math.floor(maxChars * 0.34));
+  const omitted = Math.max(0, normalized.length - headChars - tailChars);
+  const head = normalized.slice(0, headChars).trim();
+  const tail = normalized.slice(-tailChars).trim();
+  return `${head}\n\n[...đã lược bớt khoảng ${omitted} ký tự ở giữa để giữ phần mở đầu và diễn biến gần cuối...]\n\n${tail}`.substring(0, maxChars + 120);
+}
+
 function splitTextForTranslation(text: string, maxChars: number): string[] {
   const units = buildChapterTranslationUnits(text, maxChars);
   if (!units.length) return [];
@@ -6460,6 +6492,15 @@ const PREDEFINED_PROMPTS: Array<{ group: PromptGroup, category: string, prompts:
   },
   {
     group: 'translate',
+    category: 'Dịch · Truyện sắc / Ngôn tình trưởng thành',
+    prompts: [
+      { title: 'Căng thẳng giàu cảm xúc', content: 'Giữ không khí trưởng thành, sức hút giữa hai nhân vật và nhịp cảm xúc dồn nén. Ưu tiên nét gợi cảm tinh tế, không biến câu văn thành thô cứng hoặc máy móc.' },
+      { title: 'Tương tác có consent', content: 'Làm rõ tín hiệu đồng thuận, khoảng cách cơ thể, nhịp thở, ánh mắt và trạng thái tâm lý. Giữ sự trưởng thành và mạch cảm xúc, tránh làm mất tự nhiên của hội thoại.' },
+      { title: 'Nhịp nóng nhưng mượt', content: 'Khi gặp cảnh người lớn, giữ nhịp dồn dập vừa phải, câu văn liền mạch và giàu cảm giác. Không tóm tắt qua loa, nhưng vẫn ưu tiên văn phong mượt và dễ đọc.' },
+    ],
+  },
+  {
+    group: 'translate',
     category: 'Dịch · Light Novel / Isekai (JP)',
     prompts: [
       { title: 'Isekai phiêu lưu', content: 'Giữ cách xưng “ore/atashi/boku” thành tôi/tớ phù hợp bối cảnh. Giữ nguyên skill/đòn đánh tiếng Anh/Nhật nếu là tên riêng. Nhịp nhanh, hài hước nhẹ.' },
@@ -6511,6 +6552,15 @@ const PREDEFINED_PROMPTS: Array<{ group: PromptGroup, category: string, prompts:
       { title: 'Chemistry tinh tế', content: 'Tập trung vào khoảng cách cơ thể, ánh mắt, im lặng ngắn. Ít thổ lộ trực diện, nhiều hành động ngầm.' },
       { title: 'Nhịp cảm xúc', content: 'Lên xuống cảm xúc: căng → xả → căng. Giữ lời thoại ngắn, nhiều subtext.' },
       { title: 'Bối cảnh đời thường', content: 'Đặt tương tác vào sinh hoạt nhỏ (nấu ăn, đi chợ, chăm sóc khi ốm) để tăng gần gũi.' },
+    ],
+  },
+  {
+    group: 'write',
+    category: 'Viết · Truyện sắc / Tình cảm trưởng thành',
+    prompts: [
+      { title: 'Nhiệt độ cảm xúc tăng dần', content: 'Xây cảnh theo nhịp chạm nhẹ → căng thẳng im lặng → bùng nổ cảm xúc. Tập trung vào cảm nhận, ánh mắt, khoảng cách cơ thể và nhịp tim thay vì chỉ kể sự kiện.' },
+      { title: 'Cuốn hút nhưng vẫn sang', content: 'Giữ giọng văn quyến rũ, trưởng thành, có tiết chế. Dùng chi tiết gợi cảm vừa đủ để tăng sức hút, tránh câu chữ thô hoặc lặp mô típ quá lộ.' },
+      { title: 'Sau cảnh thân mật vẫn có dư âm', content: 'Sau phân đoạn gần gũi, luôn dành chỗ cho suy nghĩ, ngại ngùng, chiếm hữu hoặc day dứt. Để cảnh nóng phục vụ phát triển quan hệ chứ không đứng tách rời khỏi cốt truyện.' },
     ],
   },
   {
@@ -6947,6 +6997,102 @@ interface TranslateStoryModalProps {
   fileName: string;
 }
 
+const AiFileActionModal = ({
+  isOpen,
+  onClose,
+  onChooseTranslate,
+  onChooseContinue,
+  fileName,
+  contentLength,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onChooseTranslate: () => void;
+  onChooseContinue: () => void;
+  fileName: string;
+  contentLength: number;
+}) => {
+  if (!isOpen) return null;
+
+  const isLargeFile = contentLength >= 50000;
+
+  return (
+    <div className="fixed inset-0 z-[120] tf-modal-overlay flex items-center justify-center p-4 bg-slate-950/65 backdrop-blur-sm">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96, y: 18 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        className="tf-modal-panel bg-white w-full max-w-xl rounded-[32px] shadow-2xl overflow-hidden flex flex-col max-h-[88vh]"
+      >
+        <div className="p-6 md:p-8 border-b border-slate-100 bg-slate-50/80">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <h2 className="text-2xl md:text-3xl font-serif font-bold text-slate-900 tracking-tight">Chọn cách xử lý file</h2>
+              <p className="mt-1 text-sm text-slate-500 tf-break-all">File: {fileName}</p>
+              <p className="mt-2 text-xs text-slate-400">
+                Tệp đã được đọc xong. Chọn một luồng rõ ràng để hệ thống mở đúng bảng thiết lập.
+              </p>
+            </div>
+            <button onClick={onClose} className="rounded-2xl p-3 transition-colors hover:bg-white">
+              <X className="h-5 w-5 text-slate-400" />
+            </button>
+          </div>
+        </div>
+
+        <div className="tf-modal-content p-6 md:p-8 overflow-y-auto space-y-4">
+          {isLargeFile ? (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              File khá lớn, nên app sẽ bật chế độ chia lô an toàn hơn để giảm lỗi khi dịch hoặc viết tiếp.
+            </div>
+          ) : null}
+
+          <button
+            onClick={onChooseTranslate}
+            className="w-full rounded-[28px] border border-indigo-200 bg-indigo-50 p-5 text-left transition-all hover:-translate-y-0.5 hover:border-indigo-300 hover:bg-indigo-100"
+          >
+            <div className="flex items-start gap-4">
+              <div className="rounded-2xl bg-indigo-600 p-3 text-white shadow-lg shadow-indigo-900/20">
+                <Languages className="h-5 w-5" />
+              </div>
+              <div className="space-y-1">
+                <p className="text-lg font-bold text-slate-900">Dịch truyện</p>
+                <p className="text-sm text-slate-600">
+                  Dùng khi file là truyện gốc cần dịch sang tiếng Việt. Hệ thống sẽ tự chia chương, chia lô và giữ từ điển tên riêng.
+                </p>
+              </div>
+            </div>
+          </button>
+
+          <button
+            onClick={onChooseContinue}
+            className="w-full rounded-[28px] border border-amber-200 bg-amber-50 p-5 text-left transition-all hover:-translate-y-0.5 hover:border-amber-300 hover:bg-amber-100"
+          >
+            <div className="flex items-start gap-4">
+              <div className="rounded-2xl bg-amber-600 p-3 text-white shadow-lg shadow-amber-900/20">
+                <Sparkles className="h-5 w-5" />
+              </div>
+              <div className="space-y-1">
+                <p className="text-lg font-bold text-slate-900">Viết tiếp truyện</p>
+                <p className="text-sm text-slate-600">
+                  Dùng khi file là phần truyện đã có sẵn và bạn muốn AI phân tích để viết thêm các chương tiếp theo.
+                </p>
+              </div>
+            </div>
+          </button>
+        </div>
+
+        <div className="p-6 md:p-8 border-t border-slate-100 bg-slate-50/70 tf-modal-actions">
+          <button
+            onClick={onClose}
+            className="w-full rounded-2xl border-2 border-slate-200 bg-white px-6 py-4 text-sm font-bold text-slate-600 transition-all hover:bg-slate-100"
+          >
+            Đóng
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+};
+
 const TranslateStoryModal: React.FC<TranslateStoryModalProps> = ({ isOpen, onClose, onConfirm, fileName }) => {
   const [isAdult, setIsAdult] = useState(false);
   const [additionalInstructions, setAdditionalInstructions] = useState('');
@@ -7109,9 +7255,9 @@ const AIContinueStoryModal = ({
       <motion.div 
         initial={{ opacity: 0, scale: 0.9 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="tf-modal-panel bg-white w-full max-w-xl rounded-3xl shadow-2xl overflow-hidden"
+        className="tf-modal-panel bg-white w-full max-w-xl rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
       >
-        <div className="tf-modal-content p-6 md:p-8">
+        <div className="tf-modal-content p-6 md:p-8 overflow-y-auto">
           <div className="flex justify-between items-center gap-3 mb-6">
             <div className="min-w-0">
               <h3 className="text-2xl font-serif font-bold text-slate-900">Viết tiếp truyện</h3>
@@ -7122,7 +7268,7 @@ const AIContinueStoryModal = ({
             </button>
           </div>
 
-          <div className="space-y-6 max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
+          <div className="space-y-6 pr-2 custom-scrollbar">
             <div>
               <label className="block text-sm font-bold text-slate-700 mb-3">Số lượng chương muốn viết tiếp</label>
               <div className="flex items-center gap-4">
@@ -8403,10 +8549,13 @@ const AppContent = () => {
   const [showAIStoryModal, setShowAIStoryModal] = useState(false);
   const [showAIContinueModal, setShowAIContinueModal] = useState(false);
   const [showTranslateModal, setShowTranslateModal] = useState(false);
+  const [showAiFileActionModal, setShowAiFileActionModal] = useState(false);
   const [translateFileContent, setTranslateFileContent] = useState('');
   const [translateFileName, setTranslateFileName] = useState('');
   const [continueFileContent, setContinueFileContent] = useState('');
   const [continueFileName, setContinueFileName] = useState('');
+  const [pendingAiFileContent, setPendingAiFileContent] = useState('');
+  const [pendingAiFileName, setPendingAiFileName] = useState('');
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportFormat, setExportFormat] = useState<ExportFormat>('txt');
@@ -8673,6 +8822,28 @@ const AppContent = () => {
     return file.text();
   };
 
+  const clearPendingAiFileAction = () => {
+    setShowAiFileActionModal(false);
+    setPendingAiFileContent('');
+    setPendingAiFileName('');
+  };
+
+  const openTranslateFlowFromPendingFile = () => {
+    if (!pendingAiFileContent.trim()) return;
+    setTranslateFileContent(pendingAiFileContent);
+    setTranslateFileName(pendingAiFileName);
+    clearPendingAiFileAction();
+    setShowTranslateModal(true);
+  };
+
+  const openContinueFlowFromPendingFile = () => {
+    if (!pendingAiFileContent.trim()) return;
+    setContinueFileContent(pendingAiFileContent);
+    setContinueFileName(pendingAiFileName);
+    clearPendingAiFileAction();
+    setShowAIContinueModal(true);
+  };
+
   const handleUnifiedAiFileFlow = () => {
     const input = document.createElement('input');
     input.type = 'file';
@@ -8685,17 +8856,13 @@ const AppContent = () => {
         detail: 'Hệ thống đang mở tệp và nhận diện định dạng để quyết định luồng AI phù hợp.',
       });
       try {
-        const content = await readImportedStoryFile(file);
-        const shouldTranslate = window.confirm('Nhấn OK để DỊCH truyện, hoặc Cancel để VIẾT TIẾP truyện.');
-        if (shouldTranslate) {
-          setTranslateFileContent(content);
-          setTranslateFileName(file.name);
-          setShowTranslateModal(true);
-        } else {
-          setContinueFileContent(content);
-          setContinueFileName(file.name);
-          setShowAIContinueModal(true);
+        const content = String(await readImportedStoryFile(file) || '').trim();
+        if (!content) {
+          throw new Error('File không có nội dung văn bản để AI xử lý.');
         }
+        setPendingAiFileContent(content);
+        setPendingAiFileName(file.name);
+        setShowAiFileActionModal(true);
       } catch (err) {
         notifyApp({ tone: "error", message: `Lỗi khi đọc file: ${String(err || '')}` });
       } finally {
@@ -8806,14 +8973,22 @@ const AppContent = () => {
       const sourceWordCount = countWords(translateFileContent);
       const sourceCharCount = String(translateFileContent || '').length;
       const sourceTokenEstimate = estimateTextTokens(translateFileContent);
-      const turboMode = sourceWordCount >= 3200 || sourceCharCount >= 45000 || sourceTokenEstimate >= 12000;
-      let segmentCharLimit = turboMode ? 6000 : 3800;
-      if ((ai.provider === 'gemini' || ai.provider === 'gcli') && sourceCharCount >= 45000) {
-        segmentCharLimit = 7800;
+      const hugeFileMode = sourceWordCount >= 6500 || sourceCharCount >= 90000 || sourceTokenEstimate >= 22000;
+      const extremeFileMode = sourceWordCount >= 11000 || sourceCharCount >= 160000 || sourceTokenEstimate >= 36000;
+      const turboMode = hugeFileMode || sourceWordCount >= 3200 || sourceCharCount >= 45000 || sourceTokenEstimate >= 12000;
+      let segmentCharLimit = extremeFileMode ? 3400 : hugeFileMode ? 4300 : (turboMode ? 6000 : 3800);
+      if (ai.provider === 'gemini' || ai.provider === 'gcli') {
+        if (extremeFileMode) {
+          segmentCharLimit = 4200;
+        } else if (hugeFileMode) {
+          segmentCharLimit = 5200;
+        } else if (sourceCharCount >= 45000) {
+          segmentCharLimit = 7200;
+        }
       }
       const translationKind: 'fast' | 'quality' = turboMode ? 'fast' : 'quality';
       const analysisKind: 'fast' | 'quality' = turboMode ? 'fast' : 'quality';
-      const translationConcurrency = turboMode ? 2 : 1;
+      const translationConcurrency = hugeFileMode ? 1 : (turboMode ? 2 : 1);
       const detectedSections = detectChapterSections(translateFileContent);
       const translationUnits = buildChapterTranslationUnits(translateFileContent, segmentCharLimit);
       const effectiveUnits = translationUnits.length
@@ -8827,13 +9002,13 @@ const AppContent = () => {
         effectiveUnits.reduce((acc, unit) => acc + unit.segments.filter((segment) => segment.trim().length >= 30).length, 0) ||
         effectiveUnits.length;
       const lowQuotaMode = (ai.provider === 'gemini' || ai.provider === 'gcli') && totalSegments >= 14;
-      const shouldRunAnalysis = !turboMode && !lowQuotaMode && effectiveUnits.length <= 6 && sourceTokenEstimate <= 9000;
+      const shouldRunAnalysis = !turboMode && !lowQuotaMode && !hugeFileMode && effectiveUnits.length <= 6 && sourceTokenEstimate <= 9000;
       const batchCharLimit =
         ai.provider === 'gemini' || ai.provider === 'gcli'
-          ? (turboMode ? 12000 : 9000)
-          : (turboMode ? 9000 : 7200);
-      const batchItemLimit = lowQuotaMode ? 2 : (turboMode ? 3 : 2);
-      const translationRequestRetries = lowQuotaMode ? 0 : 1;
+          ? (extremeFileMode ? 5200 : hugeFileMode ? 6800 : (turboMode ? 12000 : 9000))
+          : (extremeFileMode ? 4200 : hugeFileMode ? 5600 : (turboMode ? 9000 : 7200));
+      const batchItemLimit = extremeFileMode ? 1 : lowQuotaMode ? 1 : hugeFileMode ? 2 : (turboMode ? 3 : 2);
+      const translationRequestRetries = lowQuotaMode && !hugeFileMode ? 0 : 1;
       const sharedSafetySettings = [
         { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
         { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -8851,10 +9026,15 @@ const AppContent = () => {
             : turboMode
               ? 'File lớn nên hệ thống sẽ tự chia đoạn và ưu tiên tốc độ.'
               : 'Chưa thấy mốc chương rõ ràng, hệ thống sẽ tự chia đoạn để dịch ổn định hơn.';
+      const translationProfileNote = extremeFileMode
+        ? 'Đang dùng chế độ an toàn cao cho file rất lớn: giảm kích thước lô, dịch tuần tự và hạn chế prompt phình to.'
+        : hugeFileMode
+          ? 'Đang dùng chế độ an toàn cho file lớn: giảm concurrency và chia lô nhỏ hơn để hạn chế lỗi trả về.'
+          : '';
       updateAiRun(aiRun, {
         message: 'Đang phân tích cấu trúc truyện...',
         stageLabel: 'Phân tích cấu trúc',
-        detail: `${translationPreparationMessage} ${preparationLabel}`,
+        detail: `${translationPreparationMessage} ${preparationLabel}${translationProfileNote ? ` ${translationProfileNote}` : ''}`,
         progress: { completed: 0, total: Math.max(totalSegments, 1) },
       });
 
@@ -9054,6 +9234,7 @@ const AppContent = () => {
             minOutputChars: dynamicMinChars,
             maxRetries: translationRequestRetries,
             safetySettings: sharedSafetySettings,
+            signal: abortSignal,
           },
         );
 
@@ -9236,11 +9417,25 @@ const AppContent = () => {
       }
 
       const ai = createGeminiClient();
+      const continueWordCount = countWords(continueFileContent);
+      const continueCharCount = String(continueFileContent || '').length;
+      const continueTokenEstimate = estimateTextTokens(continueFileContent);
+      const largeContinueMode = continueWordCount >= 4500 || continueCharCount >= 70000 || continueTokenEstimate >= 17000;
+      const extremeContinueMode = continueWordCount >= 9000 || continueCharCount >= 140000 || continueTokenEstimate >= 32000;
+      const analysisExcerpt = buildBalancedStoryExcerpt(
+        continueFileContent,
+        extremeContinueMode ? 11000 : largeContinueMode ? 14500 : 18000,
+      );
+      const recentStoryTail = String(continueFileContent || '')
+        .replace(/\r\n/g, '\n')
+        .trim()
+        .slice(-(extremeContinueMode ? 2600 : largeContinueMode ? 3800 : 5200));
       
       // 1. Analyze the story
       const analysisPrompt = `
-        Hãy phân tích nội dung truyện sau đây:
-        "${continueFileContent.substring(0, 15000)}"
+        Hãy phân tích nội dung truyện sau đây.
+        Lưu ý: đây có thể là bản trích cân bằng giữa phần đầu và phần gần cuối của file lớn, nên hãy ưu tiên nhận diện phong cách, nhân vật và tình tiết đang diễn ra.
+        "${analysisExcerpt}"
         
         Yêu cầu:
         1. Tóm tắt cốt truyện chính.
@@ -9260,13 +9455,13 @@ const AppContent = () => {
 
       const analysisText = await generateGeminiText(
         ai,
-        'quality',
+        largeContinueMode ? 'fast' : 'quality',
         analysisPrompt,
         {
           responseMimeType: "application/json",
-          maxOutputTokens: 3200,
+          maxOutputTokens: largeContinueMode ? 2400 : 3200,
           minOutputChars: 260,
-          maxRetries: 2,
+          maxRetries: extremeContinueMode ? 1 : 2,
           signal: abortSignal,
         },
       ) || '{}';
@@ -9280,16 +9475,29 @@ const AppContent = () => {
       updateAiRun(aiRun, {
         message: 'Đang lập kế hoạch các chương tiếp theo...',
         stageLabel: 'Lập kế hoạch',
-        detail: 'Đã phân tích xong truyện gốc. AI đang dựng roadmap cho các chương mới.',
+        detail: `${largeContinueMode ? 'Đã phân tích theo chế độ file lớn, giữ cả phần đầu và diễn biến gần cuối. ' : ''}AI đang dựng roadmap cho các chương mới.`,
         progress: { completed: 2, total: 3 },
       });
 
       // 2. Plan next chapters
+      const compactCharacters = Array.isArray(analysis.characters)
+        ? analysis.characters.slice(0, largeContinueMode ? 10 : 14).map((item: any) => ({
+            name: String(item?.name || '').trim(),
+            personality: String(item?.personality || '').trim(),
+          }))
+        : [];
+      const compactCharacterGuide = compactCharacters.length
+        ? compactCharacters
+            .map((item) => `- ${item.name || 'Nhân vật'}: ${item.personality || 'chưa rõ tính cách'}`)
+            .join('\n')
+        : 'Chưa có dữ liệu nhân vật rõ ràng.';
       const planPrompt = `
         Dựa trên phân tích sau:
         Tóm tắt: ${analysis.summary}
         Văn phong: ${analysis.writingStyle}
         Bối cảnh hiện tại: ${analysis.currentContext}
+        Nhân vật nòng cốt:
+        ${compactCharacterGuide}
         
         Hãy lập kế hoạch cho ${options.chapterCount} chương tiếp theo.
         Yêu cầu bổ sung từ người dùng: ${finalInstructions}
@@ -9303,13 +9511,13 @@ const AppContent = () => {
 
       const planText = await generateGeminiText(
         ai,
-        'quality',
+        largeContinueMode ? 'fast' : 'quality',
         planPrompt,
         {
           responseMimeType: "application/json",
-          maxOutputTokens: Math.min(5200, Math.max(1600, options.chapterCount * 700)),
+          maxOutputTokens: Math.min(largeContinueMode ? 3600 : 5200, Math.max(1400, options.chapterCount * (largeContinueMode ? 520 : 700))),
           minOutputChars: Math.max(200, options.chapterCount * 70),
-          maxRetries: 2,
+          maxRetries: extremeContinueMode ? 1 : 2,
           signal: abortSignal,
         },
       ) || '{}';
@@ -9324,6 +9532,7 @@ const AppContent = () => {
       if (!plannedChapters.length) {
         throw new Error('AI không trả về kế hoạch chương hợp lệ.');
       }
+      plannedChapters = plannedChapters.slice(0, Math.max(1, options.chapterCount));
       
       // 3. Create the story
       const storyId = createClientId('story');
@@ -9348,8 +9557,11 @@ const AppContent = () => {
           
           Tóm tắt truyện: ${analysis.summary}
           Văn phong yêu cầu: ${analysis.writingStyle}
-          Nhân vật: ${JSON.stringify(analysis.characters)}
+          Nhân vật nòng cốt:
+          ${compactCharacterGuide}
           Bối cảnh hiện tại: ${analysis.currentContext}
+          Trích đoạn gần cuối bản gốc để giữ continuity:
+          ${recentStoryTail}
           Dàn ý chương này: ${ch.outline}
           Yêu cầu bổ sung: ${finalInstructions}
           Nội dung người lớn: ${options.isAdult ? 'CÓ (hãy viết chi tiết)' : 'KHÔNG'}
@@ -9362,12 +9574,12 @@ const AppContent = () => {
 
         let chapterText = await generateGeminiText(
           ai,
-          'quality',
+          largeContinueMode ? 'fast' : 'quality',
           chapterPrompt,
           {
             maxOutputTokens: chapterMaxTokens,
             minOutputChars: minChapterChars,
-            maxRetries: 2,
+            maxRetries: extremeContinueMode ? 1 : 2,
             safetySettings: [
               { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
               { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -10226,6 +10438,15 @@ const AppContent = () => {
         )}
       </AnimatePresence>
       </div>
+
+      <AiFileActionModal
+        isOpen={showAiFileActionModal}
+        onClose={clearPendingAiFileAction}
+        onChooseTranslate={openTranslateFlowFromPendingFile}
+        onChooseContinue={openContinueFlowFromPendingFile}
+        fileName={pendingAiFileName}
+        contentLength={pendingAiFileContent.length}
+      />
 
       <AIContinueStoryModal 
         isOpen={showAIContinueModal}
