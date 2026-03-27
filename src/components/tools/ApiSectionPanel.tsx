@@ -287,14 +287,9 @@ export function ApiSectionPanel({
               <Zap className="w-5 h-5" />
             </div>
             <div className="min-w-0">
-              <p className="text-xs uppercase tracking-wide text-slate-400 font-semibold">Phương thức</p>
               <h3 className="text-lg font-semibold text-white">AI Văn bản</h3>
-              <p className="text-xs text-slate-400">Phần Relay đang được ẩn tạm thời vì chưa đủ rõ ràng cho người dùng phổ thông.</p>
             </div>
           </div>
-          <span className="rounded-full border border-emerald-400/20 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-200">
-            Trực tiếp
-          </span>
         </div>
 
         <div className="space-y-3">
