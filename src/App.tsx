@@ -6492,11 +6492,11 @@ const PREDEFINED_PROMPTS: Array<{ group: PromptGroup, category: string, prompts:
   },
   {
     group: 'translate',
-    category: 'Dịch · Truyện sắc / Ngôn tình trưởng thành',
+    category: 'Dịch · Truyện sắc 18+ / Ngôn tình trưởng thành',
     prompts: [
-      { title: 'Căng thẳng giàu cảm xúc', content: 'Giữ không khí trưởng thành, sức hút giữa hai nhân vật và nhịp cảm xúc dồn nén. Ưu tiên nét gợi cảm tinh tế, không biến câu văn thành thô cứng hoặc máy móc.' },
-      { title: 'Tương tác có consent', content: 'Làm rõ tín hiệu đồng thuận, khoảng cách cơ thể, nhịp thở, ánh mắt và trạng thái tâm lý. Giữ sự trưởng thành và mạch cảm xúc, tránh làm mất tự nhiên của hội thoại.' },
-      { title: 'Nhịp nóng nhưng mượt', content: 'Khi gặp cảnh người lớn, giữ nhịp dồn dập vừa phải, câu văn liền mạch và giàu cảm giác. Không tóm tắt qua loa, nhưng vẫn ưu tiên văn phong mượt và dễ đọc.' },
+      { title: 'Căng thẳng cảm xúc rất chi tiết', content: 'Dịch theo giọng trưởng thành 18+, ưu tiên câu chữ giàu cảm giác nhưng vẫn mượt và có kiểm soát. Làm rõ từng lớp tâm lý: chờ đợi, giằng co, khao khát, ngập ngừng, mất bình tĩnh. Khi vào cảnh nóng, giữ nhịp tăng dần, không tóm tắt, không lướt nhanh; chú ý ánh mắt, hơi thở, khoảng cách cơ thể, phản ứng ngắt quãng và sự thay đổi trong giọng nói.' },
+      { title: 'Consent, phản ứng và nội tâm', content: 'Giữ rõ tín hiệu đồng thuận, thế chủ động/bị động và các phản ứng qua đối thoại, cử chỉ, ánh mắt, ngập ngừng, run tay, đổi nhịp thở. Ưu tiên diễn tả nội tâm thật chi tiết để người đọc cảm được sức nặng của từng tiếp xúc, thay vì chỉ kể hành động khô. Văn phong phải trưởng thành, gợi cảm, không đột ngột chuyển sang giọng thô hoặc máy móc.' },
+      { title: 'Nhịp nóng nhưng câu chữ sang', content: 'Khi gặp đoạn 18+, giữ nhịp dồn dập vừa đủ, câu văn có độ lướt, tránh lặp từ và tránh làm cảnh thân mật thành bản tường thuật khô. Dịch kỹ cách dùng từ, sắc thái xưng hô, phản ứng thân thể, xấu hổ, chiếm hữu, day dứt hoặc lệ thuộc cảm xúc. Mỗi đoạn thân mật cần có mở nhịp, cao trào và dư âm sau cảnh.' },
     ],
   },
   {
@@ -6556,11 +6556,11 @@ const PREDEFINED_PROMPTS: Array<{ group: PromptGroup, category: string, prompts:
   },
   {
     group: 'write',
-    category: 'Viết · Truyện sắc / Tình cảm trưởng thành',
+    category: 'Viết · Truyện sắc 18+ / Tình cảm trưởng thành',
     prompts: [
-      { title: 'Nhiệt độ cảm xúc tăng dần', content: 'Xây cảnh theo nhịp chạm nhẹ → căng thẳng im lặng → bùng nổ cảm xúc. Tập trung vào cảm nhận, ánh mắt, khoảng cách cơ thể và nhịp tim thay vì chỉ kể sự kiện.' },
-      { title: 'Cuốn hút nhưng vẫn sang', content: 'Giữ giọng văn quyến rũ, trưởng thành, có tiết chế. Dùng chi tiết gợi cảm vừa đủ để tăng sức hút, tránh câu chữ thô hoặc lặp mô típ quá lộ.' },
-      { title: 'Sau cảnh thân mật vẫn có dư âm', content: 'Sau phân đoạn gần gũi, luôn dành chỗ cho suy nghĩ, ngại ngùng, chiếm hữu hoặc day dứt. Để cảnh nóng phục vụ phát triển quan hệ chứ không đứng tách rời khỏi cốt truyện.' },
+      { title: 'Cảnh 18+ nhiều lớp cảm xúc', content: 'Viết theo nhịp chạm nhẹ -> thử giới hạn -> căng thẳng dồn lên -> bùng nổ -> dư âm sau cảnh. Tập trung mạnh vào nội tâm, cách nhân vật tự kiềm chế rồi đánh mất kiểm soát, phản ứng với từng đụng chạm, thay đổi trong nhịp thở, ánh mắt, âm lượng giọng nói và cử chỉ. Mỗi hành động phải kéo theo một phản ứng cảm xúc rõ ràng.' },
+      { title: 'Câu chữ gợi cảm nhưng không thô', content: 'Dùng từ chọn lọc, giàu sức gợi, nhấn vào không khí nóng, sự thân mật, chiếm hữu, ngại ngùng, nghiện cảm giác hoặc day dứt sau gần gũi. Tránh viết như liệt kê động tác. Ưu tiên câu văn có nhịp, có điểm dừng, có khoảng lặng, để người đọc cảm thấy cảnh đang diễn ra thật sống chứ không bị máy móc.' },
+      { title: 'Phản ứng cơ thể và dư âm tâm lý', content: 'Ở cảnh trưởng thành, luôn mô tả rõ phản ứng nối tiếp: run nhẹ, chững lại, nuốt khan, né tránh rồi lại bị hút về, mất kiểm soát, bối rối sau gần gũi. Sau cảnh thân mật phải có hậu quả cảm xúc như xấu hổ, say đắm, lo sợ, dằn vặt hoặc muốn chiếm hữu hơn. Để cảnh 18+ phục vụ tiến triển quan hệ và mâu thuẫn nhân vật.' },
     ],
   },
   {
