@@ -1282,7 +1282,7 @@ function sanitizePromptForUrl(prompt: string): string {
   return safe.replace(/\s+/g, ' ').trim().slice(0, 420);
 }
 
-async function probeImageUrl(url: string, timeoutMs = 18000): Promise<boolean> {
+async function probeImageUrl(url: string, timeoutMs = 7000): Promise<boolean> {
   if (typeof window === 'undefined') return false;
   return new Promise((resolve) => {
     const image = new Image();
@@ -1301,6 +1301,26 @@ async function probeImageUrl(url: string, timeoutMs = 18000): Promise<boolean> {
     image.onerror = () => done(false);
     image.src = url;
   });
+}
+
+async function pickFirstReachableImageUrl(
+  candidates: string[],
+  timeoutMs = 7000,
+  batchSize = 2,
+): Promise<string> {
+  const uniqueCandidates = Array.from(new Set(candidates.filter(Boolean)));
+  for (let index = 0; index < uniqueCandidates.length; index += batchSize) {
+    const batch = uniqueCandidates.slice(index, index + batchSize);
+    const results = await Promise.all(
+      batch.map(async (candidate) => ({
+        candidate,
+        ok: await probeImageUrl(candidate, timeoutMs),
+      })),
+    );
+    const winner = results.find((result) => result.ok);
+    if (winner) return winner.candidate;
+  }
+  return '';
 }
 
 function escapeSvgText(input: string): string {
@@ -4569,12 +4589,12 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
               prompt,
               size: '1024x1536',
             }),
-          }, 50000);
+          }, 18000);
           if (resp.ok) {
             const data = await resp.json();
             const url = String(data?.data?.[0]?.url || '').trim();
             const b64 = String(data?.data?.[0]?.b64_json || '').trim();
-            if (url && await probeImageUrl(url, 25000)) {
+            if (url && await probeImageUrl(url, 9000)) {
               imageUrl = url;
             } else if (b64) {
               imageUrl = `data:image/png;base64,${b64}`;
@@ -4588,31 +4608,23 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
       // Fallback to public AI image service.
       if (!imageUrl) {
         const seed = Math.floor(Math.random() * 1000000000);
-        const promptVariants = Array.from(new Set([prompt, basePrompt].filter(Boolean)));
+        const promptVariants = Array.from(new Set([prompt, basePrompt].filter(Boolean))).slice(0, 2);
         const buildCandidates = (variant: string, offset: number) => {
           const encoded = encodeURIComponent(variant);
           return [
             `https://image.pollinations.ai/prompt/${encoded}?width=896&height=1344&seed=${seed + offset}&nologo=true&enhance=true&model=flux`,
             `https://image.pollinations.ai/prompt/${encoded}?width=896&height=1344&seed=${seed + offset}&nologo=true&enhance=true&model=turbo`,
-            `https://image.pollinations.ai/prompt/${encoded}?width=768&height=1152&seed=${seed + offset}&nologo=true&model=sdxl`,
-            `https://image.pollinations.ai/prompt/${encoded}?width=768&height=1152&seed=${seed + offset}&nologo=true`,
           ];
         };
 
-        for (let attempt = 0; attempt < 3 && !imageUrl; attempt += 1) {
+        for (let attempt = 0; attempt < 2 && !imageUrl; attempt += 1) {
           for (const variant of promptVariants) {
             const candidates = buildCandidates(variant, attempt * 97);
-            for (const candidate of candidates) {
-              const ok = await probeImageUrl(candidate, 45000);
-              if (ok) {
-                imageUrl = candidate;
-                break;
-              }
-            }
+            imageUrl = await pickFirstReachableImageUrl(candidates, 6000, 2);
             if (imageUrl) break;
           }
-          if (!imageUrl && attempt < 2) {
-            await sleepMs(1200 * (attempt + 1));
+          if (!imageUrl && attempt < 1) {
+            await sleepMs(450);
           }
         }
       }
@@ -4623,7 +4635,7 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
         if (!coverPrompt.trim()) {
           setCoverPrompt(prompt);
         }
-        notifyApp({ tone: 'warn', message: 'Dịch vụ ảnh AI đang bận, hệ thống đã tạo bìa dự phòng để bạn dùng ngay. Bạn có thể bấm tạo lại sau 1-2 phút để lấy bìa AI.', timeoutMs: 5200 });
+        notifyApp({ tone: 'warn', message: 'Dịch vụ ảnh AI đang bận nên hệ thống đã chuyển sang bìa dự phòng ngay để bạn không phải chờ lâu. Bạn có thể bấm tạo lại sau ít phút nếu muốn lấy bìa AI.', timeoutMs: 5200 });
         return;
       }
       setCoverImageUrl(imageUrl);
