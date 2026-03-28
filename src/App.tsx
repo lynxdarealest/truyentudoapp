@@ -9184,6 +9184,7 @@ const AppContent = () => {
   const [backupSnapshots, setBackupSnapshots] = useState<BackupSnapshot[]>([]);
   const [backupHistoryReady, setBackupHistoryReady] = useState(false);
   const [backupBusyAction, setBackupBusyAction] = useState('');
+  const [accountLastSyncedAt, setAccountLastSyncedAt] = useState('');
   const [driveAuth, setDriveAuth] = useState<GoogleDriveAuthState | null>(() => loadStoredDriveAuth());
   const [driveBinding, setDriveBinding] = useState<GoogleDriveBinding | null>(() => loadDriveBindingForUser(user?.uid));
   const [isUploadingProfileAvatar, setIsUploadingProfileAvatar] = useState(false);
@@ -9863,7 +9864,10 @@ const AppContent = () => {
       await saveServerWorkspace(user.uid, mergedSnapshot);
       storeWorkspaceRecoverySnapshot(mergedSnapshot, 'manual-sync');
       workspaceSyncRef.current.lastSerialized = JSON.stringify(mergedSnapshot);
-      setBackupSettings((prev) => ({ ...prev, lastManualSyncAt: new Date().toISOString() }));
+      const syncedAt = new Date().toISOString();
+      workspaceSyncRef.current.lastSyncedAt = syncedAt;
+      setAccountLastSyncedAt(syncedAt);
+      setBackupSettings((prev) => ({ ...prev, lastManualSyncAt: syncedAt }));
       await createWorkspaceBackup('manual', { force: true, quiet: true });
       notifyApp({
         tone: 'success',
@@ -9887,6 +9891,14 @@ const AppContent = () => {
   useEffect(() => {
     saveBackupSettings(backupSettings);
   }, [backupSettings]);
+
+  useEffect(() => {
+    if (!user?.uid) {
+      setAccountLastSyncedAt('');
+      return;
+    }
+    setAccountLastSyncedAt((prev) => prev || backupSettings.lastManualSyncAt || '');
+  }, [backupSettings.lastManualSyncAt, user?.uid]);
 
   useEffect(() => {
     setDriveBinding(loadDriveBindingForUser(user?.uid));
@@ -10292,6 +10304,7 @@ const AppContent = () => {
     storeWorkspaceRecoverySnapshot(mergedSnapshot, 'account-sync-save');
     workspaceSyncRef.current.lastSerialized = serialized;
     workspaceSyncRef.current.lastSyncedAt = new Date().toISOString();
+    setAccountLastSyncedAt(workspaceSyncRef.current.lastSyncedAt);
   }, [user, hasSupabase]);
 
   useEffect(() => {
@@ -10369,6 +10382,7 @@ const AppContent = () => {
         storeWorkspaceRecoverySnapshot(mergedSnapshot, 'account-sync-save-after-hydrate');
         workspaceSyncRef.current.lastSerialized = mergedSerialized;
         workspaceSyncRef.current.lastSyncedAt = new Date().toISOString();
+        setAccountLastSyncedAt(workspaceSyncRef.current.lastSyncedAt);
       } catch (error) {
         console.warn('Không thể đồng bộ workspace theo tài khoản.', error);
         notifyApp({
@@ -12442,6 +12456,10 @@ CHỈ trả JSON thuần, không bọc markdown.
                         : 'Tài khoản này chưa liên kết với Google Drive nào.'}
                 </p>
                 <p className="text-xs text-emerald-300">Auto sync Drive: đang bật.</p>
+                <p className="text-xs text-slate-400">
+                  File sao lưu mới sẽ nằm trong thư mục <strong className="text-white">TruyenForge Backups</strong> ở My Drive.
+                  Nếu chưa thấy, hãy bấm <strong className="text-white">Kết nối lại Drive</strong> để cấp lại quyền.
+                </p>
                 <div className="flex flex-wrap gap-2 pt-1">
                   <button
                     className="tf-btn tf-btn-ghost px-3 py-1 text-xs"
@@ -12477,6 +12495,23 @@ CHỈ trả JSON thuần, không bọc markdown.
                         ? 'Mỗi lần dữ liệu thay đổi, app sẽ tự đẩy lên Supabase theo lô và đồng bộ định kỳ để tránh mất dữ liệu.'
                         : 'Autosync đã tắt qua cấu hình môi trường.'}
                 </p>
+                {user?.uid ? (
+                  <p className="text-xs text-slate-500">
+                    Mã tài khoản sync: <span className="font-mono">{user.uid}</span>
+                  </p>
+                ) : null}
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <button
+                    className="tf-btn tf-btn-ghost px-3 py-1 text-xs"
+                    onClick={() => void handleManualAccountSync()}
+                    disabled={!user || !hasSupabase || backupBusyAction === 'manual-sync'}
+                  >
+                    {backupBusyAction === 'manual-sync' ? 'Đang đồng bộ...' : 'Đồng bộ ngay với Supabase'}
+                  </button>
+                  <p className="text-xs text-slate-400">
+                    Lần sync gần nhất: {accountLastSyncedAt ? formatBackupTimestamp(accountLastSyncedAt) : 'Chưa có'}
+                  </p>
+                </div>
               </div>
             </div>
 

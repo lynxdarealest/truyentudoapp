@@ -1,9 +1,10 @@
 import type { StorageBackupPayload } from './storage';
 
-const GOOGLE_DRIVE_SCOPE = 'openid email profile https://www.googleapis.com/auth/drive.appdata';
+const GOOGLE_DRIVE_SCOPE = 'openid email profile https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/drive.file';
 const GOOGLE_IDENTITY_SCRIPT = 'https://accounts.google.com/gsi/client';
 const DRIVE_AUTH_STORAGE_KEY = 'truyenforge:drive-auth-v1';
 const GOOGLE_USERINFO_ENDPOINT = 'https://openidconnect.googleapis.com/v1/userinfo';
+const DRIVE_BACKUP_FOLDER_NAME = 'TruyenForge Backups';
 
 declare global {
   interface Window {
@@ -48,6 +49,12 @@ export interface GoogleDriveUploadResult {
 }
 
 interface GoogleDriveFileRef {
+  id: string;
+  name: string;
+  modifiedTime?: string;
+}
+
+interface GoogleDriveFolderRef {
   id: string;
   name: string;
   modifiedTime?: string;
@@ -232,6 +239,10 @@ function escapeDriveQueryValue(input: string): string {
 }
 
 async function listBackupFilesByName(accessToken: string, fileName: string): Promise<GoogleDriveFileRef[]> {
+  return listBackupFilesByNameInAppData(accessToken, fileName);
+}
+
+async function listBackupFilesByNameInAppData(accessToken: string, fileName: string): Promise<GoogleDriveFileRef[]> {
   const query = `'appDataFolder' in parents and name = '${escapeDriveQueryValue(fileName)}' and trashed = false`;
   const url = new URL('https://www.googleapis.com/drive/v3/files');
   url.searchParams.set('spaces', 'appDataFolder');
@@ -248,6 +259,84 @@ async function listBackupFilesByName(accessToken: string, fileName: string): Pro
   if (!response.ok) {
     const text = await response.text();
     throw new Error(text || 'Không thể kiểm tra file backup hiện có trên Google Drive.');
+  }
+
+  const payload = await response.json() as { files?: GoogleDriveFileRef[] };
+  return Array.isArray(payload.files)
+    ? payload.files.sort((a, b) => new Date(b.modifiedTime || 0).getTime() - new Date(a.modifiedTime || 0).getTime())
+    : [];
+}
+
+async function listBackupFoldersByName(accessToken: string, folderName: string): Promise<GoogleDriveFolderRef[]> {
+  const query = `'root' in parents and name = '${escapeDriveQueryValue(folderName)}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+  const url = new URL('https://www.googleapis.com/drive/v3/files');
+  url.searchParams.set('spaces', 'drive');
+  url.searchParams.set('pageSize', '20');
+  url.searchParams.set('fields', 'files(id,name,modifiedTime)');
+  url.searchParams.set('q', query);
+
+  const response = await fetch(url.toString(), {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || 'Không thể kiểm tra thư mục backup trên Google Drive.');
+  }
+
+  const payload = await response.json() as { files?: GoogleDriveFolderRef[] };
+  return Array.isArray(payload.files)
+    ? payload.files.sort((a, b) => new Date(b.modifiedTime || 0).getTime() - new Date(a.modifiedTime || 0).getTime())
+    : [];
+}
+
+async function createBackupFolder(accessToken: string, folderName: string): Promise<GoogleDriveFolderRef> {
+  const response = await fetch('https://www.googleapis.com/drive/v3/files?fields=id,name,modifiedTime', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      name: folderName,
+      mimeType: 'application/vnd.google-apps.folder',
+      parents: ['root'],
+    }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || 'Không thể tạo thư mục backup trên Google Drive.');
+  }
+
+  return await response.json() as GoogleDriveFolderRef;
+}
+
+async function ensureBackupFolder(accessToken: string): Promise<GoogleDriveFolderRef> {
+  const existing = await listBackupFoldersByName(accessToken, DRIVE_BACKUP_FOLDER_NAME);
+  if (existing[0]) return existing[0];
+  return createBackupFolder(accessToken, DRIVE_BACKUP_FOLDER_NAME);
+}
+
+async function listBackupFilesByNameInFolder(accessToken: string, folderId: string, fileName: string): Promise<GoogleDriveFileRef[]> {
+  const query = `'${escapeDriveQueryValue(folderId)}' in parents and name = '${escapeDriveQueryValue(fileName)}' and trashed = false`;
+  const url = new URL('https://www.googleapis.com/drive/v3/files');
+  url.searchParams.set('spaces', 'drive');
+  url.searchParams.set('pageSize', '20');
+  url.searchParams.set('fields', 'files(id,name,modifiedTime)');
+  url.searchParams.set('q', query);
+
+  const response = await fetch(url.toString(), {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || 'Không thể kiểm tra file backup trong thư mục Drive.');
   }
 
   const payload = await response.json() as { files?: GoogleDriveFileRef[] };
@@ -299,7 +388,20 @@ export async function uploadBackupSnapshotToDrive(
   payload: StorageBackupPayload,
 ): Promise<GoogleDriveUploadResult> {
   const boundary = `truyenforge-${Date.now()}`;
-  const existingFiles = await listBackupFilesByName(accessToken, fileName);
+  let existingFiles: GoogleDriveFileRef[] = [];
+  let folderId = '';
+  let useVisibleFolder = true;
+
+  try {
+    const folder = await ensureBackupFolder(accessToken);
+    folderId = folder.id;
+    existingFiles = await listBackupFilesByNameInFolder(accessToken, folderId, fileName);
+  } catch {
+    // Token cũ có thể chỉ có scope appdata, fallback để không làm hỏng backup hiện có.
+    useVisibleFolder = false;
+    existingFiles = await listBackupFilesByNameInAppData(accessToken, fileName);
+  }
+
   const current = existingFiles[0];
   const metadata = current
     ? {
@@ -308,7 +410,7 @@ export async function uploadBackupSnapshotToDrive(
       }
     : {
         name: fileName,
-        parents: ['appDataFolder'],
+        parents: useVisibleFolder ? [folderId] : ['appDataFolder'],
         mimeType: 'application/json',
       };
   const body = buildMultipartBody(boundary, metadata, payload);
