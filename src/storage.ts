@@ -2,10 +2,13 @@ import { loadBudgetState, saveBudgetState, type BudgetState } from './finops';
 import { loadPromptLibraryState, savePromptLibraryState } from './promptLibraryStore';
 import { emitLocalWorkspaceChanged } from './localWorkspaceSync';
 import { getScopedStorageItem, setScopedStorageItem, shouldAllowLegacyScopeFallback } from './workspaceScope';
+import { compressToUTF16, decompressFromUTF16 } from 'lz-string';
 
 const SAFE_IMPORT_BACKUP_KEY = 'safe_import_backup_v1';
 const STORIES_BACKUP_HISTORY_KEY = 'stories_backup_history_v1';
 const STORIES_BACKUP_LIMIT = 12;
+const STORIES_STORAGE_CODEC_PREFIX = 'lzutf16:';
+const STORIES_STORAGE_COMPRESSION_THRESHOLD = 260_000;
 const STORIES_KEY = 'stories';
 const CHARACTERS_KEY = 'characters';
 const AI_RULES_KEY = 'ai_rules';
@@ -93,26 +96,88 @@ function setScopedRaw(baseKey: string, value: string): void {
   setScopedStorageItem(baseKey, value);
 }
 
+function decodeStoriesPayload(raw: string | null): any[] {
+  if (!raw) return [];
+  try {
+    const decoded = raw.startsWith(STORIES_STORAGE_CODEC_PREFIX)
+      ? (decompressFromUTF16(raw.slice(STORIES_STORAGE_CODEC_PREFIX.length)) || '[]')
+      : raw;
+    const parsed = JSON.parse(decoded);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function encodeStoriesPayload(stories: any[]): string {
+  const normalizedStories = Array.isArray(stories) ? stories.map(normalizeStory) : [];
+  const json = JSON.stringify(normalizedStories);
+  if (json.length < STORIES_STORAGE_COMPRESSION_THRESHOLD) {
+    return json;
+  }
+  const compressed = compressToUTF16(json);
+  if (!compressed) {
+    return json;
+  }
+  return `${STORIES_STORAGE_CODEC_PREFIX}${compressed}`;
+}
+
+function buildStoriesFingerprint(stories: any[]): string {
+  const normalizedStories = Array.isArray(stories) ? stories : [];
+  const storyCount = normalizedStories.length;
+  const chapterCount = normalizedStories.reduce((sum, story) => sum + (Array.isArray(story?.chapters) ? story.chapters.length : 0), 0);
+  const totalChars = normalizedStories.reduce((sum, story) => sum + Number(String(story?.content || '').length), 0);
+  const storyIds = normalizedStories
+    .slice(0, 8)
+    .map((story) => String(story?.id || '').trim())
+    .join('|');
+  return `${storyCount}:${chapterCount}:${totalChars}:${storyIds}`;
+}
+
 function backupStoriesSnapshot(stories: any[]): void {
   try {
     const normalizedStories = Array.isArray(stories) ? stories.map(normalizeStory) : [];
-    const nextSerialized = JSON.stringify(normalizedStories);
     const existingRaw = getScopedRaw(STORIES_BACKUP_HISTORY_KEY);
-    const existing = existingRaw ? JSON.parse(existingRaw) : [];
-    const history = Array.isArray(existing) ? existing : [];
+    const existing = existingRaw ? JSON.parse(existingRaw) : null;
+    const legacyHistory = Array.isArray(existing) ? existing : [];
+    const history = Array.isArray((existing as { entries?: unknown })?.entries)
+      ? ((existing as { entries: Array<{ savedAt?: string; storyCount?: number; chapterCount?: number; totalChars?: number; fingerprint?: string }> }).entries)
+      : legacyHistory
+        .map((item) => ({
+          savedAt: typeof item?.savedAt === 'string' ? item.savedAt : new Date().toISOString(),
+          storyCount: Array.isArray(item?.stories) ? item.stories.length : 0,
+          chapterCount: Array.isArray(item?.stories)
+            ? item.stories.reduce((sum: number, story: any) => sum + (Array.isArray(story?.chapters) ? story.chapters.length : 0), 0)
+            : 0,
+          totalChars: Array.isArray(item?.stories)
+            ? item.stories.reduce((sum: number, story: any) => sum + Number(String(story?.content || '').length), 0)
+            : 0,
+          fingerprint: Array.isArray(item?.stories) ? buildStoriesFingerprint(item.stories) : '',
+        }))
+        .filter((item) => item.fingerprint);
+
+    const storyCount = normalizedStories.length;
+    const chapterCount = normalizedStories.reduce((sum, story) => sum + (Array.isArray(story?.chapters) ? story.chapters.length : 0), 0);
+    const totalChars = normalizedStories.reduce((sum, story) => sum + Number(String(story?.content || '').length), 0);
+    const fingerprint = buildStoriesFingerprint(normalizedStories);
     const lastEntry = history[history.length - 1];
-    if (lastEntry?.serialized === nextSerialized) return;
+    if (lastEntry?.fingerprint === fingerprint) return;
 
     const nextHistory = [
       ...history,
       {
         savedAt: new Date().toISOString(),
-        stories: normalizedStories,
-        serialized: nextSerialized,
+        storyCount,
+        chapterCount,
+        totalChars,
+        fingerprint,
       },
     ].slice(-STORIES_BACKUP_LIMIT);
 
-    setScopedRaw(STORIES_BACKUP_HISTORY_KEY, JSON.stringify(nextHistory));
+    setScopedRaw(STORIES_BACKUP_HISTORY_KEY, JSON.stringify({
+      schemaVersion: 2,
+      entries: nextHistory,
+    }));
   } catch {
     // Keep primary save path alive even if backup history fails.
   }
@@ -183,7 +248,7 @@ function downloadBackupPayload(payload: StorageBackupPayload, filename?: string)
 export const storage = {
   getStories: () => {
     const data = getScopedRaw(STORIES_KEY);
-    const parsed = data ? JSON.parse(data) : [];
+    const parsed = decodeStoriesPayload(data);
     return Array.isArray(parsed) ? parsed.map(normalizeStory) : [];
   },
   getLatestStoriesBackup: () => {
@@ -199,7 +264,20 @@ export const storage = {
   },
   saveStories: (stories: any[]) => {
     const normalizedStories = Array.isArray(stories) ? stories.map(normalizeStory) : [];
-    setScopedRaw(STORIES_KEY, JSON.stringify(normalizedStories));
+    const encodedStories = encodeStoriesPayload(normalizedStories);
+    try {
+      setScopedRaw(STORIES_KEY, encodedStories);
+    } catch {
+      try {
+        setScopedRaw(STORIES_BACKUP_HISTORY_KEY, JSON.stringify({
+          schemaVersion: 2,
+          entries: [],
+        }));
+        setScopedRaw(STORIES_KEY, encodedStories);
+      } catch {
+        throw new Error('Không thể lưu vì dung lượng trình duyệt đã đầy. Hãy mở Sao lưu để tải JSON ra máy hoặc xóa bớt dữ liệu cũ.');
+      }
+    }
     backupStoriesSnapshot(normalizedStories);
     emitLocalWorkspaceChanged('stories');
   },

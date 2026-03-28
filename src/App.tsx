@@ -6738,7 +6738,17 @@ const StoryDetail = ({
   const formatContent = (content: string) => {
     const normalized = getRenderableChapterContent(content);
     if (!normalized) return '';
-    return improveBracketSystemSpacing(normalized);
+    const withParagraphs = normalized
+      .replace(/\r\n?/g, '\n')
+      // Tách rõ các đoạn hệ thống dạng [ ... ] [ ... ] để đọc không bị dính.
+      .replace(/]\s+\[/g, ']\n[')
+      // Khi có câu thoại mới mở ngoặc kép sau một câu hoàn chỉnh, tách thành đoạn mới.
+      .replace(/([.!?…]["”'’»]*)\s+(?=["“'‘«])/g, '$1\n\n')
+      // Tách nhẹ theo nhịp kể để giảm hiện tượng dính một khối dài.
+      .replace(/([.!?…]["”'’»]*)\s+([A-ZÀ-Ỹ])/g, '$1\n\n$2')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+    return improveBracketSystemSpacing(withParagraphs);
   };
 
   const getWordCount = (text: string) => {
@@ -9658,6 +9668,8 @@ const AppContent = () => {
   const toastTimeoutsRef = useRef<Map<string, number>>(new Map());
   const workspaceSyncRef = useRef({
     isHydrating: false,
+    isSyncing: false,
+    hasPendingSync: false,
     lastSerialized: '',
     lastErrorNotifiedAt: 0,
     lastSyncedAt: '',
@@ -10774,20 +10786,50 @@ const AppContent = () => {
     localBackupRestoreAttemptedRef.current.add(scope);
     const currentStories = storage.getStories();
     if (currentStories.length > 0) return;
-    const latestBackup = storage.getLatestStoriesBackup();
-    if (!latestBackup.length) return;
-    storage.saveStories(latestBackup);
-    notifyApp({
-      tone: 'warn',
-      message: 'Đã tự khôi phục truyện từ backup cục bộ gần nhất trên máy này.',
-      groupKey: 'local-story-backup-restore',
-      timeoutMs: 5600,
+    let cancelled = false;
+    const tryRestoreStories = async () => {
+      const legacyBackup = storage.getLatestStoriesBackup();
+      if (legacyBackup.length) {
+        storage.saveStories(legacyBackup);
+        notifyApp({
+          tone: 'warn',
+          message: 'Đã tự khôi phục truyện từ backup cục bộ gần nhất trên máy này.',
+          groupKey: 'local-story-backup-restore',
+          timeoutMs: 5600,
+        });
+        return;
+      }
+
+      const latestSnapshot = (await listBackupSnapshots(1))[0];
+      const snapshotStories = Array.isArray(latestSnapshot?.payload?.stories)
+        ? latestSnapshot.payload.stories
+        : [];
+      if (cancelled || !snapshotStories.length) return;
+      storage.saveStories(snapshotStories);
+      notifyApp({
+        tone: 'warn',
+        message: 'Đã khôi phục truyện từ mốc sao lưu cục bộ gần nhất.',
+        groupKey: 'local-story-backup-restore-vault',
+        timeoutMs: 5600,
+      });
+    };
+    void tryRestoreStories().catch((error) => {
+      console.warn('Không thể tự khôi phục truyện từ backup cục bộ.', error);
     });
+    return () => {
+      cancelled = true;
+    };
   }, [user?.uid]);
 
   const syncWorkspaceToAccount = useCallback(async () => {
     if (!ACCOUNT_CLOUD_AUTOSYNC_ENABLED) return;
     if (!user || !hasSupabase || workspaceSyncRef.current.isHydrating) return;
+    if (workspaceSyncRef.current.isSyncing) {
+      workspaceSyncRef.current.hasPendingSync = true;
+      return;
+    }
+    workspaceSyncRef.current.isSyncing = true;
+    try {
     if (activeStoryLockRef.current?.storyId) {
       activeStoryLockRef.current = {
         ...activeStoryLockRef.current,
@@ -10910,12 +10952,25 @@ const AppContent = () => {
     workspaceSyncRef.current.lastKnownRevision = savedSnapshot.revision || workspaceSyncRef.current.lastKnownRevision;
     workspaceSyncRef.current.lastServerUpdatedAt = savedSnapshot.updatedAt || '';
     commitAccountSyncedAt(new Date().toISOString());
+    } finally {
+      workspaceSyncRef.current.isSyncing = false;
+      if (workspaceSyncRef.current.hasPendingSync) {
+        workspaceSyncRef.current.hasPendingSync = false;
+        window.setTimeout(() => {
+          void syncWorkspaceToAccount().catch((error) => {
+            console.warn('Chạy lại autosync sau khi gộp thay đổi bị lỗi.', error);
+          });
+        }, ACCOUNT_CLOUD_AUTOSYNC_DEBOUNCE_MS);
+      }
+    }
   }, [commitAccountSyncedAt, user, hasSupabase]);
 
   useEffect(() => {
     if (!user || !hasSupabase || !ACCOUNT_CLOUD_AUTOSYNC_ENABLED) {
       workspaceSyncRef.current.lastSerialized = '';
       workspaceSyncRef.current.isHydrating = false;
+      workspaceSyncRef.current.isSyncing = false;
+      workspaceSyncRef.current.hasPendingSync = false;
       workspaceSyncRef.current.lastServerUpdatedAt = '';
       workspaceSyncRef.current.lastKnownRevision = 0;
       return;
@@ -12710,14 +12765,6 @@ ${JSON.stringify(violatingPayload)}
   const backupWarningMessage = buildBackupWarningMessage(latestBackupAt, backupSettings.staleAfterHours);
   const driveConfigured = hasGoogleDriveBackupConfig();
   const driveConnected = hasUsableDriveToken(driveAuth);
-  const latestBackupStoredOnDrive = latestBackup?.drive?.status === 'uploaded';
-  const accountAutosyncLabel = !user
-    ? 'Cần đăng nhập'
-    : !hasSupabase
-      ? 'Thiếu cấu hình Supabase'
-      : ACCOUNT_CLOUD_AUTOSYNC_ENABLED
-        ? 'Đang bật'
-        : 'Đang tắt';
 
   const routeTransitionClass = navigationType === 'POP' ? 'tf-route-pop' : 'tf-route-push';
   const oauthConsentRedirectTarget = `/${location.search}${location.hash}`;
@@ -13174,157 +13221,98 @@ ${JSON.stringify(violatingPayload)}
             >
               <X className="h-5 w-5" />
             </button>
-            <div className="space-y-5 overflow-y-auto pr-1 sm:pr-2 max-h-[calc(92vh-2.25rem)]">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-              <div className="space-y-2 pr-14">
-                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Sao lưu & khôi phục</p>
-                <h3 className="text-2xl font-bold">Sao lưu và khôi phục dữ liệu</h3>
-                <p className="text-sm text-slate-400 max-w-3xl">
-                  Đây là nơi giữ cho công sức của bạn không biến mất vô lý. Dữ liệu sẽ tự đồng bộ với tài khoản Supabase khi bạn đăng nhập, đồng thời bạn vẫn có thể giữ thêm bản sao trên thiết bị và Google Drive.
-                </p>
-              </div>
-              <button
-                className="tf-btn tf-btn-ghost px-3 py-1 self-start"
-                onClick={closeBackupCenter}
-              >
-                Đóng
-              </button>
+            <div className="space-y-4 overflow-y-auto pr-1 sm:pr-2 max-h-[calc(92vh-2.25rem)]">
+            <div className="space-y-3 pr-14">
+              <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Sao lưu & khôi phục</p>
+              <h3 className="text-2xl font-bold">Sao lưu và khôi phục dữ liệu</h3>
+              <p className="text-sm text-slate-400 max-w-3xl">
+                Bản tối giản: chỉ giữ thao tác quan trọng để tránh rối. Hệ thống tự đồng bộ khi bạn bấm lưu nội dung, và bạn có thể đẩy thêm một bản lên Drive để an toàn hơn.
+              </p>
             </div>
 
             {backupWarningMessage ? (
               <div className="rounded-2xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
-              <div className="flex items-start gap-3">
-                <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
-                <div className="space-y-1">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+                  <div className="space-y-1">
                     <p className="font-semibold text-rose-50">Nhắc bạn sao lưu</p>
                     <p>{backupWarningMessage}</p>
+                  </div>
                 </div>
-              </div>
               </div>
             ) : null}
 
-            <div className="grid gap-3 md:grid-cols-2">
-              <div className="rounded-2xl border border-white/10 bg-slate-900/50 p-4 space-y-2">
-                <p className="text-xs uppercase tracking-[0.14em] text-slate-400">Lần sao lưu gần nhất</p>
-                <p className="text-lg font-bold text-white">{latestBackupAt ? formatBackupTimestamp(latestBackupAt) : 'Chưa có'}</p>
-                <p className="text-sm text-slate-400">
-                  {latestBackup
-                    ? `${(latestBackup.payload.stories || []).length} truyện · ${(latestBackup.payload.characters || []).length} nhân vật · ${latestBackupStoredOnDrive ? 'đã có trên máy và trên Drive' : 'đang có trên máy'}`
-                    : 'Chưa có bản sao lưu nào trên thiết bị này.'}
-                </p>
+            <div className="rounded-2xl border border-white/10 bg-slate-900/45 p-4 space-y-3">
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <span className="rounded-full bg-indigo-500/15 px-3 py-1 font-semibold text-indigo-100">
+                  Mốc gần nhất: {latestBackupAt ? formatBackupTimestamp(latestBackupAt) : 'Chưa có'}
+                </span>
+                <span className={cn(
+                  'rounded-full px-3 py-1 font-semibold',
+                  driveBinding ? 'bg-emerald-500/15 text-emerald-200' : 'bg-slate-800 text-slate-300'
+                )}>
+                  Drive: {driveBinding ? 'Đã liên kết' : 'Chưa liên kết'}
+                </span>
+                <span className={cn(
+                  'rounded-full px-3 py-1 font-semibold',
+                  user && hasSupabase && ACCOUNT_CLOUD_AUTOSYNC_ENABLED ? 'bg-cyan-500/15 text-cyan-200' : 'bg-slate-800 text-slate-300'
+                )}>
+                  Autosync tài khoản: {user && hasSupabase && ACCOUNT_CLOUD_AUTOSYNC_ENABLED ? 'Đang bật' : 'Chưa sẵn sàng'}
+                </span>
               </div>
-              <div className="rounded-2xl border border-white/10 bg-slate-900/50 p-4 space-y-2">
-                <p className="text-xs uppercase tracking-[0.14em] text-slate-400">Google Drive</p>
-                <p className="text-lg font-bold text-white">
-                  {!user ? 'Cần đăng nhập' : !driveConfigured ? 'Chưa thiết lập' : driveBinding ? 'Đã liên kết' : 'Chưa liên kết'}
-                </p>
-                <p className="text-sm text-slate-400">
-                  {!user
-                    ? 'Đăng nhập TruyenForge trước để liên kết đúng một Gmail cho tài khoản này.'
-                    : !driveConfigured
-                      ? 'Thiếu cấu hình Google Drive ở môi trường triển khai nên chưa thể sử dụng.'
-                      : driveBinding
-                        ? `Tài khoản này đang liên kết với ${driveBinding.email}${driveConnected ? ` và hiện đang đăng nhập đúng Gmail đó` : ''}.`
-                        : 'Tài khoản này chưa liên kết với Google Drive nào.'}
-                </p>
-                <p className="text-xs text-emerald-300">Auto sync Drive: đang bật.</p>
-                <p className="text-xs text-slate-400">
-                  File sao lưu mới sẽ nằm trong thư mục <strong className="text-white">TruyenForge Backups</strong> ở My Drive.
-                  Nếu chưa thấy, hãy bấm <strong className="text-white">Kết nối lại Drive</strong> để cấp lại quyền.
-                </p>
-                <div className="flex flex-wrap gap-2 pt-1">
+              <div className="flex flex-wrap gap-2">
+                <button
+                  className="tf-btn tf-btn-primary"
+                  onClick={handleBackupNow}
+                  disabled={backupBusyAction === 'backup-now'}
+                >
+                  {backupBusyAction === 'backup-now' ? 'Đang sao lưu...' : 'Sao lưu ngay'}
+                </button>
+                <button
+                  className="tf-btn tf-btn-ghost"
+                  onClick={handleDownloadCurrentBackupJson}
+                  disabled={isExporting}
+                >
+                  {isExporting ? 'Đang chuẩn bị...' : 'Tải file sao lưu'}
+                </button>
+                <button
+                  className="tf-btn tf-btn-ghost"
+                  onClick={() => backupImportInputRef.current?.click()}
+                  disabled={isImporting}
+                >
+                  {isImporting ? 'Đang đọc file...' : 'Khôi phục từ file'}
+                </button>
+                <button
+                  className="tf-btn tf-btn-ghost"
+                  onClick={() => void handleManualAccountSync()}
+                  disabled={!user || !hasSupabase || backupBusyAction === 'manual-sync'}
+                >
+                  {backupBusyAction === 'manual-sync' ? 'Đang đồng bộ...' : 'Đồng bộ ngay với Supabase'}
+                </button>
+                <button
+                  className="tf-btn tf-btn-ghost"
+                  onClick={handleConnectDrive}
+                  disabled={!user || !driveConfigured || backupBusyAction === 'connect-drive'}
+                >
+                  {backupBusyAction === 'connect-drive'
+                    ? 'Đang kết nối...'
+                    : driveBinding
+                      ? (driveConnected ? 'Xác nhận lại Gmail' : 'Kết nối lại Drive')
+                      : 'Kết nối Drive'}
+                </button>
+                {driveConnected ? (
                   <button
-                    className="tf-btn tf-btn-ghost px-3 py-1 text-xs"
-                    onClick={handleConnectDrive}
-                    disabled={!user || !driveConfigured || backupBusyAction === 'connect-drive'}
+                    className="tf-btn tf-btn-ghost"
+                    onClick={handleDisconnectDrive}
+                    disabled={backupBusyAction === 'disconnect-drive'}
                   >
-                    {backupBusyAction === 'connect-drive'
-                      ? 'Đang kết nối...'
-                      : driveBinding
-                        ? (driveConnected ? 'Xác nhận lại Gmail' : 'Kết nối lại Drive')
-                        : 'Kết nối Drive'}
+                    {backupBusyAction === 'disconnect-drive' ? 'Đang ngắt...' : 'Ngắt kết nối'}
                   </button>
-                  {driveConnected ? (
-                    <button
-                      className="tf-btn tf-btn-ghost px-3 py-1 text-xs"
-                      onClick={handleDisconnectDrive}
-                      disabled={backupBusyAction === 'disconnect-drive'}
-                    >
-                      {backupBusyAction === 'disconnect-drive' ? 'Đang ngắt...' : 'Ngắt kết nối'}
-                    </button>
-                  ) : null}
-                </div>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-slate-900/50 p-4 space-y-2 md:col-span-2">
-                <p className="text-xs uppercase tracking-[0.14em] text-slate-400">Đồng bộ tài khoản Supabase</p>
-                <p className="text-lg font-bold text-white">{accountAutosyncLabel}</p>
-                <p className="text-sm text-slate-400">
-                  {!user
-                    ? 'Đăng nhập để bật autosync tài khoản.'
-                    : !hasSupabase
-                      ? 'Thiếu VITE_SUPABASE_URL hoặc VITE_SUPABASE_ANON_KEY nên chưa thể autosync.'
-                      : ACCOUNT_CLOUD_AUTOSYNC_ENABLED
-                        ? 'App chỉ tự đẩy lên Supabase khi bạn thực hiện thao tác lưu dữ liệu (lưu truyện/chương/nhân vật/rule/prompt...).'
-                        : 'Autosync đã tắt qua cấu hình môi trường.'}
-                </p>
-                {user?.uid ? (
-                  <p className="text-xs text-slate-500">
-                    Mã tài khoản sync: <span className="font-mono">{user.uid}</span>
-                  </p>
                 ) : null}
-                <div className="flex flex-wrap items-center gap-2 pt-1">
-                  <button
-                    className="tf-btn tf-btn-ghost px-3 py-1 text-xs"
-                    onClick={() => void handleManualAccountSync()}
-                    disabled={!user || !hasSupabase || backupBusyAction === 'manual-sync'}
-                  >
-                    {backupBusyAction === 'manual-sync' ? 'Đang đồng bộ...' : 'Đồng bộ ngay với Supabase'}
-                  </button>
-                  <p className="text-xs text-slate-400">
-                    Lần sync gần nhất: {accountLastSyncedAt ? formatBackupTimestamp(accountLastSyncedAt) : 'Chưa có'}
-                  </p>
-                </div>
               </div>
             </div>
 
-            <div className="grid gap-4 xl:grid-cols-[1.05fr_1.35fr]">
-              <div className="space-y-4">
-                <div className="rounded-2xl border border-white/10 bg-slate-900/40 p-4 space-y-4">
-                  <div className="flex items-center gap-2">
-                    <Shield className="h-5 w-5 text-cyan-300" />
-                    <h4 className="text-lg font-semibold">Sao lưu</h4>
-                  </div>
-                  <div className="flex flex-wrap gap-3">
-                    <button
-                      className="tf-btn tf-btn-primary"
-                      onClick={handleBackupNow}
-                      disabled={backupBusyAction === 'backup-now'}
-                    >
-                      {backupBusyAction === 'backup-now' ? 'Đang sao lưu...' : 'Sao lưu ngay'}
-                    </button>
-                    <button
-                      className="tf-btn tf-btn-ghost"
-                      onClick={handleDownloadCurrentBackupJson}
-                      disabled={isExporting}
-                    >
-                      {isExporting ? 'Đang chuẩn bị file...' : 'Tải file sao lưu'}
-                    </button>
-                    <button
-                      className="tf-btn tf-btn-ghost"
-                      onClick={() => backupImportInputRef.current?.click()}
-                      disabled={isImporting}
-                    >
-                      {isImporting ? 'Đang đọc file...' : 'Khôi phục từ file'}
-                    </button>
-                  </div>
-                  <div className="rounded-2xl border border-white/10 bg-slate-950/50 px-4 py-3 text-sm text-slate-300">
-                    Mỗi lần bấm <strong className="text-white">Sao lưu ngay</strong>, hệ thống sẽ tạo mốc mới để bạn có thể khôi phục nhanh khi cần.
-                  </div>
-                </div>
-
-              </div>
-
-              <div className="rounded-2xl border border-white/10 bg-slate-900/40 p-4 space-y-4">
+            <div className="rounded-2xl border border-white/10 bg-slate-900/40 p-4 space-y-4">
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <h4 className="text-lg font-semibold">Lịch sử sao lưu</h4>
@@ -13409,7 +13397,6 @@ ${JSON.stringify(violatingPayload)}
                   </div>
                 )}
               </div>
-            </div>
             </div>
           </div>
         </div>

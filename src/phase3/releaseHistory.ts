@@ -12,13 +12,15 @@ export const CURRENT_WRITER_VERSION = APP_VERSION_LABEL;
 export const WRITER_RELEASE_NOTES: ReleaseNote[] = [
   {
     version: APP_VERSION_LABEL,
-    dateLabel: '2026-03-28',
-    title: 'Thêm luồng tải truyện và tự convert Trung → Việt ngay trong app',
+    dateLabel: '2026-03-29',
+    title: 'Ổn định dữ liệu và làm gọn lại thao tác sao lưu',
     items: [
-      'Bổ sung mục “Tải truyện & Convert” để bạn có thể đưa file truyện lên trực tiếp, lưu thành từng bản thảo trong kho cục bộ, mở lại bất cứ lúc nào và chỉnh sửa ngay trên màn hình mà không cần đổi qua công cụ khác.',
-      'Thêm luồng tự convert Trung → Việt chạy cục bộ: chỉ cần chọn truyện tiếng Trung rồi bấm convert là hệ thống xử lý ngay trong app, trả kết quả liền để bạn đọc lại, sửa tay hoặc áp dụng ngược vào bản thảo chỉ với một nút bấm.',
-      'Nâng phần convert theo hướng thực dụng hơn: cho phép giữ bộ từ điển mặc định để dùng ngay từ đầu, đồng thời vẫn hỗ trợ nạp file từ điển riêng để tinh chỉnh kết quả theo cách dịch của từng người dùng và từng bộ truyện.',
-      'Mục tiêu của bản 0.1c là gom việc tải truyện, đọc, sửa và convert về cùng một chỗ để thao tác liền mạch hơn: ít bước trung gian, đỡ gián đoạn, và tiết kiệm thời gian khi xử lý các chương dài.',
+      'Sửa đường lưu truyện để giảm lỗi đầy localStorage: dữ liệu truyện giờ được nén trước khi ghi, giúp xử lý file lớn ổn định hơn và hạn chế văng quota khi làm việc lâu.',
+      'Bỏ cơ chế lưu trùng backup nặng trong localStorage (vốn dễ nhân đôi dung lượng), chỉ giữ metadata nhẹ để theo dõi mốc lưu gần nhất.',
+      'Thêm lớp khôi phục cục bộ thông minh hơn: nếu backup local cũ không còn, app sẽ thử lấy mốc gần nhất trong Backup Vault để khôi phục truyện.',
+      'Autosync tài khoản được chống chồng lệnh: khi đang sync mà có thay đổi mới, app sẽ gộp đợt và chạy lại một lần sau cùng để tránh giật/nháy liên tục.',
+      'Tối giản trung tâm Sao lưu: gom thao tác quan trọng vào một hàng nút rõ ràng, giảm phần chữ giải thích dài để người dùng phổ thông thao tác nhanh hơn.',
+      'Cải thiện hiển thị chương khi đọc: tự tách đoạn hội thoại và đoạn hệ thống tốt hơn để văn bản bớt dính khối, dễ theo dõi trên cả desktop lẫn mobile.',
     ],
   },
   {
