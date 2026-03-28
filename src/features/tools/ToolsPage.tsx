@@ -6,10 +6,12 @@ import { PromptLibraryModal } from "../prompt/PromptLibrary";
 import { TFAlert } from "./common/TFAlert";
 import { storage } from "../../storage";
 import { notifyApp } from "../../notifications";
+import { VietphraseWorkbench } from "./VietphraseWorkbench";
 
 const toolsTabs = [
   { key: "translate", label: "Hỗ trợ Dịch" },
   { key: "write", label: "Hỗ trợ Viết (Writer Pro)" },
+  { key: "upload-convert", label: "Tải truyện & Convert" },
   { key: "prompt", label: "Kho Prompt" },
 ];
 
@@ -253,6 +255,8 @@ export const ToolsPage: React.FC<ToolsPageProps> = ({ onBack, onRequireAuth }) =
           </div>
         </section>
       )}
+
+      {tab === "upload-convert" && <VietphraseWorkbench />}
 
       {tab === "prompt" && (
         <section className="tf-card p-4 space-y-3">
