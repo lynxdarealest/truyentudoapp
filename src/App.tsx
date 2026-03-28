@@ -994,17 +994,30 @@ function mergeAccountWorkspaceSnapshots(
         merged.uiViewportMode = picked.value as ViewportMode;
         break;
       case 'stories':
-        merged.stories = mergeStoriesByEntity(
-          localSnapshot.stories,
-          Array.isArray(remoteSnapshot.stories) ? remoteSnapshot.stories : [],
-          mergedLock,
-          options?.deviceId,
-        );
-        merged.sectionUpdatedAt.stories = (
-          toTimestampMs(getSnapshotSectionTimestamp(localSnapshot, 'stories')) >= toTimestampMs(getSnapshotSectionTimestamp(remoteSnapshot, 'stories'))
-            ? getSnapshotSectionTimestamp(localSnapshot, 'stories')
-            : getSnapshotSectionTimestamp(remoteSnapshot, 'stories')
-        );
+        {
+          const localStoriesTimestamp = getSnapshotSectionTimestamp(localSnapshot, 'stories');
+          const remoteStoriesTimestamp = getSnapshotSectionTimestamp(remoteSnapshot, 'stories');
+          const localStoriesMs = toTimestampMs(localStoriesTimestamp);
+          const remoteStoriesMs = toTimestampMs(remoteStoriesTimestamp);
+
+          if (localStoriesMs > remoteStoriesMs) {
+            // Local newer: tôn trọng xóa/sửa mới nhất ở máy hiện tại, tránh "hồi sinh" chương cũ từ remote.
+            merged.stories = localSnapshot.stories;
+            merged.sectionUpdatedAt.stories = localStoriesTimestamp;
+          } else if (remoteStoriesMs > localStoriesMs) {
+            merged.stories = Array.isArray(remoteSnapshot.stories) ? remoteSnapshot.stories : [];
+            merged.sectionUpdatedAt.stories = remoteStoriesTimestamp;
+          } else {
+            // Timestamp bằng nhau: mới merge theo entity để giữ thay đổi ở 2 phía.
+            merged.stories = mergeStoriesByEntity(
+              localSnapshot.stories,
+              Array.isArray(remoteSnapshot.stories) ? remoteSnapshot.stories : [],
+              mergedLock,
+              options?.deviceId,
+            );
+            merged.sectionUpdatedAt.stories = localStoriesTimestamp || remoteStoriesTimestamp;
+          }
+        }
         break;
       case 'characters':
         merged.characters = picked.value as Character[];
@@ -11960,6 +11973,17 @@ const AppContent = () => {
       perspective, audience, styleReference, aiInstructions, chapterScript, selectedRuleId
     } = options;
     if (!user || !selectedStory) return;
+    const latestStory = (storage.getStories() as Story[]).find((story) => story.id === selectedStory.id) || selectedStory;
+    const currentChapters = normalizeChaptersForLocal((latestStory.chapters || []) as Chapter[]);
+    const latestChapterContext = currentChapters.length
+      ? String(
+          [...currentChapters]
+            .sort((a, b) => Number(b.order || 0) - Number(a.order || 0))[0]?.content || '',
+        ).trim()
+      : '';
+    const effectivePreviousContext = currentChapters.length
+      ? (String(previousContext || '').trim() || latestChapterContext)
+      : '';
     const sanitizeChapterDrafts = (items: Array<{ title?: string; content?: string }>) => {
       return items.map((item, idx) => {
         const rawTitle = typeof item === 'object' && item ? String(item.title || '').trim() : '';
@@ -12050,7 +12074,7 @@ const AppContent = () => {
       const predictInstruction = predictPlot 
         ? "AI TỰ DỰ ĐOÁN: Dựa trên dàn ý và nội dung THỰC TẾ của các chương trước (được cung cấp trong phần BỐI CẢNH THỰC TẾ), hãy tự sáng tạo và dự đoán các tình tiết tiếp theo một cách logic. LƯU Ý: Tuyệt đối không lặp lại các tình tiết đã xảy ra, hãy tập trung vào diễn biến MỚI."
         : "BÁM SÁT DÀN Ý: Hãy viết chính xác theo các tình tiết đã được cung cấp trong dàn ý, không tự ý thay đổi mạch truyện chính.";
-      const storyTranslationContext = buildStoryTranslationContext(selectedStory.translationMemory || []);
+      const storyTranslationContext = buildStoryTranslationContext(latestStory.translationMemory || []);
 
       updateAiRun(aiRun, {
         message: 'Đang tổng hợp chỉ dẫn viết chương...',
@@ -12083,7 +12107,7 @@ const AppContent = () => {
 
         BỐI CẢNH VÀ NHÂN VẬT:
         ${charContext ? `THÔNG TIN NHÂN VẬT THAM CHIẾU:\n${charContext}\n` : ""}
-        ${previousContext ? `BỐI CẢNH THỰC TẾ CỦA CHƯƠNG TRƯỚC (Hãy viết tiếp từ đây):\n${previousContext}\n` : ""}
+        ${effectivePreviousContext ? `BỐI CẢNH THỰC TẾ CỦA CHƯƠNG TRƯỚC (Hãy viết tiếp từ đây):\n${effectivePreviousContext}\n` : ""}
         ${keyEvents ? `CÁC SỰ KIỆN CHÍNH CẦN XẢY RA TRONG CHƯƠNG NÀY:\n${keyEvents}\n` : ""}
 
         YÊU CẦU VỀ ĐỘ DÀI VÀ CHI TIẾT:
@@ -12100,9 +12124,9 @@ const AppContent = () => {
         5. TÍNH LIÊN TỤC: Đảm bảo chương mới kết nối mượt mà với nội dung thực tế của chương trước đó.
         
         Dàn ý tổng quát: ${outline}
-        Thể loại truyện: ${selectedStory.genre || 'Tự do'}
-        Tiêu đề truyện: ${selectedStory.title}
-        Số chương hiện tại: ${selectedStory.chapters?.length || 0}
+        Thể loại truyện: ${latestStory.genre || 'Tự do'}
+        Tiêu đề truyện: ${latestStory.title}
+        Số chương hiện tại: ${currentChapters.length}
         
         QUY TẮC ĐỊNH DẠNG QUAN TRỌNG:
         Nếu trong nội dung có các đoạn thông tin nhân vật hoặc trạng thái nằm trong dấu ngoặc vuông như [Tên: ...] [Khí vận: ...] [Trạng thái: ...], bạn PHẢI tự động xuống dòng sau mỗi dấu ngoặc đóng ] để mỗi thông tin nằm trên một dòng riêng biệt.
@@ -12164,10 +12188,10 @@ YÊU CẦU BẮT BUỘC:
 - Mỗi chương tối thiểu ${chapterLength} từ.
 
 Bối cảnh truyện:
-- Tiêu đề: ${selectedStory.title}
-- Thể loại: ${selectedStory.genre || 'Tự do'}
+- Tiêu đề: ${latestStory.title}
+- Thể loại: ${latestStory.genre || 'Tự do'}
 - Dàn ý tổng quát: ${outline}
-- Bối cảnh chương trước: ${previousContext || 'Không có'}
+- Bối cảnh chương trước: ${effectivePreviousContext || 'Không có'}
 - Sự kiện cần có: ${keyEvents || 'Tự suy luận hợp lý'}
 
 Đầu ra chưa đạt cần viết lại:
@@ -12208,7 +12232,6 @@ CHỈ trả JSON thuần, không bọc markdown.
         throw new Error('AI vẫn đang trả kết quả dạng dàn ý. Hãy thử lại với model mạnh hơn hoặc giảm số chương mỗi lượt.');
       }
 
-      const currentChapters = selectedStory.chapters || [];
       const nextOrder = currentChapters.length + 1;
       
       const newChapters = chapterDrafts.map((c, i) => {
@@ -12229,11 +12252,11 @@ CHỈ trả JSON thuần, không bọc markdown.
       // Save to local storage
       const stories = storage.getStories();
       const updatedStory: Story = {
-        ...selectedStory,
+        ...latestStory,
         chapters: normalizeChaptersForLocal(updatedChapters),
         updatedAt: new Date().toISOString(),
       };
-      const newList = stories.map(s => s.id === selectedStory.id ? updatedStory : s);
+      const newList = stories.map(s => s.id === latestStory.id ? updatedStory : s);
       storage.saveStories(newList);
       bumpStoriesVersion();
 
