@@ -6174,6 +6174,7 @@ const StoryDetail = ({
   onUpdateStory,
   onExportStory,
   onOpenReaderPrefs,
+  onNavigateState,
 }: { 
   story: Story, 
   onBack: () => void, 
@@ -6182,6 +6183,7 @@ const StoryDetail = ({
   onUpdateStory: (story: Story) => void,
   onExportStory: (story: Story) => void,
   onOpenReaderPrefs: () => void,
+  onNavigateState?: (input: { level: 'story' | 'chapter'; storyId: string; chapterId?: string; mode?: 'push' | 'replace' }) => void,
 }) => {
   const [selectedChapter, setSelectedChapter] = useState<Chapter | null>(null);
   const [isEditingChapter, setIsEditingChapter] = useState(false);
@@ -6234,7 +6236,14 @@ const StoryDetail = ({
     const sorted = [...story.chapters].sort((a, b) => a.order - b.order);
     const currentIndex = sorted.findIndex(c => c.id === selectedChapter.id);
     if (currentIndex < sorted.length - 1) {
-      setSelectedChapter(sorted[currentIndex + 1]);
+      const nextChapter = sorted[currentIndex + 1];
+      setSelectedChapter(nextChapter);
+      onNavigateState?.({
+        level: 'chapter',
+        storyId: story.id,
+        chapterId: nextChapter.id,
+        mode: 'replace',
+      });
       window.scrollTo(0, 0);
     }
   };
@@ -6244,10 +6253,52 @@ const StoryDetail = ({
     const sorted = [...story.chapters].sort((a, b) => a.order - b.order);
     const currentIndex = sorted.findIndex(c => c.id === selectedChapter.id);
     if (currentIndex > 0) {
-      setSelectedChapter(sorted[currentIndex - 1]);
+      const prevChapter = sorted[currentIndex - 1];
+      setSelectedChapter(prevChapter);
+      onNavigateState?.({
+        level: 'chapter',
+        storyId: story.id,
+        chapterId: prevChapter.id,
+        mode: 'replace',
+      });
       window.scrollTo(0, 0);
     }
   };
+
+  const handleOpenChapter = (chapter: Chapter) => {
+    setSelectedChapter(chapter);
+    onNavigateState?.({
+      level: 'chapter',
+      storyId: story.id,
+      chapterId: chapter.id,
+      mode: 'push',
+    });
+  };
+
+  useEffect(() => {
+    const handlePopState = (event: PopStateEvent) => {
+      const state = event.state as { tfNav?: string; storyId?: string; chapterId?: string } | null;
+      if (!state || state.tfNav === 'stories') {
+        setSelectedChapter(null);
+        return;
+      }
+      if (state.tfNav === 'story') {
+        if (state.storyId === story.id) {
+          setSelectedChapter(null);
+        }
+        return;
+      }
+      if (state.tfNav === 'chapter' && state.storyId === story.id) {
+        const nextChapterId = String(state.chapterId || '');
+        const nextChapter = (story.chapters || []).find((chapter) => chapter.id === nextChapterId) || null;
+        setSelectedChapter(nextChapter);
+        return;
+      }
+      setSelectedChapter(null);
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [story.id, story.chapters]);
 
   const handleSaveChapterEdit = async () => {
     if (!selectedChapter || !story.chapters) return;
@@ -6301,7 +6352,14 @@ const StoryDetail = ({
 
         <div className="flex items-center justify-between mb-8">
           <button 
-            onClick={() => setSelectedChapter(null)}
+            onClick={() => {
+              setSelectedChapter(null);
+              onNavigateState?.({
+                level: 'story',
+                storyId: story.id,
+                mode: 'replace',
+              });
+            }}
             className="flex items-center gap-2 text-slate-500 hover:text-slate-900 transition-colors font-bold"
           >
             <ChevronLeft className="w-6 h-6" /> Quay lại mục lục
@@ -6532,7 +6590,7 @@ const StoryDetail = ({
                 story.chapters.sort((a, b) => a.order - b.order).map((chapter) => (
                   <button 
                     key={chapter.id}
-                    onClick={() => setSelectedChapter(chapter)}
+                    onClick={() => handleOpenChapter(chapter)}
                     className="chapter-row w-full flex items-center justify-between p-4 rounded-2xl hover:bg-slate-50 transition-all text-left group"
                   >
                     <div className="flex items-center gap-4">
@@ -8940,6 +8998,89 @@ const AppContent = () => {
     lastFingerprint: '',
     startupSnapshotDone: false,
   });
+
+  type AppNavHistoryState = {
+    tfNav: 'stories' | 'story' | 'chapter';
+    storyId?: string;
+    chapterId?: string;
+  };
+
+  const pushAppNavState = useCallback((nextState: AppNavHistoryState) => {
+    if (typeof window === 'undefined') return;
+    window.history.pushState(nextState, '', window.location.href);
+  }, []);
+
+  const replaceAppNavState = useCallback((nextState: AppNavHistoryState) => {
+    if (typeof window === 'undefined') return;
+    window.history.replaceState(nextState, '', window.location.href);
+  }, []);
+
+  const openStoryDetail = useCallback((story: Story) => {
+    setView('stories');
+    setEditingStory(null);
+    setIsCreating(false);
+    setSelectedStory(story);
+    pushAppNavState({ tfNav: 'story', storyId: story.id });
+  }, [pushAppNavState]);
+
+  const closeStoryDetail = useCallback(() => {
+    setSelectedStory(null);
+    setEditingStory(null);
+    setIsCreating(false);
+    setView('stories');
+    replaceAppNavState({ tfNav: 'stories' });
+  }, [replaceAppNavState]);
+
+  const handleStoryDetailNavigateState = useCallback((input: {
+    level: 'story' | 'chapter';
+    storyId: string;
+    chapterId?: string;
+    mode?: 'push' | 'replace';
+  }) => {
+    const nextState: AppNavHistoryState = input.level === 'chapter'
+      ? { tfNav: 'chapter', storyId: input.storyId, chapterId: input.chapterId }
+      : { tfNav: 'story', storyId: input.storyId };
+    if (input.mode === 'push') {
+      pushAppNavState(nextState);
+      return;
+    }
+    replaceAppNavState(nextState);
+  }, [pushAppNavState, replaceAppNavState]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const existingState = window.history.state as AppNavHistoryState | null;
+    if (!existingState?.tfNav) {
+      replaceAppNavState({ tfNav: 'stories' });
+    }
+
+    const handlePopState = (event: PopStateEvent) => {
+      const state = event.state as AppNavHistoryState | null;
+      if ((state?.tfNav === 'story' || state?.tfNav === 'chapter') && state.storyId) {
+        const latestStories = storage.getStories();
+        const targetStory = latestStories.find((item) => item.id === state.storyId) || null;
+        if (targetStory) {
+          setView('stories');
+          setEditingStory(null);
+          setIsCreating(false);
+          setSelectedStory(targetStory);
+          return;
+        }
+      }
+
+      setSelectedStory(null);
+      setEditingStory(null);
+      setIsCreating(false);
+      setView('stories');
+      if (state?.tfNav !== 'stories') {
+        replaceAppNavState({ tfNav: 'stories' });
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [replaceAppNavState]);
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -11966,17 +12107,20 @@ CHỈ trả JSON thuần, không bọc markdown.
           setSelectedStory(null);
           setEditingStory(null);
           setIsCreating(false);
+          replaceAppNavState({ tfNav: 'stories' });
         }} 
         onHome={() => {
           setView('stories');
           setSelectedStory(null);
           setEditingStory(null);
           setIsCreating(false);
+          replaceAppNavState({ tfNav: 'stories' });
         }}
         onCreateStory={() => {
           setSelectedStory(null);
           setEditingStory(null);
           setIsCreating(true);
+          replaceAppNavState({ tfNav: 'stories' });
         }}
         themeMode={themeMode}
         onToggleTheme={handleToggleTheme}
@@ -12017,37 +12161,51 @@ CHỈ trả JSON thuần, không bọc markdown.
         {selectedStory ? (
           <StoryDetail 
             story={selectedStory} 
-            onBack={() => setSelectedStory(null)}
+            onBack={closeStoryDetail}
             onEdit={() => {
               setEditingStory(selectedStory);
               setSelectedStory(null);
+              replaceAppNavState({ tfNav: 'stories' });
             }}
             onAddChapter={() => setShowAIGen(true)}
             onUpdateStory={(updated) => setSelectedStory(updated)}
             onExportStory={handleOpenExportStory}
             onOpenReaderPrefs={() => setShowReaderPrefsModal(true)}
+            onNavigateState={handleStoryDetailNavigateState}
           />
         ) : view === 'characters' ? (
-          <CharacterManager key="characters" onBack={() => setView('stories')} onRequireAuth={() => setShowAuthModal(true)} />
+          <CharacterManager key="characters" onBack={() => {
+            setView('stories');
+            replaceAppNavState({ tfNav: 'stories' });
+          }} onRequireAuth={() => setShowAuthModal(true)} />
         ) : view === 'api' ? (
           <ToolsManager
             key="api"
             section="api"
-            onBack={() => setView('stories')}
+            onBack={() => {
+              setView('stories');
+              replaceAppNavState({ tfNav: 'stories' });
+            }}
             onRequireAuth={() => setShowAuthModal(true)}
             profile={profile}
           />
         ) : view === 'tools' ? (
           user ? (
             <ToolsPage
-              onBack={() => setView('stories')}
+              onBack={() => {
+                setView('stories');
+                replaceAppNavState({ tfNav: 'stories' });
+              }}
               onRequireAuth={() => setShowAuthModal(true)}
             />
           ) : (
             <ToolsManager
               key="tools"
               section="tools"
-              onBack={() => setView('stories')}
+              onBack={() => {
+                setView('stories');
+                replaceAppNavState({ tfNav: 'stories' });
+              }}
               onRequireAuth={() => setShowAuthModal(true)}
               profile={profile}
             />
@@ -12115,7 +12273,7 @@ CHỈ trả JSON thuần, không bọc markdown.
               </div>
             </div>
 
-            <StoryList refreshKey={storiesVersion} onView={setSelectedStory} />
+            <StoryList refreshKey={storiesVersion} onView={openStoryDetail} />
           </motion.div>
         )}
       </AnimatePresence>
