@@ -1669,6 +1669,7 @@ function normalizeAiJsonContent(raw: string, fallbackTitle: string): { title: st
     .replace(/\\r/g, '\r')
     .replace(/\\t/g, '\t');
   content = improveDialogueSpacing(content);
+  content = improveBracketSystemSpacing(content);
   return {
     title: String(extracted?.title || fallbackTitle).trim() || fallbackTitle,
     content,
@@ -1681,6 +1682,20 @@ function improveDialogueSpacing(text: string): string {
   // Thêm ngắt dòng rõ giữa các câu thoại khi có dấu câu + dấu ngoặc kép tiếp theo.
   next = next.replace(/([.!?…。！？])\s+(["“”『「])/g, '$1\n\n$2');
   // Nếu vẫn còn nhiều hơn 2 dòng trống, co lại.
+  next = next.replace(/\n{3,}/g, '\n\n');
+  return next;
+}
+
+function improveBracketSystemSpacing(text: string): string {
+  if (!text) return text;
+  let next = text;
+  // Tách các block [] đứng cạnh nhau thành từng đoạn riêng.
+  next = next.replace(/\]\s*\[/g, ']\n\n[');
+  // Nếu block [] dính với câu trước thì ép xuống đoạn mới.
+  next = next.replace(/([^\n])\s+(\[[^\]\n]{2,220}\])/g, '$1\n\n$2');
+  next = next.replace(/([.!?…。！？])(\[[^\]\n]{2,220}\])/g, '$1\n\n$2');
+  // Nếu block [] dính với câu sau thì ép xuống đoạn mới.
+  next = next.replace(/(\[[^\]\n]{2,220}\])\s+([^\n\s])/g, '$1\n\n$2');
   next = next.replace(/\n{3,}/g, '\n\n');
   return next;
 }
@@ -6627,8 +6642,7 @@ const StoryDetail = ({
   const formatContent = (content: string) => {
     const normalized = getRenderableChapterContent(content);
     if (!normalized) return '';
-    // Tự động xuống dòng đôi giữa các ngoặc vuông để Markdown nhận diện
-    return normalized.replace(/\]\s*\[/g, ']\n\n[');
+    return improveBracketSystemSpacing(normalized);
   };
 
   const getWordCount = (text: string) => {
@@ -12201,7 +12215,7 @@ CHỈ trả JSON thuần, không bọc markdown.
         const chapter: any = {
           id: createClientId('chapter'),
           title: String(c.title || `Chương mới ${i + 1}`),
-          content: String(c.content || '').replace(/\]\s*\[/g, ']\n\n['), // Tự động xuống dòng đôi giữa các ngoặc vuông để Markdown nhận diện
+          content: improveBracketSystemSpacing(String(c.content || '')),
           order: nextOrder + i,
           createdAt: new Date().toISOString(),
         };
