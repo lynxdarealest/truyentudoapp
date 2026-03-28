@@ -11760,7 +11760,7 @@ CHỈ trả JSON thuần, không bọc markdown.
               </div>
             ) : null}
 
-            <div className="grid gap-3 md:grid-cols-3">
+            <div className="grid gap-3 md:grid-cols-2">
               <div className="rounded-2xl border border-white/10 bg-slate-900/50 p-4 space-y-2">
                 <p className="text-xs uppercase tracking-[0.14em] text-slate-400">Lần sao lưu gần nhất</p>
                 <p className="text-lg font-bold text-white">{latestBackupAt ? formatBackupTimestamp(latestBackupAt) : 'Chưa có'}</p>
@@ -11783,15 +11783,6 @@ CHỈ trả JSON thuần, không bọc markdown.
                       : driveBinding
                         ? `Tài khoản này đang liên kết với ${driveBinding.email}${driveConnected ? ` và hiện đang đăng nhập đúng Gmail đó` : ''}.`
                         : 'Tài khoản này chưa liên kết với Google Drive nào.'}
-                </p>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-slate-900/50 p-4 space-y-2">
-                <p className="text-xs uppercase tracking-[0.14em] text-slate-400">Đồng bộ với tài khoản</p>
-                <p className="text-lg font-bold text-white">
-                  {backupSettings.lastManualSyncAt ? formatBackupTimestamp(backupSettings.lastManualSyncAt) : 'Chưa đồng bộ'}
-                </p>
-                <p className="text-sm text-slate-400">
-                  Tự đồng bộ đã tắt. Dữ liệu trên server chỉ thay đổi khi bạn chủ động bấm đồng bộ.
                 </p>
               </div>
             </div>
@@ -11826,33 +11817,8 @@ CHỈ trả JSON thuần, không bọc markdown.
                       {isImporting ? 'Đang đọc file...' : 'Khôi phục từ file'}
                     </button>
                   </div>
-                  <div className="space-y-3">
-                    <label className="flex items-start gap-3 rounded-2xl border border-white/10 bg-slate-950/50 px-4 py-3 text-sm text-slate-300">
-                      <input
-                        type="checkbox"
-                        className="mt-1"
-                        checked={backupSettings.autoSnapshotEnabled}
-                        onChange={(e) => setBackupSettings((prev) => ({ ...prev, autoSnapshotEnabled: e.target.checked }))}
-                      />
-                      <span>
-                        <strong className="text-white">Tự lưu một mốc khôi phục sau mỗi lần dữ liệu thay đổi</strong>
-                        <br />
-                        Mỗi lần bạn lưu truyện, nhân vật, prompt hoặc thiết lập quan trọng, app sẽ giữ lại một mốc để có thể quay về khi cần.
-                      </span>
-                    </label>
-                    <label className="flex items-start gap-3 rounded-2xl border border-white/10 bg-slate-950/50 px-4 py-3 text-sm text-slate-300">
-                      <input
-                        type="checkbox"
-                        className="mt-1"
-                        checked={backupSettings.autoUploadToDrive}
-                        onChange={(e) => setBackupSettings((prev) => ({ ...prev, autoUploadToDrive: e.target.checked }))}
-                      />
-                      <span>
-                        <strong className="text-white">Giữ một bản sao lưu duy nhất trên Google Drive</strong>
-                        <br />
-                        Nếu đã liên kết Drive, app sẽ luôn cập nhật lại cùng một tệp sao lưu thay vì tạo ra nhiều bản rời rạc.
-                      </span>
-                    </label>
+                  <div className="rounded-2xl border border-white/10 bg-slate-950/50 px-4 py-3 text-sm text-slate-300">
+                    Mỗi lần bấm <strong className="text-white">Sao lưu ngay</strong>, hệ thống sẽ tạo mốc mới để bạn có thể khôi phục nhanh khi cần.
                   </div>
                 </div>
 
@@ -11861,9 +11827,7 @@ CHỈ trả JSON thuần, không bọc markdown.
                     <Link2 className="h-5 w-5 text-emerald-300" />
                     <h4 className="text-lg font-semibold">Sao lưu lên Google Drive</h4>
                   </div>
-                  <p className="text-sm text-slate-400">
-                    Mỗi tài khoản TruyenForge chỉ liên kết với một Google Drive duy nhất. Sau khi liên kết, app sẽ luôn lưu vào đúng Gmail đó và cập nhật lại cùng một tệp sao lưu để thư mục Drive không bị rối.
-                  </p>
+                  <p className="text-sm text-slate-400">Liên kết đúng Gmail bạn dùng để bản sao lưu luôn đẩy lên đúng một file trên Drive.</p>
                   <div className="flex flex-wrap gap-3">
                     <button
                       className="tf-btn tf-btn-primary"
@@ -11909,26 +11873,6 @@ CHỈ trả JSON thuần, không bọc markdown.
                     </div>
                   )}
                 </div>
-
-                <div className="rounded-2xl border border-white/10 bg-slate-900/40 p-4 space-y-4">
-                  <div className="flex items-center gap-2">
-                    <Database className="h-5 w-5 text-indigo-300" />
-                    <h4 className="text-lg font-semibold">Đồng bộ thủ công</h4>
-                  </div>
-                  <p className="text-sm text-slate-400">
-                    Tự đồng bộ đã được tắt để tránh ghi đè âm thầm. Khi cần, bạn có thể chủ động hợp nhất dữ liệu trên thiết bị với dữ liệu trên tài khoản rồi mới lưu lại.
-                  </p>
-                  <button
-                    className="tf-btn tf-btn-primary"
-                    onClick={handleManualAccountSync}
-                    disabled={!user || !hasSupabase || backupBusyAction === 'manual-sync'}
-                  >
-                    {backupBusyAction === 'manual-sync' ? 'Đang đồng bộ...' : 'Đồng bộ ngay'}
-                  </button>
-                  {!user ? (
-                    <p className="text-sm text-amber-300">Cần đăng nhập để đồng bộ dữ liệu với tài khoản.</p>
-                  ) : null}
-                </div>
               </div>
 
               <div className="rounded-2xl border border-white/10 bg-slate-900/40 p-4 space-y-4">
@@ -11957,7 +11901,6 @@ CHỈ trả JSON thuần, không bọc markdown.
                   <div className="max-h-[55vh] space-y-3 overflow-y-auto pr-2">
                     {backupSnapshots.map((snapshot) => {
                       const restoreBusy = backupBusyAction === `restore:${snapshot.id}`;
-                      const driveBusy = backupBusyAction === `drive-upload:${snapshot.id}`;
                       return (
                         <div key={snapshot.id} className="rounded-2xl border border-white/10 bg-slate-950/50 p-4 space-y-3">
                           <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
@@ -11990,7 +11933,7 @@ CHỈ trả JSON thuần, không bọc markdown.
                                     snapshot.drive.error.includes('VITE_GOOGLE_DRIVE_CLIENT_ID')
                                     || snapshot.drive.error.includes('Chưa có cấu hình Google Drive')
                                   )
-                                    ? 'Mốc này được tạo trước khi bạn bật Google Drive. Bấm "Lưu lên Drive" để cập nhật lại trạng thái mới.'
+                                    ? 'Mốc này được tạo trước khi bạn bật Google Drive. Tạo một mốc sao lưu mới để cập nhật trạng thái Drive.'
                                     : snapshot.drive.error}
                                 </p>
                               ) : null}
@@ -12001,13 +11944,6 @@ CHỈ trả JSON thuần, không bọc markdown.
                                 onClick={() => void handleDownloadBackupSnapshot(snapshot.id)}
                               >
                                 Tải về
-                              </button>
-                              <button
-                                className="tf-btn tf-btn-ghost"
-                                onClick={() => void handleUploadSnapshotManually(snapshot.id)}
-                                disabled={!driveConfigured || driveBusy}
-                              >
-                                {driveBusy ? 'Đang lưu lên Drive...' : 'Lưu lên Drive'}
                               </button>
                               <button
                                 className="tf-btn tf-btn-primary"
