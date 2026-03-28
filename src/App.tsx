@@ -10325,8 +10325,15 @@ const AppContent = () => {
   useEffect(() => {
     if (typeof window === 'undefined' || !backupSettings.autoSnapshotEnabled) return;
     let timer: number | null = null;
-    const handler = () => {
+    const handler = (event: Event) => {
       if (backupAutomationRef.current.isRestoring) return;
+      const detail = (event as CustomEvent<LocalWorkspaceMeta> | null)?.detail;
+      const changedSection = typeof detail?.section === 'string'
+        ? (detail.section as LocalWorkspaceSection)
+        : null;
+      if (!changedSection || !ACCOUNT_AUTOSYNC_TRIGGER_SECTIONS.has(changedSection)) {
+        return;
+      }
       if (timer) window.clearTimeout(timer);
       timer = window.setTimeout(() => {
         void createWorkspaceBackup('auto', { quiet: true }).catch((error) => {
