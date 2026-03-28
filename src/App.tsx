@@ -301,7 +301,15 @@ const STORIES_UPDATED_EVENT = 'stories:updated';
 const WORKSPACE_RECOVERY_KEY = 'truyenforge:workspace-recovery-v1';
 const ACCOUNT_CLOUD_AUTOSYNC_ENABLED = String(import.meta.env.VITE_ACCOUNT_AUTOSYNC ?? '1').trim() !== '0';
 const ACCOUNT_CLOUD_AUTOSYNC_DEBOUNCE_MS = 1200;
-const ACCOUNT_CLOUD_AUTOSYNC_INTERVAL_MS = 30000;
+const ACCOUNT_AUTOSYNC_TRIGGER_SECTIONS: ReadonlySet<LocalWorkspaceSection> = new Set([
+  'stories',
+  'characters',
+  'ai_rules',
+  'style_references',
+  'translation_names',
+  'prompt_library',
+  'finops_budget',
+]);
 const WORKSPACE_DEVICE_ID_KEY = 'truyenforge:workspace-device-id-v1';
 const WORKSPACE_EDIT_LOCK_TTL_MS = 3 * 60 * 1000;
 
@@ -617,7 +625,7 @@ function loadReaderPrefs(themeMode: ThemeMode = loadThemeMode()): ReaderPrefs {
 
 function saveReaderPrefs(prefs: ReaderPrefs): void {
   setScopedStorageItem(READER_PREFS_KEY, JSON.stringify(prefs));
-  emitLocalWorkspaceChanged('ui_theme'); // reuse event for autosync
+  emitLocalWorkspaceChanged('ui_theme');
 }
 
 async function resizeAvatarFile(file: File): Promise<string> {
@@ -10906,8 +10914,15 @@ const AppContent = () => {
   useEffect(() => {
     if (typeof window === 'undefined' || !user || !hasSupabase || !ACCOUNT_CLOUD_AUTOSYNC_ENABLED) return;
     let syncTimer: number | null = null;
-    const handler = () => {
+    const handler = (event: Event) => {
       if (workspaceSyncRef.current.isHydrating) return;
+      const detail = (event as CustomEvent<LocalWorkspaceMeta> | null)?.detail;
+      const changedSection = typeof detail?.section === 'string'
+        ? (detail.section as LocalWorkspaceSection)
+        : null;
+      if (!changedSection || !ACCOUNT_AUTOSYNC_TRIGGER_SECTIONS.has(changedSection)) {
+        return;
+      }
       if (syncTimer) window.clearTimeout(syncTimer);
       syncTimer = window.setTimeout(() => {
         void syncWorkspaceToAccount().catch((error) => {
@@ -10930,40 +10945,6 @@ const AppContent = () => {
       window.removeEventListener(LOCAL_WORKSPACE_CHANGED_EVENT, handler as EventListener);
     };
   }, [syncWorkspaceToAccount, user, hasSupabase]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined' || !user || !hasSupabase || !ACCOUNT_CLOUD_AUTOSYNC_ENABLED) return;
-    let cancelled = false;
-    const runPeriodicSync = () => {
-      if (cancelled || workspaceSyncRef.current.isHydrating) return;
-      void syncWorkspaceToAccount().catch((error) => {
-        console.warn('Đồng bộ định kỳ với tài khoản thất bại.', error);
-        if (!shouldNotifyAccountSyncError(workspaceSyncRef.current.lastErrorNotifiedAt, 120_000)) return;
-        workspaceSyncRef.current.lastErrorNotifiedAt = Date.now();
-        notifyApp({
-          tone: 'warn',
-          message: 'Đồng bộ định kỳ với tài khoản tạm thời gặp lỗi.',
-          detail: error instanceof Error ? error.message : undefined,
-          groupKey: 'account-sync-periodic-failed',
-          timeoutMs: 4800,
-        });
-      });
-    };
-
-    const interval = window.setInterval(runPeriodicSync, ACCOUNT_CLOUD_AUTOSYNC_INTERVAL_MS);
-    const visibilityHandler = () => {
-      if (document.visibilityState === 'visible') {
-        runPeriodicSync();
-      }
-    };
-    document.addEventListener('visibilitychange', visibilityHandler);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
-      document.removeEventListener('visibilitychange', visibilityHandler);
-    };
-  }, [hasSupabase, syncWorkspaceToAccount, user]);
 
   useEffect(() => {
     if (!user || !hasSupabase || ACCOUNT_CLOUD_AUTOSYNC_ENABLED) return;
@@ -13020,7 +13001,7 @@ CHỈ trả JSON thuần, không bọc markdown.
                     : !hasSupabase
                       ? 'Thiếu VITE_SUPABASE_URL hoặc VITE_SUPABASE_ANON_KEY nên chưa thể autosync.'
                       : ACCOUNT_CLOUD_AUTOSYNC_ENABLED
-                        ? 'Mỗi lần dữ liệu thay đổi, app sẽ tự đẩy lên Supabase theo lô và đồng bộ định kỳ để tránh mất dữ liệu.'
+                        ? 'App chỉ tự đẩy lên Supabase khi bạn thực hiện thao tác lưu dữ liệu (lưu truyện/chương/nhân vật/rule/prompt...).'
                         : 'Autosync đã tắt qua cấu hình môi trường.'}
                 </p>
                 {user?.uid ? (
