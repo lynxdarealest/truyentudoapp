@@ -11,12 +11,13 @@ import type {
   QaTaskRunResult,
 } from './types';
 
-type AiProvider = 'openai' | 'anthropic' | 'gemini' | 'mock';
+type AiProvider = 'openai' | 'anthropic' | 'gemini' | 'openrouter' | 'mock';
 
 interface RuntimeApiConfig {
   openaiKey?: string;
   anthropicKey?: string;
   geminiKey?: string;
+  openrouterKey?: string;
   providerOrder?: AiProvider[];
   relayBaseUrl?: string;
 }
@@ -73,6 +74,7 @@ function normalizeBaseUrl(input?: string): string {
 function detectProviderFromKey(key: string): Exclude<AiProvider, 'mock'> | null {
   const value = readText(key);
   if (!value) return null;
+  if (/^sk-or-v1-[A-Za-z0-9_\-]+$/i.test(value)) return 'openrouter';
   if (/^sk-ant-[A-Za-z0-9_\-]{20,}$/.test(value)) return 'anthropic';
   if (/^sk-[A-Za-z0-9_\-]{20,}$/.test(value)) return 'openai';
   if (/^AIza[0-9A-Za-z\-_]{20,}$/.test(value)) return 'gemini';
@@ -80,7 +82,7 @@ function detectProviderFromKey(key: string): Exclude<AiProvider, 'mock'> | null 
 }
 
 function normalizeProviderOrder(order?: AiProvider[]): Array<Exclude<AiProvider, 'mock'>> {
-  const supported: Array<Exclude<AiProvider, 'mock'>> = ['openai', 'anthropic', 'gemini'];
+  const supported: Array<Exclude<AiProvider, 'mock'>> = ['openrouter', 'openai', 'anthropic', 'gemini'];
   const unique = (order || []).filter((item): item is Exclude<AiProvider, 'mock'> => supported.includes(item as Exclude<AiProvider, 'mock'>));
   const seen = new Set<Exclude<AiProvider, 'mock'>>();
   const result: Array<Exclude<AiProvider, 'mock'>> = [];
@@ -128,6 +130,7 @@ function loadProviderCandidates(runtime: RuntimeApiConfig): ProviderCandidate[] 
     });
   };
 
+  append('openrouter', runtime.openrouterKey);
   append('openai', runtime.openaiKey);
   append('anthropic', runtime.anthropicKey);
   append('gemini', runtime.geminiKey);
@@ -141,7 +144,7 @@ function loadProviderCandidates(runtime: RuntimeApiConfig): ProviderCandidate[] 
 
   const ordered = normalizeProviderOrder(runtime.providerOrder);
   const dedupe = new Set<string>();
-  return ordered
+  const prioritized = ordered
     .flatMap((provider) => candidates.filter((item) => item.provider === provider))
     .filter((item) => {
       const id = `${item.provider}:${item.key}`;
@@ -150,9 +153,16 @@ function loadProviderCandidates(runtime: RuntimeApiConfig): ProviderCandidate[] 
       return true;
     })
     .slice(0, 8);
+  return [
+    ...prioritized.filter((item) => item.provider === 'openrouter'),
+    ...prioritized.filter((item) => item.provider !== 'openrouter'),
+  ];
 }
 
 function pickTaskModel(provider: Exclude<AiProvider, 'mock'>, preferStrongModel: boolean): string {
+  if (provider === 'openrouter') {
+    return preferStrongModel ? 'anthropic/claude-3.5-sonnet' : 'openrouter/auto';
+  }
   if (provider === 'openai') {
     return preferStrongModel ? 'gpt-4.1' : 'gpt-4.1-mini';
   }
@@ -317,13 +327,18 @@ async function runProviderJson(
   systemPrompt: string,
   userPrompt: string,
 ): Promise<unknown> {
-  if (candidate.provider === 'openai') {
+  if (candidate.provider === 'openai' || candidate.provider === 'openrouter') {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${candidate.key}`,
+    };
+    if (candidate.provider === 'openrouter') {
+      headers['HTTP-Referer'] = typeof window !== 'undefined' ? window.location.origin : 'https://truyenforge.local';
+      headers['X-Title'] = 'TruyenForge';
+    }
     const res = await withTimeout(resolveOpenAiEndpoint(candidate.baseUrl), {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${candidate.key}`,
-      },
+      headers,
       body: JSON.stringify({
         model,
         temperature: 0.35,
@@ -335,7 +350,7 @@ async function runProviderJson(
       }),
     });
     if (!res.ok) {
-      throw new Error(`OpenAI HTTP ${res.status}`);
+      throw new Error(`${candidate.provider === 'openrouter' ? 'OpenRouter' : 'OpenAI'} HTTP ${res.status}`);
     }
     const data = await res.json();
     return parseLooseJson(readText(data?.choices?.[0]?.message?.content));
@@ -440,7 +455,8 @@ async function runTaskWithFallback<T>(input: {
     const model = pickTaskModel(candidate.provider, Boolean(input.preferStrongModel));
     try {
       const promptChars = (input.systemPrompt?.length || 0) + (input.userPrompt?.length || 0);
-      const estCost = estimateCostUsd(candidate.provider as 'openai', model, promptChars, 1200);
+      const providerForPricing = candidate.provider === 'openrouter' ? 'openai' : candidate.provider;
+      const estCost = estimateCostUsd(providerForPricing, model, promptChars, 1200);
       const spendCheck = canSpend(estCost);
       if (!spendCheck.allowed) {
         failoverTrail.push(`budget_exhausted:${candidate.provider}(${model}) need ${estCost.toFixed(3)} remaining ${spendCheck.remaining.toFixed(3)}`);

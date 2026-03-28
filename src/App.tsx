@@ -3251,8 +3251,54 @@ function getConfiguredGeminiApiKey(): string {
   }
 }
 
-function createGeminiClient(): AiAuth {
+type AiTaskIntent = 'primary' | 'auxiliary';
+
+function hasUsableApiKeyRecord(entry?: StoredApiKeyRecord | null): boolean {
+  return Boolean(entry && String(entry.key || '').trim());
+}
+
+function resolveAuxiliaryOpenRouterEntry(
+  vault: StoredApiKeyRecord[],
+  activeEntry: StoredApiKeyRecord | null,
+): StoredApiKeyRecord | null {
+  if (activeEntry?.provider === 'openrouter' && hasUsableApiKeyRecord(activeEntry)) {
+    return activeEntry;
+  }
+  const activeOpenRouter = vault.find((item) => item.provider === 'openrouter' && item.isActive && hasUsableApiKeyRecord(item));
+  if (activeOpenRouter) return activeOpenRouter;
+  return vault.find((item) => item.provider === 'openrouter' && hasUsableApiKeyRecord(item)) || null;
+}
+
+function resolveAiModel(
+  runtime: ApiRuntimeConfig,
+  provider: ApiProvider,
+  entry?: StoredApiKeyRecord | null,
+): string {
+  const modelFromEntry = String(entry?.model || '').trim();
+  if (modelFromEntry) return modelFromEntry;
+  if (runtime.selectedModel && runtime.selectedProvider === provider) return runtime.selectedModel;
+  if (provider === 'custom') return runtime.selectedModel || 'custom-model';
+  return getDefaultModelForProvider(provider, runtime.aiProfile);
+}
+
+function createGeminiClient(intent: AiTaskIntent = 'primary'): AiAuth {
   const runtime = getApiRuntimeConfig();
+  const vault = loadApiVault(runtime.aiProfile);
+  const activeEntry = vault.find((item) => item.id === runtime.activeApiKeyId) || getActiveApiKeyRecord(vault);
+  const auxiliaryOpenRouter = intent === 'auxiliary' ? resolveAuxiliaryOpenRouterEntry(vault, activeEntry) : null;
+  if (auxiliaryOpenRouter) {
+    const provider: ApiProvider = 'openrouter';
+    const apiKey = String(auxiliaryOpenRouter.key || '').trim();
+    return {
+      provider,
+      apiKey,
+      isApiKey: false,
+      model: resolveAiModel(runtime, provider, auxiliaryOpenRouter),
+      baseUrl: auxiliaryOpenRouter.baseUrl || getProviderBaseUrl(provider),
+      keyId: auxiliaryOpenRouter.id,
+    };
+  }
+
   if (runtime.mode === 'relay') {
     return {
       provider: 'gemini',
@@ -3263,8 +3309,6 @@ function createGeminiClient(): AiAuth {
     };
   }
 
-  const vault = loadApiVault(runtime.aiProfile);
-  const activeEntry = vault.find((item) => item.id === runtime.activeApiKeyId) || getActiveApiKeyRecord(vault);
   const provider = activeEntry?.provider && activeEntry.provider !== 'unknown'
     ? activeEntry.provider
     : (runtime.selectedProvider === 'unknown' ? 'gemini' : runtime.selectedProvider);
@@ -3289,7 +3333,7 @@ function createGeminiClient(): AiAuth {
     apiKey,
     isApiKey,
     client: provider === 'gemini' && isApiKey ? new GoogleGenAI({ apiKey }) : undefined,
-    model: activeEntry?.model || runtime.selectedModel || getProfileModel('quality', provider),
+    model: resolveAiModel(runtime, provider, activeEntry),
     baseUrl: activeEntry?.baseUrl || getProviderBaseUrl(provider),
     keyId: activeEntry?.id,
   };
@@ -3947,7 +3991,7 @@ const WriterProPanel = () => {
     setIsRunning(true);
     setStatusText('Đang tạo gợi ý viết tiếp...');
     try {
-      const ai = createGeminiClient();
+      const ai = createGeminiClient('auxiliary');
       const prompt = `
 Bạn là đồng tác giả văn học. Hãy viết tiếp khoảng ${autoLength} từ, giữ văn phong và mạch truyện hiện tại.
 Trả về JSON đúng cấu trúc:
@@ -3989,7 +4033,7 @@ ${trimForAi(autoContext, 7000)}
     setIsRunning(true);
     setStatusText('Đang phân tích plot...');
     try {
-      const ai = createGeminiClient();
+      const ai = createGeminiClient('auxiliary');
       const prompt = `
 Bạn là cố vấn biên kịch. Dựa trên bối cảnh dưới đây, hãy đề xuất:
 1) 3 hướng phát triển tiếp theo,
@@ -4040,7 +4084,7 @@ ${trimForAi(plotContext, 7000)}
       noitam: 'nội tâm, sâu sắc',
     };
     try {
-      const ai = createGeminiClient();
+      const ai = createGeminiClient('auxiliary');
       const prompt = `
 Hãy viết lại đoạn văn sau theo giọng ${toneMap[toneTarget] || toneTarget}.
 Giữ nguyên ý chính, không thêm chi tiết mới.
@@ -4067,7 +4111,7 @@ ${trimForAi(toneSource, 6000)}
     setIsRunning(true);
     setStatusText('Đang truy vấn bối cảnh...');
     try {
-      const ai = createGeminiClient();
+      const ai = createGeminiClient('auxiliary');
       const prompt = `
 Trả lời câu hỏi dựa trên bối cảnh sau. Nếu thiếu dữ liệu, nói rõ phần thiếu.
 CÂU HỎI: ${queryQuestion.trim()}
@@ -4094,7 +4138,7 @@ ${trimForAi(queryContext, 7000)}
     setIsRunning(true);
     setStatusText('Đang trích xuất wiki...');
     try {
-      const ai = createGeminiClient();
+      const ai = createGeminiClient('auxiliary');
       const prompt = `
 Hãy trích xuất dữ liệu wiki từ nội dung sau. Trả về JSON:
 {
@@ -5265,7 +5309,7 @@ const ToolsManager = ({
   const handleRunQa = useCallback(async (inputText: string): Promise<QaIssue[]> => {
     const text = inputText.trim();
     if (!text) throw new Error('Bạn chưa dán nội dung cần quét.');
-    const ai = createGeminiClient();
+    const ai = createGeminiClient('auxiliary');
     const prompt = [
       'You are a Vietnamese proofreading assistant. Analyze the text and return JSON with issues.',
       'Return strictly JSON array named "issues" or plain array. Each item fields:',
@@ -5987,7 +6031,7 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
       let ai: AiAuth | null = null;
 
       try {
-        ai = createGeminiClient();
+        ai = createGeminiClient('auxiliary');
       } catch {
         ai = null;
       }
@@ -6124,7 +6168,7 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
 
     setIsSuggesting(true);
     try {
-      const ai = createGeminiClient();
+      const ai = createGeminiClient('auxiliary');
       const suggestionText = await generateGeminiText(
         ai,
         'quality',
@@ -8956,7 +9000,7 @@ const AIGenerationModal = ({
     }
     setIsGeneratingScript(true);
     try {
-      const ai = createGeminiClient();
+      const ai = createGeminiClient('auxiliary');
       const scriptText = await generateGeminiText(
         ai,
         'quality',
@@ -8991,7 +9035,7 @@ const AIGenerationModal = ({
   const handleSuggestOutline = async () => {
     setIsSuggestingOutline(true);
     try {
-      const ai = createGeminiClient();
+      const ai = createGeminiClient('auxiliary');
       const outlineText = await generateGeminiText(
         ai,
         'quality',
