@@ -44,7 +44,6 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence, MotionConfig } from 'motion/react';
 import { Link, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useNavigationType, useParams } from 'react-router-dom';
-import ReactMarkdown from 'react-markdown';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { Navbar } from './components/Navbar';
@@ -58,10 +57,12 @@ import { APP_NOTICE_EVENT, notifyApp, type AppNoticePayload, type AppNoticeTone 
 import { loadPromptLibraryState, savePromptLibraryState, type PromptLibraryState } from './promptLibraryStore';
 import { LOCAL_WORKSPACE_CHANGED_EVENT, emitLocalWorkspaceChanged, loadLocalWorkspaceMeta, markLocalWorkspaceHydrated, type LocalWorkspaceMeta, type LocalWorkspaceSection } from './localWorkspaceSync';
 import { WorkspaceConflictError, loadServerWorkspace, saveQaReport, saveServerWorkspace, SUPABASE_STORAGE_TABLES } from './supabaseWorkspace';
+import { syncNormalizedWorkspaceRecords } from './supabaseNormalizedWorkspace';
 import { IMAGE_AI_PROVIDER_META, getDefaultImageAiModel, type ImageAiProvider } from './imageAiProviders';
 import { createBackupSnapshot, getBackupSnapshot, listBackupSnapshots, updateBackupSnapshotDriveMeta, type BackupReason, type BackupSnapshot } from './backupVault';
 import { buildDriveBackupFilename, connectGoogleDriveInteractive, disconnectGoogleDrive, ensureGoogleDriveAccessToken, hasGoogleDriveBackupConfig, hasUsableDriveToken, loadStoredDriveAuth, uploadBackupSnapshotToDrive, type GoogleDriveAuthState, type GoogleDriveAccountProfile } from './googleDriveBackups';
 import { getScopedStorageItem, getWorkspaceScopeUser, setScopedStorageItem, setWorkspaceScopeUser, shouldAllowLegacyScopeFallback } from './workspaceScope';
+import { clearWorkspaceSyncQueue, enqueueWorkspaceSyncJob, getWorkspaceSyncQueueStats, processWorkspaceSyncQueue, subscribeWorkspaceSyncQueue, type WorkspaceSyncQueueStats } from './workspaceSyncQueue';
 
 import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { handleRelayMessage, relayGenerateContent, setRelaySender, notifyRelayDisconnected } from './relayBridge';
@@ -80,6 +81,8 @@ import {
   getProviderBaseUrl,
   normalizeStoredApiKeys,
 } from './apiVault';
+
+const MarkdownRenderer = React.lazy(() => import('./components/MarkdownRenderer'));
 
 // Utility for tailwind classes
 function cn(...inputs: ClassValue[]) {
@@ -6579,7 +6582,9 @@ const StoryEditor = ({ story, onSave, onCancel }: { story?: Story, onSave: (data
             <span className="text-indigo-600 font-bold uppercase tracking-wider text-sm">{genre || 'Chưa phân loại'}</span>
             <h1 className="font-serif text-4xl mt-2 mb-4">{title || 'Chưa có tiêu đề'}</h1>
             <div className="markdown-body italic text-slate-500 border-l-4 border-slate-200 pl-4">
-              <ReactMarkdown>{introduction || '*Chưa có giới thiệu*'}</ReactMarkdown>
+              <React.Suspense fallback={<p className="text-sm text-slate-500">Đang tải nội dung...</p>}>
+                <MarkdownRenderer content={introduction || '*Chưa có giới thiệu*'} />
+              </React.Suspense>
             </div>
           </div>
           {characterRoster.length ? (
@@ -7008,7 +7013,9 @@ const StoryDetail = ({
               color: 'var(--tf-reader-text)',
             }}
           >
-              <ReactMarkdown>{formatContent(selectedChapter.content)}</ReactMarkdown>
+              <React.Suspense fallback={<p className="text-sm opacity-75">Đang tải nội dung chương...</p>}>
+                <MarkdownRenderer content={formatContent(selectedChapter.content)} />
+              </React.Suspense>
             </div>
           </div>
         </div>
@@ -7181,7 +7188,9 @@ const StoryDetail = ({
                   <div>
                     <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-3">Giới thiệu</h3>
                     <div className="markdown-body text-slate-600 leading-relaxed">
-                      <ReactMarkdown>{formatContent(story.introduction || '*Chưa có giới thiệu*')}</ReactMarkdown>
+                      <React.Suspense fallback={<p className="text-sm text-slate-500">Đang tải giới thiệu...</p>}>
+                        <MarkdownRenderer content={formatContent(story.introduction || '*Chưa có giới thiệu*')} />
+                      </React.Suspense>
                     </div>
                   </div>
                   {story.characterRoster?.length ? (
@@ -9656,6 +9665,13 @@ const AppContent = () => {
   const [backupHistoryReady, setBackupHistoryReady] = useState(false);
   const [backupBusyAction, setBackupBusyAction] = useState('');
   const [accountLastSyncedAt, setAccountLastSyncedAt] = useState('');
+  const [accountSyncQueueStats, setAccountSyncQueueStats] = useState<WorkspaceSyncQueueStats>({
+    pending: 0,
+    failed: 0,
+    running: 0,
+    nextRetryAt: null,
+    lastSuccessAt: null,
+  });
   const [driveAuth, setDriveAuth] = useState<GoogleDriveAuthState | null>(() => loadStoredDriveAuth());
   const [driveBinding, setDriveBinding] = useState<GoogleDriveBinding | null>(() => loadDriveBindingForUser(user?.uid));
   const [isUploadingProfileAvatar, setIsUploadingProfileAvatar] = useState(false);
@@ -9689,6 +9705,7 @@ const AppContent = () => {
   const syncUiTickRef = useRef(0);
   const workspaceDeviceIdRef = useRef<string>(getWorkspaceDeviceId());
   const activeStoryLockRef = useRef<WorkspaceEditLock | null>(null);
+  const syncQueuePumpRef = useRef<{ timer: number | null; running: boolean }>({ timer: null, running: false });
 
   const navigate = useNavigate();
   const location = useLocation();
@@ -9702,6 +9719,25 @@ const AppContent = () => {
     syncUiTickRef.current = now;
     setAccountLastSyncedAt(syncedAt);
   }, [showBackupCenterModal]);
+
+  const refreshAccountSyncQueueStats = useCallback(async () => {
+    if (!user?.uid) {
+      setAccountSyncQueueStats({
+        pending: 0,
+        failed: 0,
+        running: 0,
+        nextRetryAt: null,
+        lastSuccessAt: null,
+      });
+      return;
+    }
+    try {
+      const stats = await getWorkspaceSyncQueueStats(user.uid);
+      setAccountSyncQueueStats(stats);
+    } catch (error) {
+      console.warn('Không đọc được trạng thái queue autosync.', error);
+    }
+  }, [user?.uid]);
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -10385,6 +10421,17 @@ const AppContent = () => {
       markLocalWorkspaceHydrated(mergedSnapshot.updatedAt, 'manual-sync', mergedSnapshot.sectionUpdatedAt);
       refreshWorkspaceUiFromStorage();
       await saveServerWorkspace(user.uid, mergedSnapshot, { expectedUpdatedAt: remoteSnapshot.updatedAt });
+      try {
+        await syncNormalizedWorkspaceRecords(user.uid, {
+          stories: mergedSnapshot.stories || [],
+          characters: mergedSnapshot.characters || [],
+          aiRules: mergedSnapshot.aiRules || [],
+          translationNames: mergedSnapshot.translationNames || [],
+          styleReferences: mergedSnapshot.styleReferences || [],
+        });
+      } catch (normalizedError) {
+        console.warn('Manual sync: cập nhật bảng theo bản ghi thất bại.', normalizedError);
+      }
       storeWorkspaceRecoverySnapshot(mergedSnapshot, 'manual-sync', user.uid);
       workspaceSyncRef.current.lastSerialized = JSON.stringify(mergedSnapshot);
       workspaceSyncRef.current.lastKnownRevision = mergedSnapshot.revision || workspaceSyncRef.current.lastKnownRevision;
@@ -10392,6 +10439,8 @@ const AppContent = () => {
       const syncedAt = new Date().toISOString();
       commitAccountSyncedAt(syncedAt, true);
       setBackupSettings((prev) => ({ ...prev, lastManualSyncAt: syncedAt }));
+      await clearWorkspaceSyncQueue(user.uid);
+      await refreshAccountSyncQueueStats();
       await createWorkspaceBackup('manual', { force: true, quiet: true });
       notifyApp({
         tone: 'success',
@@ -10410,7 +10459,7 @@ const AppContent = () => {
       workspaceSyncRef.current.isHydrating = false;
       setBackupBusyAction('');
     }
-  }, [commitAccountSyncedAt, createWorkspaceBackup, hasSupabase, refreshWorkspaceUiFromStorage, user]);
+  }, [commitAccountSyncedAt, createWorkspaceBackup, hasSupabase, refreshAccountSyncQueueStats, refreshWorkspaceUiFromStorage, user]);
 
   useEffect(() => {
     saveBackupSettings(backupSettings);
@@ -10441,6 +10490,11 @@ const AppContent = () => {
     workspaceSyncRef.current.lastSyncedAt = '';
     workspaceSyncRef.current.lastServerUpdatedAt = '';
     workspaceSyncRef.current.lastKnownRevision = 0;
+    if (syncQueuePumpRef.current.timer) {
+      window.clearTimeout(syncQueuePumpRef.current.timer);
+      syncQueuePumpRef.current.timer = null;
+    }
+    syncQueuePumpRef.current.running = false;
 
     backupAutomationRef.current.lastFingerprint = '';
     backupAutomationRef.current.startupSnapshotDone = false;
@@ -10947,6 +11001,33 @@ const AppContent = () => {
       });
     }
 
+    try {
+      const normalizedResult = await syncNormalizedWorkspaceRecords(user.uid, {
+        stories: savedSnapshot.stories || [],
+        characters: savedSnapshot.characters || [],
+        aiRules: savedSnapshot.aiRules || [],
+        translationNames: savedSnapshot.translationNames || [],
+        styleReferences: savedSnapshot.styleReferences || [],
+      });
+      if (normalizedResult.conflicts > 0) {
+        notifyApp({
+          tone: 'warn',
+          message: `Có ${normalizedResult.conflicts} bản ghi mới hơn trên thiết bị khác, app đã giữ bản server để tránh ghi đè.`,
+          groupKey: 'normalized-sync-conflicts',
+          timeoutMs: 5200,
+        });
+      }
+    } catch (error) {
+      console.warn('Không thể cập nhật bảng đồng bộ theo bản ghi.', error);
+      notifyApp({
+        tone: 'warn',
+        message: 'Đã lưu workspace tổng lên tài khoản, nhưng sync theo từng bản ghi chưa hoàn tất.',
+        detail: error instanceof Error ? error.message : undefined,
+        groupKey: 'normalized-sync-failed',
+        timeoutMs: 5200,
+      });
+    }
+
     storeWorkspaceRecoverySnapshot(savedSnapshot, 'account-sync-save', user.uid);
     workspaceSyncRef.current.lastSerialized = JSON.stringify(savedSnapshot);
     workspaceSyncRef.current.lastKnownRevision = savedSnapshot.revision || workspaceSyncRef.current.lastKnownRevision;
@@ -11099,9 +11180,54 @@ const AppContent = () => {
     };
   }, [commitAccountSyncedAt, user, hasSupabase]);
 
+  const runAccountSyncQueue = useCallback(async () => {
+    if (!user?.uid || !hasSupabase || !ACCOUNT_CLOUD_AUTOSYNC_ENABLED) return;
+    if (syncQueuePumpRef.current.running) return;
+    syncQueuePumpRef.current.running = true;
+    try {
+      const stats = await processWorkspaceSyncQueue(user.uid, async () => {
+        await syncWorkspaceToAccount();
+      });
+      setAccountSyncQueueStats(stats);
+      if (stats.failed > 0 && shouldNotifyAccountSyncError(workspaceSyncRef.current.lastErrorNotifiedAt)) {
+        workspaceSyncRef.current.lastErrorNotifiedAt = Date.now();
+        notifyApp({
+          tone: 'warn',
+          message: 'Có job autosync bị lỗi, hệ thống sẽ tự thử lại theo hàng đợi.',
+          detail: stats.lastError,
+          groupKey: 'account-sync-queue-failed',
+          timeoutMs: 5200,
+        });
+      }
+    } finally {
+      syncQueuePumpRef.current.running = false;
+    }
+  }, [hasSupabase, syncWorkspaceToAccount, user?.uid]);
+
+  const scheduleAccountSyncQueue = useCallback((delayMs = ACCOUNT_CLOUD_AUTOSYNC_DEBOUNCE_MS) => {
+    if (typeof window === 'undefined') return;
+    if (syncQueuePumpRef.current.timer) {
+      window.clearTimeout(syncQueuePumpRef.current.timer);
+    }
+    syncQueuePumpRef.current.timer = window.setTimeout(() => {
+      syncQueuePumpRef.current.timer = null;
+      void runAccountSyncQueue();
+    }, delayMs);
+  }, [runAccountSyncQueue]);
+
+  useEffect(() => {
+    if (!user?.uid) return;
+    void refreshAccountSyncQueueStats();
+    const unsubscribe = subscribeWorkspaceSyncQueue(() => {
+      void refreshAccountSyncQueueStats();
+    });
+    return () => {
+      unsubscribe();
+    };
+  }, [refreshAccountSyncQueueStats, user?.uid]);
+
   useEffect(() => {
     if (typeof window === 'undefined' || !user || !hasSupabase || !ACCOUNT_CLOUD_AUTOSYNC_ENABLED) return;
-    let syncTimer: number | null = null;
     const handler = (event: Event) => {
       if (workspaceSyncRef.current.isHydrating) return;
       const detail = (event as CustomEvent<LocalWorkspaceMeta> | null)?.detail;
@@ -11111,28 +11237,32 @@ const AppContent = () => {
       if (!changedSection || !ACCOUNT_AUTOSYNC_TRIGGER_SECTIONS.has(changedSection)) {
         return;
       }
-      if (syncTimer) window.clearTimeout(syncTimer);
-      syncTimer = window.setTimeout(() => {
-        void syncWorkspaceToAccount().catch((error) => {
-          console.warn('Tự động lưu workspace lên tài khoản thất bại.', error);
-          if (!shouldNotifyAccountSyncError(workspaceSyncRef.current.lastErrorNotifiedAt)) return;
-          workspaceSyncRef.current.lastErrorNotifiedAt = Date.now();
-          notifyApp({
-            tone: 'warn',
-            message: 'Tự động đồng bộ lên tài khoản bị lỗi, dữ liệu vẫn đang ở máy này.',
-            detail: error instanceof Error ? error.message : undefined,
-            groupKey: 'account-sync-autosave-failed',
-            timeoutMs: 5200,
-          });
-        });
-      }, ACCOUNT_CLOUD_AUTOSYNC_DEBOUNCE_MS);
+      const sectionUpdatedAt = detail?.sections?.[changedSection] || detail?.updatedAt || new Date().toISOString();
+      const idempotencyKey = `${user.uid}:${changedSection}:${sectionUpdatedAt}`;
+      void enqueueWorkspaceSyncJob({
+        userId: user.uid,
+        section: changedSection,
+        idempotencyKey,
+      }).then(() => {
+        scheduleAccountSyncQueue();
+      }).catch((error) => {
+        console.warn('Không thể enqueue autosync job.', error);
+      });
     };
     window.addEventListener(LOCAL_WORKSPACE_CHANGED_EVENT, handler as EventListener);
     return () => {
-      if (syncTimer) window.clearTimeout(syncTimer);
+      if (syncQueuePumpRef.current.timer) {
+        window.clearTimeout(syncQueuePumpRef.current.timer);
+        syncQueuePumpRef.current.timer = null;
+      }
       window.removeEventListener(LOCAL_WORKSPACE_CHANGED_EVENT, handler as EventListener);
     };
-  }, [syncWorkspaceToAccount, user, hasSupabase]);
+  }, [hasSupabase, scheduleAccountSyncQueue, user]);
+
+  useEffect(() => {
+    if (!user?.uid || !hasSupabase || !ACCOUNT_CLOUD_AUTOSYNC_ENABLED) return;
+    scheduleAccountSyncQueue(450);
+  }, [hasSupabase, scheduleAccountSyncQueue, user?.uid]);
 
   useEffect(() => {
     if (!user || !hasSupabase || ACCOUNT_CLOUD_AUTOSYNC_ENABLED) return;
@@ -13259,7 +13389,26 @@ ${JSON.stringify(violatingPayload)}
                 )}>
                   Autosync tài khoản: {user && hasSupabase && ACCOUNT_CLOUD_AUTOSYNC_ENABLED ? 'Đang bật' : 'Chưa sẵn sàng'}
                 </span>
+                <span className={cn(
+                  'rounded-full px-3 py-1 font-semibold',
+                  accountSyncQueueStats.failed > 0
+                    ? 'bg-rose-500/15 text-rose-200'
+                    : accountSyncQueueStats.pending > 0 || accountSyncQueueStats.running > 0
+                      ? 'bg-amber-500/15 text-amber-200'
+                      : 'bg-emerald-500/15 text-emerald-200'
+                )}>
+                  Queue sync: {accountSyncQueueStats.failed > 0
+                    ? `${accountSyncQueueStats.failed} lỗi`
+                    : accountSyncQueueStats.pending > 0 || accountSyncQueueStats.running > 0
+                      ? `${accountSyncQueueStats.pending + accountSyncQueueStats.running} đang chờ`
+                      : 'Ổn định'}
+                </span>
               </div>
+              {accountSyncQueueStats.failed > 0 && accountSyncQueueStats.nextRetryAt ? (
+                <p className="text-xs text-rose-200">
+                  Queue sẽ tự thử lại lúc {formatBackupTimestamp(accountSyncQueueStats.nextRetryAt)}.
+                </p>
+              ) : null}
               <div className="flex flex-wrap gap-2">
                 <button
                   className="tf-btn tf-btn-primary"

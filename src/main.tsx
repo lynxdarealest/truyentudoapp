@@ -2,6 +2,7 @@ import { StrictMode, Suspense, lazy } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import './index.css';
+import { initClientErrorMonitoring } from './errorMonitoring';
 
 const App = lazy(() => import('./App.tsx'));
 const Phase0DemoApp = lazy(() => import('./phase0/Phase0DemoApp.tsx'));
@@ -16,6 +17,8 @@ if (typeof window !== 'undefined' && /^\/{2,}/.test(window.location.pathname)) {
   const normalizedUrl = `${window.location.origin}${normalizedPath}${window.location.search}${window.location.hash}`;
   window.history.replaceState(window.history.state, '', normalizedUrl);
 }
+
+initClientErrorMonitoring();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

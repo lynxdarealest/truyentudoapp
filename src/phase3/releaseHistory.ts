@@ -13,13 +13,16 @@ export const WRITER_RELEASE_NOTES: ReleaseNote[] = [
   {
     version: APP_VERSION_LABEL,
     dateLabel: '2026-03-29',
-    title: 'Ổn định dữ liệu và làm gọn lại thao tác sao lưu',
+    title: 'Nâng cấp nền tảng ổn định dữ liệu và đồng bộ nhiều thiết bị',
     items: [
       'Sửa đường lưu truyện để giảm lỗi đầy localStorage: dữ liệu truyện giờ được nén trước khi ghi, giúp xử lý file lớn ổn định hơn và hạn chế văng quota khi làm việc lâu.',
       'Bỏ cơ chế lưu trùng backup nặng trong localStorage (vốn dễ nhân đôi dung lượng), chỉ giữ metadata nhẹ để theo dõi mốc lưu gần nhất.',
       'Thêm lớp khôi phục cục bộ thông minh hơn: nếu backup local cũ không còn, app sẽ thử lấy mốc gần nhất trong Backup Vault để khôi phục truyện.',
-      'Autosync tài khoản được chống chồng lệnh: khi đang sync mà có thay đổi mới, app sẽ gộp đợt và chạy lại một lần sau cùng để tránh giật/nháy liên tục.',
+      'Nâng autosync thành cơ chế hàng đợi có retry/backoff + idempotency key: thao tác lưu sẽ vào queue và được xử lý tuần tự để tránh mất nhịp đồng bộ.',
+      'Bổ sung đồng bộ theo bản ghi lên Supabase (stories/chapters/characters/rules/translation/style), có kiểm tra revision để giảm nguy cơ ghi đè khi dùng nhiều thiết bị.',
       'Tối giản trung tâm Sao lưu: gom thao tác quan trọng vào một hàng nút rõ ràng, giảm phần chữ giải thích dài để người dùng phổ thông thao tác nhanh hơn.',
+      'Thêm giám sát lỗi runtime phía client và lưu log lỗi lên Supabase để truy vết các lỗi thực tế theo tài khoản/path sử dụng.',
+      'Bổ sung smoke test E2E bằng Playwright + job CI chạy tự động để chặn các lỗi điều hướng/giao diện trước khi deploy.',
       'Cải thiện hiển thị chương khi đọc: tự tách đoạn hội thoại và đoạn hệ thống tốt hơn để văn bản bớt dính khối, dễ theo dõi trên cả desktop lẫn mobile.',
     ],
   },

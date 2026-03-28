@@ -31,10 +31,21 @@ const normalizeDate = (value: any) => {
   return new Date().toISOString();
 };
 
+const normalizeRevision = (value: unknown, fallback = 1) => {
+  const next = Number(value);
+  if (!Number.isFinite(next)) return Math.max(1, fallback);
+  return Math.max(1, Math.floor(next));
+};
+
 const normalizeChapters = (chapters: any[]) =>
   (Array.isArray(chapters) ? chapters : []).map((chapter) => ({
     ...chapter,
+    id: String(chapter?.id || `chapter-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`),
+    title: String(chapter?.title || '').trim(),
+    content: String(chapter?.content || ''),
+    order: Number.isFinite(Number(chapter?.order)) ? Number(chapter.order) : 0,
     createdAt: normalizeDate(chapter?.createdAt),
+    revision: normalizeRevision(chapter?.revision, 1),
   }));
 
 const normalizeCoverImageUrl = (value: any) => {
@@ -63,14 +74,99 @@ const normalizeCharacterRoster = (rows: any[]) =>
 
 const normalizeStory = (story: any) => ({
   ...story,
+  id: String(story?.id || `story-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`),
+  title: String(story?.title || '').trim(),
+  content: String(story?.content || ''),
   coverImageUrl: normalizeCoverImageUrl(story?.coverImageUrl),
   createdAt: normalizeDate(story?.createdAt),
   updatedAt: normalizeDate(story?.updatedAt),
+  revision: normalizeRevision(story?.revision, 1),
   chapters: normalizeChapters(story?.chapters),
   translationMemory: normalizeTranslationMemory(story?.translationMemory),
   storyPromptNotes: String(story?.storyPromptNotes || '').trim(),
   characterRoster: normalizeCharacterRoster(story?.characterRoster),
 });
+
+function areChapterContentsEqual(a: any, b: any): boolean {
+  return String(a?.title || '') === String(b?.title || '')
+    && String(a?.content || '') === String(b?.content || '')
+    && Number(a?.order || 0) === Number(b?.order || 0)
+    && String(a?.aiInstructions || '') === String(b?.aiInstructions || '')
+    && String(a?.script || '') === String(b?.script || '');
+}
+
+function areStoriesEquivalent(a: any, b: any): boolean {
+  const aChapters = Array.isArray(a?.chapters) ? a.chapters : [];
+  const bChapters = Array.isArray(b?.chapters) ? b.chapters : [];
+  if (aChapters.length !== bChapters.length) return false;
+  for (let i = 0; i < aChapters.length; i += 1) {
+    if (!areChapterContentsEqual(aChapters[i], bChapters[i])) return false;
+  }
+  return String(a?.title || '') === String(b?.title || '')
+    && String(a?.content || '') === String(b?.content || '')
+    && String(a?.introduction || '') === String(b?.introduction || '')
+    && String(a?.genre || '') === String(b?.genre || '')
+    && String(a?.type || '') === String(b?.type || '')
+    && String(a?.coverImageUrl || '') === String(b?.coverImageUrl || '')
+    && String(a?.storyPromptNotes || '') === String(b?.storyPromptNotes || '')
+    && Boolean(a?.isPublic) === Boolean(b?.isPublic)
+    && Boolean(a?.isAdult) === Boolean(b?.isAdult)
+    && Boolean(a?.isAI) === Boolean(b?.isAI)
+    && Number(a?.expectedChapters || 0) === Number(b?.expectedChapters || 0)
+    && Number(a?.expectedWordCount || 0) === Number(b?.expectedWordCount || 0)
+    && JSON.stringify(Array.isArray(a?.translationMemory) ? a.translationMemory : []) === JSON.stringify(Array.isArray(b?.translationMemory) ? b.translationMemory : [])
+    && JSON.stringify(Array.isArray(a?.characterRoster) ? a.characterRoster : []) === JSON.stringify(Array.isArray(b?.characterRoster) ? b.characterRoster : []);
+}
+
+function withRevisionBumps(nextStories: any[], previousStories: any[]): any[] {
+  const previousById = new Map(
+    (Array.isArray(previousStories) ? previousStories : [])
+      .map((story) => [String(story?.id || ''), story]),
+  );
+  return (Array.isArray(nextStories) ? nextStories : []).map((nextStory) => {
+    const current = normalizeStory(nextStory);
+    const previous = previousById.get(current.id);
+    if (!previous) {
+      const chapters = normalizeChapters(current.chapters).map((chapter) => ({
+        ...chapter,
+        revision: normalizeRevision(chapter.revision, 1),
+      }));
+      return {
+        ...current,
+        revision: normalizeRevision(current.revision, 1),
+        chapters,
+      };
+    }
+
+    const previousChaptersById = new Map(
+      (Array.isArray(previous.chapters) ? previous.chapters : [])
+        .map((chapter: any) => [String(chapter?.id || ''), chapter]),
+    );
+    const chapters = normalizeChapters(current.chapters).map((chapter) => {
+      const previousChapter = previousChaptersById.get(chapter.id);
+      if (!previousChapter) {
+        return {
+          ...chapter,
+          revision: normalizeRevision(chapter.revision, 1),
+        };
+      }
+      const changed = !areChapterContentsEqual(chapter, previousChapter);
+      const previousRevision = normalizeRevision((previousChapter as any)?.revision, 1);
+      return {
+        ...chapter,
+        revision: changed ? previousRevision + 1 : previousRevision,
+      };
+    });
+
+    const changed = !areStoriesEquivalent({ ...current, chapters }, previous);
+    const previousRevision = normalizeRevision(previous.revision, 1);
+    return {
+      ...current,
+      revision: changed ? previousRevision + 1 : previousRevision,
+      chapters,
+    };
+  });
+}
 
 function safeParseArray(raw: string | null): any[] {
   if (!raw) return [];
@@ -263,7 +359,11 @@ export const storage = {
     }
   },
   saveStories: (stories: any[]) => {
-    const normalizedStories = Array.isArray(stories) ? stories.map(normalizeStory) : [];
+    const previousStories = storage.getStories();
+    const normalizedStories = withRevisionBumps(
+      Array.isArray(stories) ? stories.map(normalizeStory) : [],
+      previousStories,
+    );
     const encodedStories = encodeStoriesPayload(normalizedStories);
     try {
       setScopedRaw(STORIES_KEY, encodedStories);

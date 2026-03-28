@@ -5,6 +5,9 @@ node_modules/
 dist/
 build/
 .cache/
+playwright-report/
+test-results/
+.playwright/
 
 # Environment files
 .env
