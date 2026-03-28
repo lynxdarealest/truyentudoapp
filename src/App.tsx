@@ -37,7 +37,6 @@ import {
   Target,
   Wifi,
   WifiOff,
-  Link2,
   Sun,
   Moon,
   ImagePlus,
@@ -352,8 +351,8 @@ function loadBackupSettings(): BackupSettings {
     if (!raw) return DEFAULT_BACKUP_SETTINGS;
     const parsed = JSON.parse(raw) as Partial<BackupSettings>;
     return {
-      autoSnapshotEnabled: parsed.autoSnapshotEnabled !== false,
-      autoUploadToDrive: parsed.autoUploadToDrive !== false,
+      autoSnapshotEnabled: true,
+      autoUploadToDrive: true,
       staleAfterHours: Number(parsed.staleAfterHours) > 0 ? Number(parsed.staleAfterHours) : DEFAULT_BACKUP_SETTINGS.staleAfterHours,
       lastSuccessfulBackupAt: typeof parsed.lastSuccessfulBackupAt === 'string' ? parsed.lastSuccessfulBackupAt : '',
       lastManualSyncAt: typeof parsed.lastManualSyncAt === 'string' ? parsed.lastManualSyncAt : '',
@@ -365,7 +364,14 @@ function loadBackupSettings(): BackupSettings {
 
 function saveBackupSettings(settings: BackupSettings): void {
   if (typeof window === 'undefined') return;
-  localStorage.setItem(BACKUP_SETTINGS_KEY, JSON.stringify(settings));
+  localStorage.setItem(
+    BACKUP_SETTINGS_KEY,
+    JSON.stringify({
+      ...settings,
+      autoSnapshotEnabled: true,
+      autoUploadToDrive: true,
+    }),
+  );
 }
 
 function normalizeDriveBinding(value: unknown): GoogleDriveBinding | null {
@@ -11784,6 +11790,29 @@ CHỈ trả JSON thuần, không bọc markdown.
                         ? `Tài khoản này đang liên kết với ${driveBinding.email}${driveConnected ? ` và hiện đang đăng nhập đúng Gmail đó` : ''}.`
                         : 'Tài khoản này chưa liên kết với Google Drive nào.'}
                 </p>
+                <p className="text-xs text-emerald-300">Auto sync Drive: đang bật.</p>
+                <div className="flex flex-wrap gap-2 pt-1">
+                  <button
+                    className="tf-btn tf-btn-ghost px-3 py-1 text-xs"
+                    onClick={handleConnectDrive}
+                    disabled={!user || !driveConfigured || backupBusyAction === 'connect-drive'}
+                  >
+                    {backupBusyAction === 'connect-drive'
+                      ? 'Đang kết nối...'
+                      : driveBinding
+                        ? (driveConnected ? 'Xác nhận lại Gmail' : 'Kết nối lại Drive')
+                        : 'Kết nối Drive'}
+                  </button>
+                  {driveConnected ? (
+                    <button
+                      className="tf-btn tf-btn-ghost px-3 py-1 text-xs"
+                      onClick={handleDisconnectDrive}
+                      disabled={backupBusyAction === 'disconnect-drive'}
+                    >
+                      {backupBusyAction === 'disconnect-drive' ? 'Đang ngắt...' : 'Ngắt kết nối'}
+                    </button>
+                  ) : null}
+                </div>
               </div>
             </div>
 
@@ -11822,57 +11851,6 @@ CHỈ trả JSON thuần, không bọc markdown.
                   </div>
                 </div>
 
-                <div className="rounded-2xl border border-white/10 bg-slate-900/40 p-4 space-y-4">
-                  <div className="flex items-center gap-2">
-                    <Link2 className="h-5 w-5 text-emerald-300" />
-                    <h4 className="text-lg font-semibold">Sao lưu lên Google Drive</h4>
-                  </div>
-                  <p className="text-sm text-slate-400">Liên kết đúng Gmail bạn dùng để bản sao lưu luôn đẩy lên đúng một file trên Drive.</p>
-                  <div className="flex flex-wrap gap-3">
-                    <button
-                      className="tf-btn tf-btn-primary"
-                      onClick={handleConnectDrive}
-                      disabled={!user || !driveConfigured || backupBusyAction === 'connect-drive'}
-                    >
-                      {backupBusyAction === 'connect-drive'
-                        ? 'Đang kết nối Drive...'
-                        : driveBinding
-                          ? (driveConnected ? 'Xác nhận lại Gmail đã liên kết' : 'Kết nối lại Gmail đã liên kết')
-                          : 'Liên kết với Google Drive'}
-                    </button>
-                    <button
-                      className="tf-btn tf-btn-ghost"
-                      onClick={handleDisconnectDrive}
-                      disabled={!driveConnected || backupBusyAction === 'disconnect-drive'}
-                    >
-                      {backupBusyAction === 'disconnect-drive' ? 'Đang ngắt kết nối...' : 'Ngắt kết nối tạm thời'}
-                    </button>
-                  </div>
-                  {!driveConfigured ? (
-                    <p className="text-sm text-amber-300">
-                      Bản triển khai này chưa bật Google Drive. Chỉ cần thêm cấu hình OAuth rồi deploy lại một lần là dùng được.
-                    </p>
-                  ) : !user ? (
-                    <p className="text-sm text-amber-300">
-                      Hãy đăng nhập TruyenForge trước. Mỗi tài khoản chỉ liên kết với một Gmail duy nhất.
-                    </p>
-                  ) : (
-                    <div className="rounded-2xl border border-white/10 bg-slate-950/50 px-4 py-3 text-sm text-slate-300">
-                      <p className="font-semibold text-white">
-                        {driveBinding
-                          ? `Google Drive đã liên kết: ${driveBinding.email}`
-                          : 'Tài khoản này chưa liên kết với Google Drive.'}
-                      </p>
-                      <p className="mt-1">
-                        {driveBinding
-                          ? driveConnected
-                            ? `Bạn đang dùng đúng Gmail ${driveAuth?.account.email || driveBinding.email}. Từ giờ app sẽ giữ bản trên máy và đồng thời cập nhật lại cùng một tệp sao lưu trên Drive này.`
-                            : `Phiên Drive hiện đã ngắt. Khi kết nối lại, bạn cần chọn đúng ${driveBinding.email}.`
-                          : 'Chỉ cần liên kết một lần, sau đó app sẽ luôn biết chính xác nên lưu dữ liệu vào Gmail nào.'}
-                      </p>
-                    </div>
-                  )}
-                </div>
               </div>
 
               <div className="rounded-2xl border border-white/10 bg-slate-900/40 p-4 space-y-4">
