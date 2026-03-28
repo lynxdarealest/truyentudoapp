@@ -315,6 +315,17 @@ iframe {
 .markdown-body pre code { @apply bg-transparent p-0 text-stone-100; }
 .markdown-body a { @apply text-emerald-600 underline hover:text-emerald-700; }
 .markdown-body img { @apply rounded-lg max-w-full h-auto my-6; }
+.reader-markdown p {
+  text-indent: 1.8em;
+  margin-bottom: 1em;
+}
+.reader-markdown p:first-of-type {
+  margin-top: 0.3em;
+}
+.reader-markdown blockquote p,
+.reader-markdown li p {
+  text-indent: 0;
+}
 
 /* Phase 0 demo styles */
 :root {
@@ -1508,12 +1519,6 @@ body {
     word-break: break-word !important;
   }
 
-  .story-detail button[title="Cài đặt đọc"] {
-    right: 0.9rem !important;
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 0.9rem) !important;
-    padding: 0.65rem 0.85rem !important;
-    border-radius: 0.9rem !important;
-  }
 }
 .tf-route-scene {
   min-height: calc(100vh - 80px);

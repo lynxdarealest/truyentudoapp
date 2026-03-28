@@ -6810,17 +6810,8 @@ const StoryDetail = ({
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: -20 }}
-        className="max-w-4xl mx-auto pt-24 pb-12 px-6"
+        className="max-w-[min(96vw,1680px)] mx-auto pt-24 pb-12 px-3 md:px-6"
       >
-        <button
-          onClick={onOpenReaderPrefs}
-          className="fixed bottom-5 right-5 z-[220] inline-flex items-center gap-2 rounded-2xl border border-indigo-200 bg-white/92 px-4 py-3 text-sm font-bold text-slate-700 shadow-[0_16px_40px_rgba(99,102,241,0.18)] backdrop-blur transition-all hover:-translate-y-0.5 hover:shadow-[0_20px_48px_rgba(99,102,241,0.24)]"
-          title="Cài đặt đọc"
-        >
-          <Settings className="h-4 w-4" />
-          <span>Cài đặt đọc</span>
-        </button>
-
         {breadcrumbs?.length ? <BreadcrumbTrail items={breadcrumbs} /> : null}
 
         <div className="flex items-center justify-between mb-8">
@@ -6838,6 +6829,13 @@ const StoryDetail = ({
           </button>
           
           <div className="flex items-center gap-2">
+            <button
+              onClick={onOpenReaderPrefs}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition-colors text-sm font-bold"
+              title="Cài đặt đọc"
+            >
+              <Settings className="w-4 h-4" /> Giao diện đọc
+            </button>
             <button
               onClick={openDictionaryPopup}
               className="flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 transition-colors text-sm font-bold"
@@ -6864,13 +6862,13 @@ const StoryDetail = ({
         </div>
         
         <div
-          className="p-10 rounded-[40px] shadow-sm border border-slate-100 mb-8"
+          className="p-5 md:p-8 rounded-[32px] shadow-sm border border-slate-100 mb-8"
           style={{
             backgroundColor: 'var(--tf-reader-bg)',
             color: 'var(--tf-reader-text)',
           }}
         >
-          <div className="max-w-2xl mx-auto">
+          <div className="max-w-[min(92vw,1320px)] mx-auto">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm font-bold text-indigo-600 uppercase tracking-widest">Chương {selectedChapter.order}</h2>
               <div className="flex items-center gap-4 text-xs text-slate-400 font-mono">
@@ -6882,7 +6880,7 @@ const StoryDetail = ({
               <h1 className="chapter-title text-4xl font-serif font-bold text-slate-900 mb-10">{getDisplayChapterTitle(selectedChapter)}</h1>
             
             <div
-            className="markdown-body text-lg leading-relaxed text-slate-700"
+            className="reader-markdown markdown-body text-lg leading-relaxed text-slate-700"
             style={{
               fontSize: 'var(--tf-reader-font-size)',
               lineHeight: 'var(--tf-reader-line-height)',
@@ -6895,7 +6893,7 @@ const StoryDetail = ({
           </div>
         </div>
 
-        <div className="chapter-nav flex items-center justify-between max-w-2xl mx-auto">
+        <div className="chapter-nav flex items-center justify-between max-w-[min(92vw,1320px)] mx-auto">
           <button 
             onClick={handlePrevChapter}
             disabled={!hasPrev}
@@ -11115,6 +11113,42 @@ const AppContent = () => {
     setReaderPrefs(defaults);
   };
 
+  const applyReaderPreset = (preset: 'book' | 'focus' | 'night') => {
+    setReaderPrefs((prev) => {
+      if (preset === 'book') {
+        return {
+          ...prev,
+          fontFamily: 'serif',
+          fontSize: 18,
+          lineHeight: 1.85,
+          colorMode: 'custom',
+          background: '#f7f3eb',
+          textColor: '#1f2937',
+        };
+      }
+      if (preset === 'focus') {
+        return {
+          ...prev,
+          fontFamily: 'sans',
+          fontSize: 17,
+          lineHeight: 1.8,
+          colorMode: 'custom',
+          background: '#f2f7ff',
+          textColor: '#0f172a',
+        };
+      }
+      return {
+        ...prev,
+        fontFamily: 'serif',
+        fontSize: 18,
+        lineHeight: 1.85,
+        colorMode: 'custom',
+        background: '#101826',
+        textColor: '#dbe7f5',
+      };
+    });
+  };
+
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', themeMode);
     saveThemeMode(themeMode);
@@ -13274,48 +13308,74 @@ CHỈ trả JSON thuần, không bọc markdown.
       <AppToastStack toasts={appToasts} onDismiss={dismissToast} />
 
       {showReaderPrefsModal ? (
-        <div className="fixed inset-0 z-[240] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4">
-          <div className="w-full max-w-lg rounded-2xl border border-indigo-100 bg-white shadow-2xl p-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-lg font-bold text-slate-900">Cài đặt đọc</p>
-                <p className="text-sm text-slate-500">Tùy chỉnh font, màu và kích thước chữ cho trải nghiệm đọc.</p>
+        <div className="fixed inset-0 z-[240] flex items-end sm:items-center justify-center bg-slate-950/55 p-0 sm:p-4">
+          <div className="w-full max-w-2xl rounded-t-3xl sm:rounded-3xl border border-indigo-100 bg-white shadow-2xl overflow-hidden">
+            <div className="bg-gradient-to-r from-indigo-600 to-blue-600 px-5 py-4 text-white">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-lg font-bold">Cài đặt giao diện đọc</p>
+                  <p className="text-xs text-indigo-100">Nội dung sẽ được thụt đầu dòng và hiển thị gần toàn màn hình.</p>
+                </div>
+                <button
+                  onClick={() => setShowReaderPrefsModal(false)}
+                  className="rounded-full border border-white/40 bg-white/10 px-3 py-1.5 text-xs font-bold hover:bg-white/20"
+                >
+                  Đóng
+                </button>
               </div>
-              <button
-                onClick={() => setShowReaderPrefsModal(false)}
-                className="rounded-full border border-slate-200 px-3 py-1 text-sm font-semibold text-slate-600 hover:bg-slate-50"
-              >
-                Đóng
-              </button>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
-                Kích thước chữ ({readerPrefs.fontSize}px)
-                <input
-                  type="range"
-                  min={14}
-                  max={24}
-                  step={1}
-                  value={readerPrefs.fontSize}
-                  onChange={(e) => setReaderPrefs((prev) => ({ ...prev, fontSize: Number(e.target.value) }))}
-                />
-              </label>
-              <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
-                Dãn dòng ({readerPrefs.lineHeight.toFixed(2)})
-                <input
-                  type="range"
-                  min={1.4}
-                  max={2.2}
-                  step={0.05}
-                  value={readerPrefs.lineHeight}
-                  onChange={(e) => setReaderPrefs((prev) => ({ ...prev, lineHeight: Number(e.target.value) }))}
-                />
-              </label>
-            </div>
+            <div className="p-5 space-y-5 max-h-[75vh] overflow-y-auto">
+              <div className="space-y-2">
+                <p className="text-xs uppercase tracking-wider text-slate-400 font-bold">Preset nhanh</p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <button
+                    onClick={() => applyReaderPreset('book')}
+                    className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 text-left"
+                  >
+                    Sách giấy
+                  </button>
+                  <button
+                    onClick={() => applyReaderPreset('focus')}
+                    className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 text-left"
+                  >
+                    Tập trung
+                  </button>
+                  <button
+                    onClick={() => applyReaderPreset('night')}
+                    className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 text-left"
+                  >
+                    Đêm dịu mắt
+                  </button>
+                </div>
+              </div>
 
-            <div className="grid grid-cols-3 gap-3">
-              <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700 col-span-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
+                  Kích thước chữ ({readerPrefs.fontSize}px)
+                  <input
+                    type="range"
+                    min={14}
+                    max={24}
+                    step={1}
+                    value={readerPrefs.fontSize}
+                    onChange={(e) => setReaderPrefs((prev) => ({ ...prev, fontSize: Number(e.target.value) }))}
+                  />
+                </label>
+                <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
+                  Dãn dòng ({readerPrefs.lineHeight.toFixed(2)})
+                  <input
+                    type="range"
+                    min={1.4}
+                    max={2.2}
+                    step={0.05}
+                    value={readerPrefs.lineHeight}
+                    onChange={(e) => setReaderPrefs((prev) => ({ ...prev, lineHeight: Number(e.target.value) }))}
+                  />
+                </label>
+              </div>
+
+              <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
                 Font chữ
                 <select
                   value={readerPrefs.fontFamily}
@@ -13324,35 +13384,59 @@ CHỈ trả JSON thuần, không bọc markdown.
                 >
                   <option value="serif">Serif (đọc truyện mềm mại)</option>
                   <option value="sans">Sans (gọn gàng, hiện đại)</option>
-                  <option value="mono">Mono (dễ so sánh nội dung)</option>
+                  <option value="mono">Mono (soát nội dung)</option>
                 </select>
               </label>
-              <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
-                Màu nền
-                <input
-                  type="color"
-                  value={readerPrefs.background}
-                  onChange={(e) => setReaderPrefs((prev) => ({ ...prev, background: e.target.value, colorMode: 'custom' }))}
-                  className="h-10 w-full rounded-xl border border-slate-200"
-                />
-              </label>
-              <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
-                Màu chữ
-                <input
-                  type="color"
-                  value={readerPrefs.textColor}
-                  onChange={(e) => setReaderPrefs((prev) => ({ ...prev, textColor: e.target.value, colorMode: 'custom' }))}
-                  className="h-10 w-full rounded-xl border border-slate-200"
-                />
-              </label>
-              <div className="flex items-end">
-                <button
-                  onClick={resetReaderPrefs}
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50"
-                >
-                  Khôi phục mặc định
-                </button>
+
+              <div className="grid grid-cols-2 gap-3">
+                <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
+                  Màu nền
+                  <input
+                    type="color"
+                    value={readerPrefs.background}
+                    onChange={(e) => setReaderPrefs((prev) => ({ ...prev, background: e.target.value, colorMode: 'custom' }))}
+                    className="h-10 w-full rounded-xl border border-slate-200"
+                  />
+                </label>
+                <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
+                  Màu chữ
+                  <input
+                    type="color"
+                    value={readerPrefs.textColor}
+                    onChange={(e) => setReaderPrefs((prev) => ({ ...prev, textColor: e.target.value, colorMode: 'custom' }))}
+                    className="h-10 w-full rounded-xl border border-slate-200"
+                  />
+                </label>
               </div>
+
+              <div className="rounded-2xl border border-slate-200 p-4" style={{ background: readerPrefs.background, color: readerPrefs.textColor }}>
+                <p className="text-xs font-bold uppercase tracking-wider opacity-70 mb-2">Xem trước</p>
+                <p
+                  style={{
+                    fontSize: `${readerPrefs.fontSize}px`,
+                    lineHeight: readerPrefs.lineHeight,
+                    fontFamily: 'var(--tf-reader-font-family)',
+                    textIndent: '1.8em',
+                  }}
+                >
+                  Đây là đoạn xem trước. Mỗi đoạn khi đọc truyện sẽ tự thụt đầu dòng để dễ theo dõi, đỡ mỏi mắt và nhìn giống bố cục sách hơn.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between gap-3 border-t border-slate-100 px-5 py-4 bg-slate-50">
+              <button
+                onClick={resetReaderPrefs}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+              >
+                Khôi phục mặc định
+              </button>
+              <button
+                onClick={() => setShowReaderPrefsModal(false)}
+                className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white hover:bg-indigo-700"
+              >
+                Xong
+              </button>
             </div>
           </div>
         </div>
