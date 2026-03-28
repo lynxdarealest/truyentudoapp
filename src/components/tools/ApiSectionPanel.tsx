@@ -184,12 +184,17 @@ export function ApiSectionPanel({
   onManualRelayTokenInputChange,
   onSaveManualRelayToken,
 }: ApiSectionPanelProps) {
+  const OPENROUTER_CUSTOM_MODEL_OPTION = '__openrouter_custom_model__';
   const [relayCode, setRelayCode] = useState('');
+  const [draftOpenRouterCustomModel, setDraftOpenRouterCustomModel] = useState(false);
+  const [storedOpenRouterCustomModels, setStoredOpenRouterCustomModels] = useState<Record<string, boolean>>({});
   const lastSyncedRelayUrlCodeRef = React.useRef('');
   const imageProviderMeta = IMAGE_AI_PROVIDER_META[imageAiProvider];
   const imageModelOptions = imageProviderMeta.models;
   const textProviderMeta = API_PROVIDER_META[effectiveDraftProvider === 'unknown' ? 'gemini' : effectiveDraftProvider];
   const selectedTextModelMeta = availableDraftModels.find((item) => item.value === apiEntryModel);
+  const listedOpenRouterModels = PROVIDER_MODEL_OPTIONS.openrouter || [];
+  const isDraftOpenRouter = effectiveDraftProvider === 'openrouter';
 
   useEffect(() => {
     try {
@@ -220,6 +225,35 @@ export function ApiSectionPanel({
       }
     }
   }, [relayUrl, relayCode]);
+
+  useEffect(() => {
+    if (!isDraftOpenRouter) {
+      setDraftOpenRouterCustomModel(false);
+      return;
+    }
+    const listed = listedOpenRouterModels.some((model) => model.value === apiEntryModel);
+    setDraftOpenRouterCustomModel(Boolean(apiEntryModel.trim()) && !listed);
+  }, [apiEntryModel, isDraftOpenRouter, listedOpenRouterModels]);
+
+  useEffect(() => {
+    setStoredOpenRouterCustomModels((prev) => {
+      const next: Record<string, boolean> = { ...prev };
+      apiVault.forEach((item) => {
+        if (item.provider !== 'openrouter') return;
+        const listed = listedOpenRouterModels.some((model) => model.value === item.model);
+        if (Boolean(item.model?.trim()) && !listed) {
+          next[item.id] = true;
+        } else if (!(item.id in next)) {
+          next[item.id] = false;
+        }
+      });
+      Object.keys(next).forEach((id) => {
+        const exists = apiVault.some((item) => item.id === id && item.provider === 'openrouter');
+        if (!exists) delete next[id];
+      });
+      return next;
+    });
+  }, [apiVault, listedOpenRouterModels]);
 
   const relayConnectUrl = useMemo(() => {
     const code = relayCode || '';
@@ -353,13 +387,29 @@ export function ApiSectionPanel({
                 />
               ) : (
                 <select
-                  value={apiEntryModel}
-                  onChange={(e) => onApiEntryModelChange(e.target.value)}
+                  value={
+                    isDraftOpenRouter && draftOpenRouterCustomModel
+                      ? OPENROUTER_CUSTOM_MODEL_OPTION
+                      : apiEntryModel
+                  }
+                  onChange={(e) => {
+                    const nextValue = e.target.value;
+                    if (isDraftOpenRouter && nextValue === OPENROUTER_CUSTOM_MODEL_OPTION) {
+                      setDraftOpenRouterCustomModel(true);
+                      onApiEntryModelChange('');
+                      return;
+                    }
+                    setDraftOpenRouterCustomModel(false);
+                    onApiEntryModelChange(nextValue);
+                  }}
                   className="tf-input"
                 >
                   {availableDraftModels.map((model) => (
                     <option key={model.value} value={model.value}>{model.label}</option>
                   ))}
+                  {isDraftOpenRouter ? (
+                    <option value={OPENROUTER_CUSTOM_MODEL_OPTION}>Tự nhập model OpenRouter…</option>
+                  ) : null}
                 </select>
               )}
               <input
@@ -369,6 +419,15 @@ export function ApiSectionPanel({
                 placeholder="Base URL (để trống nếu không dùng proxy)"
               />
             </div>
+
+            {isDraftOpenRouter && draftOpenRouterCustomModel ? (
+              <input
+                value={apiEntryModel}
+                onChange={(e) => onApiEntryModelChange(e.target.value)}
+                className="tf-input"
+                placeholder="Model OpenRouter (vd: meta-llama/llama-3.1-70b-instruct)"
+              />
+            ) : null}
 
             <textarea
               value={apiEntryText}
@@ -421,14 +480,40 @@ export function ApiSectionPanel({
                     </div>
                     <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-2 w-full md:w-auto">
                       <select
-                        value={item.model || ''}
-                        onChange={(e) => onStoredApiModelChange(item.id, e.target.value)}
+                        value={
+                          item.provider === 'openrouter' && storedOpenRouterCustomModels[item.id]
+                            ? OPENROUTER_CUSTOM_MODEL_OPTION
+                            : (item.model || '')
+                        }
+                        onChange={(e) => {
+                          const nextValue = e.target.value;
+                          if (item.provider === 'openrouter' && nextValue === OPENROUTER_CUSTOM_MODEL_OPTION) {
+                            setStoredOpenRouterCustomModels((prev) => ({ ...prev, [item.id]: true }));
+                            onStoredApiModelChange(item.id, '');
+                            return;
+                          }
+                          if (item.provider === 'openrouter') {
+                            setStoredOpenRouterCustomModels((prev) => ({ ...prev, [item.id]: false }));
+                          }
+                          onStoredApiModelChange(item.id, nextValue);
+                        }}
                         className="text-xs rounded-md border border-white/10 bg-slate-900/60 text-white px-2 py-1 min-w-0"
                       >
                         {PROVIDER_MODEL_OPTIONS[item.provider || 'gemini']?.map((m) => (
                           <option key={m.value} value={m.value}>{m.label}</option>
                         ))}
+                        {item.provider === 'openrouter' ? (
+                          <option value={OPENROUTER_CUSTOM_MODEL_OPTION}>Tự nhập model OpenRouter…</option>
+                        ) : null}
                       </select>
+                      {item.provider === 'openrouter' && storedOpenRouterCustomModels[item.id] ? (
+                        <input
+                          value={item.model || ''}
+                          onChange={(e) => onStoredApiModelChange(item.id, e.target.value)}
+                          className="text-xs rounded-md border border-white/10 bg-slate-900/60 text-white px-2 py-1 w-full sm:w-52"
+                          placeholder="Model OpenRouter tùy chỉnh"
+                        />
+                      ) : null}
                       <input
                         value={item.baseUrl || ''}
                         onChange={(e) => onStoredApiBaseUrlChange(item.id, e.target.value)}
