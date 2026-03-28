@@ -742,8 +742,7 @@ function sanitizeAccountWorkspaceForUser(snapshot: AccountWorkspaceSnapshot, use
 
 function buildWorkspacePayloadHash(snapshot: Partial<AccountWorkspaceSnapshot>): string {
   return JSON.stringify({
-    revision: Number(snapshot.revision) || 0,
-    modifiedByDeviceId: String(snapshot.modifiedByDeviceId || ''),
+    // Chỉ hash dữ liệu nghiệp vụ để tránh vòng lặp sync do metadata (revision/editLock) thay đổi liên tục.
     uiProfile: snapshot.uiProfile || null,
     uiTheme: snapshot.uiTheme || null,
     uiViewportMode: snapshot.uiViewportMode || null,
@@ -755,7 +754,6 @@ function buildWorkspacePayloadHash(snapshot: Partial<AccountWorkspaceSnapshot>):
     promptLibrary: snapshot.promptLibrary || null,
     finopsBudget: snapshot.finopsBudget || null,
     driveBinding: normalizeDriveBinding(snapshot.driveBinding) || null,
-    editLock: normalizeWorkspaceEditLock(snapshot.editLock),
   });
 }
 
@@ -10409,6 +10407,7 @@ const AppContent = () => {
     if (typeof window === 'undefined' || !backupSettings.autoSnapshotEnabled) return;
     let timer: number | null = null;
     const handler = (event: Event) => {
+      if (workspaceSyncRef.current.isHydrating) return;
       if (backupAutomationRef.current.isRestoring) return;
       const detail = (event as CustomEvent<LocalWorkspaceMeta> | null)?.detail;
       const changedSection = typeof detail?.section === 'string'
