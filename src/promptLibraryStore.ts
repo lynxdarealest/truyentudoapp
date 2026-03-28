@@ -1,4 +1,5 @@
 import { emitLocalWorkspaceChanged } from './localWorkspaceSync';
+import { getScopedStorageItem, setScopedStorageItem, shouldAllowLegacyScopeFallback } from './workspaceScope';
 
 export type PromptLibraryTabKey = 'core' | 'genre' | 'adult';
 
@@ -95,7 +96,9 @@ function sanitizePromptItems(items: unknown, fallback: PromptLibraryItem[]): Pro
 export function loadPromptLibraryState(): PromptLibraryState {
   if (typeof window === 'undefined') return DEFAULT_PROMPT_LIBRARY;
   try {
-    const raw = localStorage.getItem(PROMPT_LIBRARY_STORAGE_KEY);
+    const raw = getScopedStorageItem(PROMPT_LIBRARY_STORAGE_KEY, {
+      allowLegacyFallback: shouldAllowLegacyScopeFallback(),
+    });
     if (!raw) return DEFAULT_PROMPT_LIBRARY;
     const parsed = JSON.parse(raw) as Partial<PromptLibraryState>;
     const adultItems = sanitizePromptItems(parsed.adult, DEFAULT_PROMPT_LIBRARY.adult);
@@ -116,7 +119,7 @@ export function savePromptLibraryState(state: PromptLibraryState): void {
     genre: sanitizePromptItems(state.genre, DEFAULT_PROMPT_LIBRARY.genre),
     adult: sanitizePromptItems(state.adult, DEFAULT_PROMPT_LIBRARY.adult),
   };
-  localStorage.setItem(PROMPT_LIBRARY_STORAGE_KEY, JSON.stringify(normalized));
+  setScopedStorageItem(PROMPT_LIBRARY_STORAGE_KEY, JSON.stringify(normalized));
   emitLocalWorkspaceChanged('prompt_library');
 }
 

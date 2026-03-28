@@ -1,4 +1,5 @@
 import type { StorageBackupPayload } from './storage';
+import { getWorkspaceScopeUser } from './workspaceScope';
 
 const DB_NAME = 'truyenforge-backup-vault';
 const DB_VERSION = 1;
@@ -18,6 +19,7 @@ export interface BackupSnapshotMeta {
 
 export interface BackupSnapshot {
   id: string;
+  ownerScope: string;
   createdAt: string;
   reason: BackupReason;
   payload: StorageBackupPayload;
@@ -64,6 +66,7 @@ function makeId(): string {
 export async function createBackupSnapshot(payload: StorageBackupPayload, reason: BackupReason): Promise<BackupSnapshot> {
   const snapshot: BackupSnapshot = {
     id: makeId(),
+    ownerScope: getWorkspaceScopeUser(),
     createdAt: new Date().toISOString(),
     reason,
     payload,
@@ -87,7 +90,10 @@ export async function listBackupSnapshots(limit = MAX_SNAPSHOTS): Promise<Backup
     const request = store.getAll();
     request.onerror = () => reject(request.error || new Error('Không đọc được lịch sử backup.'));
     request.onsuccess = () => {
-      const items = Array.isArray(request.result) ? request.result as BackupSnapshot[] : [];
+      const currentScope = getWorkspaceScopeUser();
+      const items = Array.isArray(request.result)
+        ? (request.result as BackupSnapshot[]).filter((item) => item.ownerScope === currentScope || (!item.ownerScope && currentScope === 'guest'))
+        : [];
       items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
       resolve(items.slice(0, limit));
     };

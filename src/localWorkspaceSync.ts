@@ -1,3 +1,5 @@
+import { getScopedStorageItem, setScopedStorageItem, shouldAllowLegacyScopeFallback } from './workspaceScope';
+
 export const LOCAL_WORKSPACE_CHANGED_EVENT = 'truyenforge:local-workspace-changed';
 const LOCAL_WORKSPACE_META_KEY = 'truyenforge:local-workspace-meta-v1';
 
@@ -21,7 +23,7 @@ export interface LocalWorkspaceMeta {
 
 function writeMeta(meta: LocalWorkspaceMeta): void {
   if (typeof window === 'undefined') return;
-  localStorage.setItem(LOCAL_WORKSPACE_META_KEY, JSON.stringify(meta));
+  setScopedStorageItem(LOCAL_WORKSPACE_META_KEY, JSON.stringify(meta));
 }
 
 function buildEmptySections(): Partial<Record<LocalWorkspaceSection, string>> {
@@ -48,7 +50,9 @@ export function loadLocalWorkspaceMeta(): LocalWorkspaceMeta {
     };
   }
   try {
-    const raw = localStorage.getItem(LOCAL_WORKSPACE_META_KEY);
+    const raw = getScopedStorageItem(LOCAL_WORKSPACE_META_KEY, {
+      allowLegacyFallback: shouldAllowLegacyScopeFallback(),
+    });
     if (!raw) {
       return {
         updatedAt: new Date(0).toISOString(),

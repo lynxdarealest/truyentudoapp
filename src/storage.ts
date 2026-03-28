@@ -1,10 +1,20 @@
 import { loadBudgetState, saveBudgetState, type BudgetState } from './finops';
 import { loadPromptLibraryState, savePromptLibraryState } from './promptLibraryStore';
 import { emitLocalWorkspaceChanged } from './localWorkspaceSync';
+import { getScopedStorageItem, setScopedStorageItem, shouldAllowLegacyScopeFallback } from './workspaceScope';
 
 const SAFE_IMPORT_BACKUP_KEY = 'safe_import_backup_v1';
 const STORIES_BACKUP_HISTORY_KEY = 'stories_backup_history_v1';
 const STORIES_BACKUP_LIMIT = 12;
+const STORIES_KEY = 'stories';
+const CHARACTERS_KEY = 'characters';
+const AI_RULES_KEY = 'ai_rules';
+const STYLE_REFERENCES_KEY = 'style_references';
+const TRANSLATION_NAMES_KEY = 'translation_names';
+const UI_PROFILE_KEY = 'ui_profile_v1';
+const UI_THEME_KEY = 'ui_theme_v1';
+const UI_VIEWPORT_MODE_KEY = 'ui_viewport_mode_v1';
+const READER_PREFS_KEY = 'reader_prefs_v1';
 
 const normalizeDate = (value: any) => {
   if (!value) return new Date().toISOString();
@@ -73,11 +83,21 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+function getScopedRaw(baseKey: string): string | null {
+  return getScopedStorageItem(baseKey, {
+    allowLegacyFallback: shouldAllowLegacyScopeFallback(),
+  });
+}
+
+function setScopedRaw(baseKey: string, value: string): void {
+  setScopedStorageItem(baseKey, value);
+}
+
 function backupStoriesSnapshot(stories: any[]): void {
   try {
     const normalizedStories = Array.isArray(stories) ? stories.map(normalizeStory) : [];
     const nextSerialized = JSON.stringify(normalizedStories);
-    const existingRaw = localStorage.getItem(STORIES_BACKUP_HISTORY_KEY);
+    const existingRaw = getScopedRaw(STORIES_BACKUP_HISTORY_KEY);
     const existing = existingRaw ? JSON.parse(existingRaw) : [];
     const history = Array.isArray(existing) ? existing : [];
     const lastEntry = history[history.length - 1];
@@ -92,7 +112,7 @@ function backupStoriesSnapshot(stories: any[]): void {
       },
     ].slice(-STORIES_BACKUP_LIMIT);
 
-    localStorage.setItem(STORIES_BACKUP_HISTORY_KEY, JSON.stringify(nextHistory));
+    setScopedRaw(STORIES_BACKUP_HISTORY_KEY, JSON.stringify(nextHistory));
   } catch {
     // Keep primary save path alive even if backup history fails.
   }
@@ -126,10 +146,10 @@ export interface StorageBackupPayload {
 }
 
 function buildBackupPayload(): StorageBackupPayload {
-  const profileRaw = localStorage.getItem('ui_profile_v1');
-  const themeRaw = localStorage.getItem('ui_theme_v1');
-  const viewportRaw = localStorage.getItem('ui_viewport_mode_v1');
-  const readerPrefsRaw = localStorage.getItem('reader_prefs_v1');
+  const profileRaw = getScopedRaw(UI_PROFILE_KEY);
+  const themeRaw = getScopedRaw(UI_THEME_KEY);
+  const viewportRaw = getScopedRaw(UI_VIEWPORT_MODE_KEY);
+  const readerPrefsRaw = getScopedRaw(READER_PREFS_KEY);
   return {
     schemaVersion: 2,
     stories: storage.getStories(),
@@ -162,13 +182,13 @@ function downloadBackupPayload(payload: StorageBackupPayload, filename?: string)
 
 export const storage = {
   getStories: () => {
-    const data = localStorage.getItem('stories');
+    const data = getScopedRaw(STORIES_KEY);
     const parsed = data ? JSON.parse(data) : [];
     return Array.isArray(parsed) ? parsed.map(normalizeStory) : [];
   },
   getLatestStoriesBackup: () => {
     try {
-      const raw = localStorage.getItem(STORIES_BACKUP_HISTORY_KEY);
+      const raw = getScopedRaw(STORIES_BACKUP_HISTORY_KEY);
       const parsed = raw ? JSON.parse(raw) : [];
       const history = Array.isArray(parsed) ? parsed : [];
       const latest = history[history.length - 1];
@@ -179,28 +199,28 @@ export const storage = {
   },
   saveStories: (stories: any[]) => {
     const normalizedStories = Array.isArray(stories) ? stories.map(normalizeStory) : [];
-    localStorage.setItem('stories', JSON.stringify(normalizedStories));
+    setScopedRaw(STORIES_KEY, JSON.stringify(normalizedStories));
     backupStoriesSnapshot(normalizedStories);
     emitLocalWorkspaceChanged('stories');
   },
-  getCharacters: () => safeParseArray(localStorage.getItem('characters')),
+  getCharacters: () => safeParseArray(getScopedRaw(CHARACTERS_KEY)),
   saveCharacters: (characters: any[]) => {
-    localStorage.setItem('characters', JSON.stringify(characters));
+    setScopedRaw(CHARACTERS_KEY, JSON.stringify(characters));
     emitLocalWorkspaceChanged('characters');
   },
-  getAIRules: () => safeParseArray(localStorage.getItem('ai_rules')),
+  getAIRules: () => safeParseArray(getScopedRaw(AI_RULES_KEY)),
   saveAIRules: (rules: any[]) => {
-    localStorage.setItem('ai_rules', JSON.stringify(rules));
+    setScopedRaw(AI_RULES_KEY, JSON.stringify(rules));
     emitLocalWorkspaceChanged('ai_rules');
   },
-  getStyleReferences: () => safeParseArray(localStorage.getItem('style_references')),
+  getStyleReferences: () => safeParseArray(getScopedRaw(STYLE_REFERENCES_KEY)),
   saveStyleReferences: (refs: any[]) => {
-    localStorage.setItem('style_references', JSON.stringify(refs));
+    setScopedRaw(STYLE_REFERENCES_KEY, JSON.stringify(refs));
     emitLocalWorkspaceChanged('style_references');
   },
-  getTranslationNames: () => safeParseArray(localStorage.getItem('translation_names')),
+  getTranslationNames: () => safeParseArray(getScopedRaw(TRANSLATION_NAMES_KEY)),
   saveTranslationNames: (names: any[]) => {
-    localStorage.setItem('translation_names', JSON.stringify(names));
+    setScopedRaw(TRANSLATION_NAMES_KEY, JSON.stringify(names));
     emitLocalWorkspaceChanged('translation_names');
   },
   getApiKeys: () => safeParseArray(localStorage.getItem('api_keys')),
@@ -232,13 +252,13 @@ export const storage = {
       style_references: storage.getStyleReferences(),
       translation_names: storage.getTranslationNames(),
       prompt_library: loadPromptLibraryState(),
-      ui_profile: localStorage.getItem('ui_profile_v1'),
-      ui_theme: localStorage.getItem('ui_theme_v1'),
-      ui_viewport_mode: localStorage.getItem('ui_viewport_mode_v1'),
-      reader_prefs: localStorage.getItem('reader_prefs_v1'),
+      ui_profile: getScopedRaw(UI_PROFILE_KEY),
+      ui_theme: getScopedRaw(UI_THEME_KEY),
+      ui_viewport_mode: getScopedRaw(UI_VIEWPORT_MODE_KEY),
+      reader_prefs: getScopedRaw(READER_PREFS_KEY),
       finops_budget: loadBudgetState(),
     };
-    localStorage.setItem(SAFE_IMPORT_BACKUP_KEY, JSON.stringify(backupSnapshot));
+    setScopedRaw(SAFE_IMPORT_BACKUP_KEY, JSON.stringify(backupSnapshot));
 
     const restoredSections: string[] = [];
     const skippedSections: string[] = [];
@@ -272,19 +292,19 @@ export const storage = {
       restoredSections.push('prompt_library');
     }
     if (isPlainObject(jsonData.ui_profile)) {
-      localStorage.setItem('ui_profile_v1', JSON.stringify(jsonData.ui_profile));
+      setScopedRaw(UI_PROFILE_KEY, JSON.stringify(jsonData.ui_profile));
       restoredSections.push('ui_profile');
     }
     if (typeof jsonData.ui_theme === 'string') {
-      localStorage.setItem('ui_theme_v1', jsonData.ui_theme);
+      setScopedRaw(UI_THEME_KEY, jsonData.ui_theme);
       restoredSections.push('ui_theme');
     }
     if (typeof jsonData.ui_viewport_mode === 'string') {
-      localStorage.setItem('ui_viewport_mode_v1', jsonData.ui_viewport_mode);
+      setScopedRaw(UI_VIEWPORT_MODE_KEY, jsonData.ui_viewport_mode);
       restoredSections.push('ui_viewport_mode');
     }
     if (isPlainObject(jsonData.reader_prefs)) {
-      localStorage.setItem('reader_prefs_v1', JSON.stringify(jsonData.reader_prefs));
+      setScopedRaw(READER_PREFS_KEY, JSON.stringify(jsonData.reader_prefs));
       restoredSections.push('reader_prefs');
     }
     if (isPlainObject(jsonData.finops_budget)) {

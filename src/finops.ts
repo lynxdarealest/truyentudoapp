@@ -1,4 +1,5 @@
 import { emitLocalWorkspaceChanged } from './localWorkspaceSync';
+import { getScopedStorageItem, setScopedStorageItem, shouldAllowLegacyScopeFallback } from './workspaceScope';
 
 export type AiProvider = 'openai' | 'anthropic' | 'gemini' | 'custom';
 
@@ -41,7 +42,9 @@ function nowIso(): string {
 
 export function loadBudgetState(): BudgetState {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = getScopedStorageItem(STORAGE_KEY, {
+      allowLegacyFallback: shouldAllowLegacyScopeFallback(),
+    });
     if (!raw) {
       return {
         monthlyBudgetUsd: 20,
@@ -100,7 +103,7 @@ export function loadBudgetState(): BudgetState {
 }
 
 export function saveBudgetState(state: BudgetState): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  setScopedStorageItem(STORAGE_KEY, JSON.stringify(state));
   emitLocalWorkspaceChanged('finops_budget');
 }
 

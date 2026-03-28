@@ -61,6 +61,7 @@ import { loadServerWorkspace, saveQaReport, saveServerWorkspace, SUPABASE_STORAG
 import { IMAGE_AI_PROVIDER_META, getDefaultImageAiModel, type ImageAiProvider } from './imageAiProviders';
 import { createBackupSnapshot, getBackupSnapshot, listBackupSnapshots, updateBackupSnapshotDriveMeta, type BackupReason, type BackupSnapshot } from './backupVault';
 import { buildDriveBackupFilename, connectGoogleDriveInteractive, disconnectGoogleDrive, ensureGoogleDriveAccessToken, hasGoogleDriveBackupConfig, hasUsableDriveToken, loadStoredDriveAuth, uploadBackupSnapshotToDrive, type GoogleDriveAuthState, type GoogleDriveAccountProfile } from './googleDriveBackups';
+import { getScopedStorageItem, getWorkspaceScopeUser, setScopedStorageItem, setWorkspaceScopeUser, shouldAllowLegacyScopeFallback } from './workspaceScope';
 
 import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { handleRelayMessage, relayGenerateContent, setRelaySender, notifyRelayDisconnected } from './relayBridge';
@@ -496,7 +497,9 @@ function buildBackupWarningMessage(latestBackupAt: string, staleAfterHours: numb
 
 function loadUiProfile(defaultName?: string, defaultAvatar?: string): UiProfile {
   try {
-    const raw = localStorage.getItem(UI_PROFILE_KEY);
+    const raw = getScopedStorageItem(UI_PROFILE_KEY, {
+      allowLegacyFallback: shouldAllowLegacyScopeFallback(),
+    });
     const parsed = raw ? (JSON.parse(raw) as Partial<UiProfile>) : {};
     return {
       displayName: parsed.displayName || defaultName || 'Người dùng',
@@ -511,13 +514,15 @@ function loadUiProfile(defaultName?: string, defaultAvatar?: string): UiProfile 
 }
 
 function saveUiProfile(profile: UiProfile): void {
-  localStorage.setItem(UI_PROFILE_KEY, JSON.stringify(profile));
+  setScopedStorageItem(UI_PROFILE_KEY, JSON.stringify(profile));
   emitLocalWorkspaceChanged('ui_profile');
 }
 
 function loadReaderPrefs(): ReaderPrefs {
   try {
-    const raw = localStorage.getItem(READER_PREFS_KEY);
+    const raw = getScopedStorageItem(READER_PREFS_KEY, {
+      allowLegacyFallback: shouldAllowLegacyScopeFallback(),
+    });
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<ReaderPrefs>;
       return {
@@ -541,7 +546,7 @@ function loadReaderPrefs(): ReaderPrefs {
 }
 
 function saveReaderPrefs(prefs: ReaderPrefs): void {
-  localStorage.setItem(READER_PREFS_KEY, JSON.stringify(prefs));
+  setScopedStorageItem(READER_PREFS_KEY, JSON.stringify(prefs));
   emitLocalWorkspaceChanged('ui_theme'); // reuse event for autosync
 }
 
@@ -587,22 +592,26 @@ async function resizeAvatarFile(file: File): Promise<string> {
 }
 
 function loadThemeMode(): ThemeMode {
-  const raw = localStorage.getItem(UI_THEME_KEY);
+  const raw = getScopedStorageItem(UI_THEME_KEY, {
+    allowLegacyFallback: shouldAllowLegacyScopeFallback(),
+  });
   return raw === 'dark' ? 'dark' : 'light';
 }
 
 function saveThemeMode(mode: ThemeMode): void {
-  localStorage.setItem(UI_THEME_KEY, mode);
+  setScopedStorageItem(UI_THEME_KEY, mode);
   emitLocalWorkspaceChanged('ui_theme');
 }
 
 function loadViewportMode(): ViewportMode {
-  const raw = localStorage.getItem(UI_VIEWPORT_MODE_KEY);
+  const raw = getScopedStorageItem(UI_VIEWPORT_MODE_KEY, {
+    allowLegacyFallback: shouldAllowLegacyScopeFallback(),
+  });
   return raw === 'mobile' ? 'mobile' : 'desktop';
 }
 
 function saveViewportMode(mode: ViewportMode): void {
-  localStorage.setItem(UI_VIEWPORT_MODE_KEY, mode);
+  setScopedStorageItem(UI_VIEWPORT_MODE_KEY, mode);
   emitLocalWorkspaceChanged('ui_viewport_mode');
 }
 
@@ -621,6 +630,32 @@ interface AccountWorkspaceSnapshot {
   promptLibrary: PromptLibraryState;
   finopsBudget: ReturnType<typeof loadBudgetState>;
   driveBinding?: GoogleDriveBinding | null;
+}
+
+function normalizeOwnedRows<T extends Record<string, unknown>>(rows: T[], userId?: string): T[] {
+  if (!userId) return rows;
+  return (Array.isArray(rows) ? rows : [])
+    .map((row) => {
+      if (!row || typeof row !== 'object') return null;
+      const authorId = String(row.authorId || '').trim();
+      if (authorId && authorId !== userId) return null;
+      return {
+        ...row,
+        authorId: authorId || userId,
+      } as T;
+    })
+    .filter((row): row is T => Boolean(row));
+}
+
+function sanitizeAccountWorkspaceForUser(snapshot: AccountWorkspaceSnapshot, userId?: string): AccountWorkspaceSnapshot {
+  if (!userId) return snapshot;
+  return {
+    ...snapshot,
+    stories: normalizeOwnedRows(snapshot.stories, userId) as Story[],
+    characters: normalizeOwnedRows(snapshot.characters, userId) as Character[],
+    aiRules: normalizeOwnedRows(snapshot.aiRules, userId) as AIRule[],
+    translationNames: normalizeOwnedRows(snapshot.translationNames as Record<string, unknown>[], userId),
+  };
 }
 
 const ACCOUNT_WORKSPACE_BINDINGS = [
@@ -809,23 +844,26 @@ function mergeAccountWorkspaceSnapshots(
   return merged;
 }
 
-function storeWorkspaceRecoverySnapshot(snapshot: AccountWorkspaceSnapshot, source: string): void {
+function storeWorkspaceRecoverySnapshot(snapshot: AccountWorkspaceSnapshot, source: string, userId?: string): void {
   if (typeof window === 'undefined') return;
   try {
-    localStorage.setItem(WORKSPACE_RECOVERY_KEY, JSON.stringify({
+    setScopedStorageItem(WORKSPACE_RECOVERY_KEY, JSON.stringify({
       source,
       savedAt: new Date().toISOString(),
       payload: snapshot,
-    }));
+    }), userId);
   } catch {
     // Skip recovery cache if storage is unavailable.
   }
 }
 
-function loadWorkspaceRecoverySnapshot(): AccountWorkspaceSnapshot | null {
+function loadWorkspaceRecoverySnapshot(userId?: string): AccountWorkspaceSnapshot | null {
   if (typeof window === 'undefined') return null;
   try {
-    const raw = localStorage.getItem(WORKSPACE_RECOVERY_KEY);
+    const raw = getScopedStorageItem(WORKSPACE_RECOVERY_KEY, {
+      allowLegacyFallback: shouldAllowLegacyScopeFallback(userId || getWorkspaceScopeUser()),
+      scopeUser: userId,
+    });
     if (!raw) return null;
     const parsed = JSON.parse(raw) as { payload?: AccountWorkspaceSnapshot };
     if (parsed?.payload && typeof parsed.payload === 'object') {
@@ -839,7 +877,7 @@ function loadWorkspaceRecoverySnapshot(): AccountWorkspaceSnapshot | null {
 
 function buildAccountWorkspaceSnapshot(defaultName?: string, defaultAvatar?: string, userId?: string): AccountWorkspaceSnapshot {
   const meta = loadLocalWorkspaceMeta();
-  return {
+  return sanitizeAccountWorkspaceForUser({
     schemaVersion: 1,
     updatedAt: meta.updatedAt || new Date().toISOString(),
     sectionUpdatedAt: buildSectionUpdatedAt(meta),
@@ -854,10 +892,29 @@ function buildAccountWorkspaceSnapshot(defaultName?: string, defaultAvatar?: str
     promptLibrary: loadPromptLibraryState(),
     finopsBudget: loadBudgetState(),
     driveBinding: loadDriveBindingForUser(userId),
-  };
+  }, userId);
 }
 
 function applyAccountWorkspaceSnapshot(snapshot: Partial<AccountWorkspaceSnapshot>, defaultName?: string, defaultAvatar?: string, userId?: string): void {
+  const sanitizedSnapshot = snapshot.stories || snapshot.characters || snapshot.aiRules || snapshot.translationNames
+    ? sanitizeAccountWorkspaceForUser({
+        schemaVersion: Number(snapshot.schemaVersion) || 1,
+        updatedAt: String(snapshot.updatedAt || new Date().toISOString()),
+        sectionUpdatedAt: snapshot.sectionUpdatedAt || {},
+        uiProfile: (snapshot.uiProfile || loadUiProfile(defaultName, defaultAvatar)) as UiProfile,
+        uiTheme: (snapshot.uiTheme === 'dark' ? 'dark' : 'light') as ThemeMode,
+        uiViewportMode: (snapshot.uiViewportMode === 'mobile' ? 'mobile' : 'desktop') as ViewportMode,
+        stories: Array.isArray(snapshot.stories) ? snapshot.stories : [],
+        characters: Array.isArray(snapshot.characters) ? snapshot.characters : [],
+        aiRules: Array.isArray(snapshot.aiRules) ? snapshot.aiRules : [],
+        styleReferences: Array.isArray(snapshot.styleReferences) ? snapshot.styleReferences : [],
+        translationNames: Array.isArray(snapshot.translationNames) ? snapshot.translationNames : [],
+        promptLibrary: (snapshot.promptLibrary || loadPromptLibraryState()) as PromptLibraryState,
+        finopsBudget: (snapshot.finopsBudget || loadBudgetState()) as ReturnType<typeof loadBudgetState>,
+        driveBinding: snapshot.driveBinding,
+      }, userId)
+    : null;
+
   const nextProfileRaw = snapshot.uiProfile;
   if (nextProfileRaw && typeof nextProfileRaw === 'object') {
     saveUiProfile({
@@ -872,19 +929,19 @@ function applyAccountWorkspaceSnapshot(snapshot: Partial<AccountWorkspaceSnapsho
     saveViewportMode(snapshot.uiViewportMode);
   }
   if (Array.isArray(snapshot.stories)) {
-    storage.saveStories(snapshot.stories);
+    storage.saveStories(sanitizedSnapshot?.stories || snapshot.stories);
   }
   if (Array.isArray(snapshot.characters)) {
-    storage.saveCharacters(snapshot.characters);
+    storage.saveCharacters(sanitizedSnapshot?.characters || snapshot.characters);
   }
   if (Array.isArray(snapshot.aiRules)) {
-    storage.saveAIRules(snapshot.aiRules);
+    storage.saveAIRules(sanitizedSnapshot?.aiRules || snapshot.aiRules);
   }
   if (Array.isArray(snapshot.styleReferences)) {
     storage.saveStyleReferences(snapshot.styleReferences);
   }
   if (Array.isArray(snapshot.translationNames)) {
-    storage.saveTranslationNames(snapshot.translationNames);
+    storage.saveTranslationNames(sanitizedSnapshot?.translationNames || snapshot.translationNames);
   }
   if (snapshot.promptLibrary && typeof snapshot.promptLibrary === 'object') {
     savePromptLibraryState(snapshot.promptLibrary);
@@ -9201,7 +9258,7 @@ const AppContent = () => {
     lastErrorNotifiedAt: 0,
     lastSyncedAt: '',
   });
-  const localBackupRestoreAttemptedRef = useRef(false);
+  const localBackupRestoreAttemptedRef = useRef<Set<string>>(new Set());
   const backupAutomationRef = useRef({
     isRestoring: false,
     lastFingerprint: '',
@@ -9210,6 +9267,7 @@ const AppContent = () => {
   const scrollPositionsRef = useRef<Record<string, number>>({});
   const prevLocationKeyRef = useRef<string>('');
   const lastHomeBackAttemptRef = useRef(0);
+  const workspaceScopeRef = useRef<string>(getWorkspaceScopeUser());
 
   const navigate = useNavigate();
   const location = useLocation();
@@ -9420,7 +9478,7 @@ const AppContent = () => {
       updatedAt: typeof baseSnapshot.updatedAt === 'string' ? baseSnapshot.updatedAt : new Date().toISOString(),
       driveBinding: binding,
     };
-    await saveServerWorkspace(user.uid, nextSnapshot);
+    await saveServerWorkspace(user.uid, sanitizeAccountWorkspaceForUser(nextSnapshot, user.uid));
   }, [hasSupabase, user]);
 
   const uploadSnapshotToDrive = useCallback(async (
@@ -9854,15 +9912,15 @@ const AppContent = () => {
               : (remoteSnapshot.updatedAt || new Date(0).toISOString()),
           }
         : null;
-      const mergedSnapshot = remotePayload
+      const mergedSnapshot = sanitizeAccountWorkspaceForUser(remotePayload
         ? mergeAccountWorkspaceSnapshots(localSnapshot, remotePayload)
-        : localSnapshot;
+        : localSnapshot, user.uid);
 
       applyAccountWorkspaceSnapshot(mergedSnapshot, user.displayName || undefined, user.photoURL || undefined, user.uid);
       markLocalWorkspaceHydrated(mergedSnapshot.updatedAt, 'manual-sync', mergedSnapshot.sectionUpdatedAt);
       refreshWorkspaceUiFromStorage();
       await saveServerWorkspace(user.uid, mergedSnapshot);
-      storeWorkspaceRecoverySnapshot(mergedSnapshot, 'manual-sync');
+      storeWorkspaceRecoverySnapshot(mergedSnapshot, 'manual-sync', user.uid);
       workspaceSyncRef.current.lastSerialized = JSON.stringify(mergedSnapshot);
       const syncedAt = new Date().toISOString();
       workspaceSyncRef.current.lastSyncedAt = syncedAt;
@@ -9901,14 +9959,29 @@ const AppContent = () => {
   }, [backupSettings.lastManualSyncAt, user?.uid]);
 
   useEffect(() => {
-    setDriveBinding(loadDriveBindingForUser(user?.uid));
-    setDriveAuth(loadStoredDriveAuth());
-  }, [user?.uid]);
+    const nextScope = setWorkspaceScopeUser(user?.uid || 'guest');
+    const scopeChanged = workspaceScopeRef.current !== nextScope;
+    workspaceScopeRef.current = nextScope;
 
-  useEffect(() => {
+    setDriveBinding(loadDriveBindingForUser(user?.uid));
     void refreshBackupHistory();
     setDriveAuth(loadStoredDriveAuth());
-  }, [refreshBackupHistory]);
+
+    if (!scopeChanged) return;
+
+    workspaceSyncRef.current.lastSerialized = '';
+    workspaceSyncRef.current.isHydrating = false;
+    workspaceSyncRef.current.lastErrorNotifiedAt = 0;
+    workspaceSyncRef.current.lastSyncedAt = '';
+
+    backupAutomationRef.current.lastFingerprint = '';
+    backupAutomationRef.current.startupSnapshotDone = false;
+    backupAutomationRef.current.isRestoring = false;
+
+    setBackupHistoryReady(false);
+    setAccountLastSyncedAt('');
+    refreshWorkspaceUiFromStorage();
+  }, [refreshBackupHistory, refreshWorkspaceUiFromStorage, user?.uid]);
 
   useEffect(() => {
     if (!backupHistoryReady || !backupSettings.autoSnapshotEnabled || backupAutomationRef.current.startupSnapshotDone) return;
@@ -10232,8 +10305,9 @@ const AppContent = () => {
   }, []);
 
   useEffect(() => {
-    if (localBackupRestoreAttemptedRef.current) return;
-    localBackupRestoreAttemptedRef.current = true;
+    const scope = setWorkspaceScopeUser(user?.uid || 'guest');
+    if (localBackupRestoreAttemptedRef.current.has(scope)) return;
+    localBackupRestoreAttemptedRef.current.add(scope);
     const currentStories = storage.getStories();
     if (currentStories.length > 0) return;
     const latestBackup = storage.getLatestStoriesBackup();
@@ -10245,7 +10319,7 @@ const AppContent = () => {
       groupKey: 'local-story-backup-restore',
       timeoutMs: 5600,
     });
-  }, []);
+  }, [user?.uid]);
 
   const syncWorkspaceToAccount = useCallback(async () => {
     if (!ACCOUNT_CLOUD_AUTOSYNC_ENABLED) return;
@@ -10260,13 +10334,13 @@ const AppContent = () => {
             : (remoteSnapshot.updatedAt || new Date(0).toISOString()),
         }
       : null;
-  const mergedSnapshot = remotePayload
-    ? mergeAccountWorkspaceSnapshots(localSnapshot, remotePayload)
-    : localSnapshot;
+    const mergedSnapshot = sanitizeAccountWorkspaceForUser(remotePayload
+      ? mergeAccountWorkspaceSnapshots(localSnapshot, remotePayload)
+      : localSnapshot, user.uid);
 
     // Nếu cả local + remote đều trống phần stories/characters nhưng có recovery, ưu tiên recovery
     if ((!mergedSnapshot.stories?.length || mergedSnapshot.stories.length === 0) && !mergedSnapshot.characters?.length) {
-      const recovery = loadWorkspaceRecoverySnapshot();
+      const recovery = loadWorkspaceRecoverySnapshot(user.uid);
       if (recovery && Array.isArray(recovery.stories) && recovery.stories.length > 0) {
         mergedSnapshot.stories = recovery.stories;
         mergedSnapshot.sectionUpdatedAt.stories = recovery.sectionUpdatedAt?.stories || recovery.updatedAt || new Date().toISOString();
@@ -10301,7 +10375,7 @@ const AppContent = () => {
     }
 
     await saveServerWorkspace(user.uid, mergedSnapshot);
-    storeWorkspaceRecoverySnapshot(mergedSnapshot, 'account-sync-save');
+    storeWorkspaceRecoverySnapshot(mergedSnapshot, 'account-sync-save', user.uid);
     workspaceSyncRef.current.lastSerialized = serialized;
     workspaceSyncRef.current.lastSyncedAt = new Date().toISOString();
     setAccountLastSyncedAt(workspaceSyncRef.current.lastSyncedAt);
@@ -10324,12 +10398,12 @@ const AppContent = () => {
         if (cancelled) return;
 
         if (!remoteSnapshot.payload) {
-          const recovery = loadWorkspaceRecoverySnapshot();
-          const snapshotToSave = recovery && Array.isArray(recovery.stories) && recovery.stories.length > 0
+          const recovery = loadWorkspaceRecoverySnapshot(user.uid);
+          const snapshotToSave = sanitizeAccountWorkspaceForUser(recovery && Array.isArray(recovery.stories) && recovery.stories.length > 0
             ? mergeAccountWorkspaceSnapshots(localSnapshot, recovery)
-            : localSnapshot;
+            : localSnapshot, user.uid);
           await saveServerWorkspace(user.uid, snapshotToSave);
-          storeWorkspaceRecoverySnapshot(snapshotToSave, 'account-sync-bootstrap');
+          storeWorkspaceRecoverySnapshot(snapshotToSave, 'account-sync-bootstrap', user.uid);
           workspaceSyncRef.current.lastSerialized = JSON.stringify(snapshotToSave);
           if (recovery && recovery.stories?.length) {
             applyAccountWorkspaceSnapshot(snapshotToSave, user.displayName || undefined, user.photoURL || undefined, user.uid);
@@ -10349,12 +10423,18 @@ const AppContent = () => {
         const remoteUpdatedAt = typeof remoteData.updatedAt === 'string'
           ? remoteData.updatedAt
           : (remoteSnapshot.updatedAt || new Date(0).toISOString());
-        let mergedSnapshot = mergeAccountWorkspaceSnapshots(localSnapshot, { ...remoteData, updatedAt: remoteUpdatedAt });
+        let mergedSnapshot = sanitizeAccountWorkspaceForUser(
+          mergeAccountWorkspaceSnapshots(localSnapshot, { ...remoteData, updatedAt: remoteUpdatedAt }),
+          user.uid,
+        );
 
         if ((!mergedSnapshot.stories?.length || mergedSnapshot.stories.length === 0) && !mergedSnapshot.characters?.length) {
-          const recovery = loadWorkspaceRecoverySnapshot();
+          const recovery = loadWorkspaceRecoverySnapshot(user.uid);
           if (recovery && Array.isArray(recovery.stories) && recovery.stories.length > 0) {
-            mergedSnapshot = mergeAccountWorkspaceSnapshots(mergedSnapshot, recovery);
+            mergedSnapshot = sanitizeAccountWorkspaceForUser(
+              mergeAccountWorkspaceSnapshots(mergedSnapshot, recovery),
+              user.uid,
+            );
             notifyApp({
               tone: 'warn',
               message: 'Phát hiện dữ liệu trống, đã khôi phục truyện từ bản sao lưu cục bộ.',
@@ -10369,7 +10449,7 @@ const AppContent = () => {
           setProfile(loadUiProfile(user.displayName || undefined, user.photoURL || undefined));
           setThemeMode(loadThemeMode());
           setViewportMode(loadViewportMode());
-          storeWorkspaceRecoverySnapshot(mergedSnapshot, 'account-sync-hydrate');
+          storeWorkspaceRecoverySnapshot(mergedSnapshot, 'account-sync-hydrate', user.uid);
           workspaceSyncRef.current.lastSerialized = JSON.stringify(buildAccountWorkspaceSnapshot(user.displayName || undefined, user.photoURL || undefined, user.uid));
           notifyApp({
             tone: 'info',
@@ -10379,7 +10459,7 @@ const AppContent = () => {
         }
 
         await saveServerWorkspace(user.uid, mergedSnapshot);
-        storeWorkspaceRecoverySnapshot(mergedSnapshot, 'account-sync-save-after-hydrate');
+        storeWorkspaceRecoverySnapshot(mergedSnapshot, 'account-sync-save-after-hydrate', user.uid);
         workspaceSyncRef.current.lastSerialized = mergedSerialized;
         workspaceSyncRef.current.lastSyncedAt = new Date().toISOString();
         setAccountLastSyncedAt(workspaceSyncRef.current.lastSyncedAt);
