@@ -298,7 +298,9 @@ const UI_VIEWPORT_MODE_KEY = 'ui_viewport_mode_v1';
 const READER_PREFS_KEY = 'reader_prefs_v1';
 const STORIES_UPDATED_EVENT = 'stories:updated';
 const WORKSPACE_RECOVERY_KEY = 'truyenforge:workspace-recovery-v1';
-const ACCOUNT_CLOUD_AUTOSYNC_ENABLED = false;
+const ACCOUNT_CLOUD_AUTOSYNC_ENABLED = String(import.meta.env.VITE_ACCOUNT_AUTOSYNC ?? '1').trim() !== '0';
+const ACCOUNT_CLOUD_AUTOSYNC_DEBOUNCE_MS = 1200;
+const ACCOUNT_CLOUD_AUTOSYNC_INTERVAL_MS = 30000;
 
 type ThemeMode = 'light' | 'dark';
 type ViewportMode = 'desktop' | 'mobile';
@@ -634,6 +636,10 @@ const ACCOUNT_WORKSPACE_BINDINGS = [
   { section: 'finops_budget', key: 'finopsBudget' },
 ] as const satisfies ReadonlyArray<{ section: LocalWorkspaceSection; key: keyof AccountWorkspaceSnapshot }>;
 
+function shouldNotifyAccountSyncError(lastNotifiedAt: number, cooldownMs = 60_000): boolean {
+  return Date.now() - lastNotifiedAt >= cooldownMs;
+}
+
 function toTimestampMs(value: unknown): number {
   if (typeof value !== 'string' || !value.trim()) return 0;
   const parsed = new Date(value);
@@ -714,16 +720,20 @@ function chooseWorkspaceSectionValue<T>(
 
   const localMs = toTimestampMs(localTimestamp);
   const remoteMs = toTimestampMs(remoteTimestamp);
+  const localPopulated = isSectionPopulated(section, localValue);
+  const remotePopulated = isSectionPopulated(section, remoteValue);
 
   if (remoteMs > localMs) {
+    // Bảo vệ dữ liệu local đang có: không để bản remote rỗng nhưng timestamp mới hơn ghi đè.
+    if (!remotePopulated && localPopulated) {
+      return { value: localValue, updatedAt: localTimestamp };
+    }
     return { value: remoteValue, updatedAt: remoteTimestamp };
   }
   if (localMs > remoteMs) {
     return { value: localValue, updatedAt: localTimestamp };
   }
 
-  const localPopulated = isSectionPopulated(section, localValue);
-  const remotePopulated = isSectionPopulated(section, remoteValue);
   if (remotePopulated && !localPopulated) {
     return { value: remoteValue, updatedAt: remoteTimestamp || localTimestamp };
   }
@@ -9187,6 +9197,8 @@ const AppContent = () => {
   const workspaceSyncRef = useRef({
     isHydrating: false,
     lastSerialized: '',
+    lastErrorNotifiedAt: 0,
+    lastSyncedAt: '',
   });
   const localBackupRestoreAttemptedRef = useRef(false);
   const backupAutomationRef = useRef({
@@ -10279,6 +10291,7 @@ const AppContent = () => {
     await saveServerWorkspace(user.uid, mergedSnapshot);
     storeWorkspaceRecoverySnapshot(mergedSnapshot, 'account-sync-save');
     workspaceSyncRef.current.lastSerialized = serialized;
+    workspaceSyncRef.current.lastSyncedAt = new Date().toISOString();
   }, [user, hasSupabase]);
 
   useEffect(() => {
@@ -10355,6 +10368,7 @@ const AppContent = () => {
         await saveServerWorkspace(user.uid, mergedSnapshot);
         storeWorkspaceRecoverySnapshot(mergedSnapshot, 'account-sync-save-after-hydrate');
         workspaceSyncRef.current.lastSerialized = mergedSerialized;
+        workspaceSyncRef.current.lastSyncedAt = new Date().toISOString();
       } catch (error) {
         console.warn('Không thể đồng bộ workspace theo tài khoản.', error);
         notifyApp({
@@ -10384,6 +10398,8 @@ const AppContent = () => {
       syncTimer = window.setTimeout(() => {
         void syncWorkspaceToAccount().catch((error) => {
           console.warn('Tự động lưu workspace lên tài khoản thất bại.', error);
+          if (!shouldNotifyAccountSyncError(workspaceSyncRef.current.lastErrorNotifiedAt)) return;
+          workspaceSyncRef.current.lastErrorNotifiedAt = Date.now();
           notifyApp({
             tone: 'warn',
             message: 'Tự động đồng bộ lên tài khoản bị lỗi, dữ liệu vẫn đang ở máy này.',
@@ -10392,7 +10408,7 @@ const AppContent = () => {
             timeoutMs: 5200,
           });
         });
-      }, 700);
+      }, ACCOUNT_CLOUD_AUTOSYNC_DEBOUNCE_MS);
     };
     window.addEventListener(LOCAL_WORKSPACE_CHANGED_EVENT, handler as EventListener);
     return () => {
@@ -10400,6 +10416,40 @@ const AppContent = () => {
       window.removeEventListener(LOCAL_WORKSPACE_CHANGED_EVENT, handler as EventListener);
     };
   }, [syncWorkspaceToAccount, user, hasSupabase]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !user || !hasSupabase || !ACCOUNT_CLOUD_AUTOSYNC_ENABLED) return;
+    let cancelled = false;
+    const runPeriodicSync = () => {
+      if (cancelled || workspaceSyncRef.current.isHydrating) return;
+      void syncWorkspaceToAccount().catch((error) => {
+        console.warn('Đồng bộ định kỳ với tài khoản thất bại.', error);
+        if (!shouldNotifyAccountSyncError(workspaceSyncRef.current.lastErrorNotifiedAt, 120_000)) return;
+        workspaceSyncRef.current.lastErrorNotifiedAt = Date.now();
+        notifyApp({
+          tone: 'warn',
+          message: 'Đồng bộ định kỳ với tài khoản tạm thời gặp lỗi.',
+          detail: error instanceof Error ? error.message : undefined,
+          groupKey: 'account-sync-periodic-failed',
+          timeoutMs: 4800,
+        });
+      });
+    };
+
+    const interval = window.setInterval(runPeriodicSync, ACCOUNT_CLOUD_AUTOSYNC_INTERVAL_MS);
+    const visibilityHandler = () => {
+      if (document.visibilityState === 'visible') {
+        runPeriodicSync();
+      }
+    };
+    document.addEventListener('visibilitychange', visibilityHandler);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', visibilityHandler);
+    };
+  }, [hasSupabase, syncWorkspaceToAccount, user]);
 
   useEffect(() => {
     if (!user || !hasSupabase || ACCOUNT_CLOUD_AUTOSYNC_ENABLED) return;
@@ -11874,6 +11924,13 @@ CHỈ trả JSON thuần, không bọc markdown.
   const driveConfigured = hasGoogleDriveBackupConfig();
   const driveConnected = hasUsableDriveToken(driveAuth);
   const latestBackupStoredOnDrive = latestBackup?.drive?.status === 'uploaded';
+  const accountAutosyncLabel = !user
+    ? 'Cần đăng nhập'
+    : !hasSupabase
+      ? 'Thiếu cấu hình Supabase'
+      : ACCOUNT_CLOUD_AUTOSYNC_ENABLED
+        ? 'Đang bật'
+        : 'Đang tắt';
 
   const routeTransitionClass = navigationType === 'POP' ? 'tf-route-pop' : 'tf-route-push';
 
@@ -12337,7 +12394,7 @@ CHỈ trả JSON thuần, không bọc markdown.
                 <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Sao lưu & khôi phục</p>
                 <h3 className="text-2xl font-bold">Sao lưu và khôi phục dữ liệu</h3>
                 <p className="text-sm text-slate-400 max-w-3xl">
-                  Đây là nơi giữ cho công sức của bạn không biến mất vô lý. Bạn có thể lưu bản sao ngay trên thiết bị, giữ một bản duy nhất trên Google Drive và chỉ đồng bộ với tài khoản khi chính bạn quyết định.
+                  Đây là nơi giữ cho công sức của bạn không biến mất vô lý. Dữ liệu sẽ tự đồng bộ với tài khoản Supabase khi bạn đăng nhập, đồng thời bạn vẫn có thể giữ thêm bản sao trên thiết bị và Google Drive.
                 </p>
               </div>
               <button
@@ -12407,6 +12464,19 @@ CHỈ trả JSON thuần, không bọc markdown.
                     </button>
                   ) : null}
                 </div>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-slate-900/50 p-4 space-y-2 md:col-span-2">
+                <p className="text-xs uppercase tracking-[0.14em] text-slate-400">Đồng bộ tài khoản Supabase</p>
+                <p className="text-lg font-bold text-white">{accountAutosyncLabel}</p>
+                <p className="text-sm text-slate-400">
+                  {!user
+                    ? 'Đăng nhập để bật autosync tài khoản.'
+                    : !hasSupabase
+                      ? 'Thiếu VITE_SUPABASE_URL hoặc VITE_SUPABASE_ANON_KEY nên chưa thể autosync.'
+                      : ACCOUNT_CLOUD_AUTOSYNC_ENABLED
+                        ? 'Mỗi lần dữ liệu thay đổi, app sẽ tự đẩy lên Supabase theo lô và đồng bộ định kỳ để tránh mất dữ liệu.'
+                        : 'Autosync đã tắt qua cấu hình môi trường.'}
+                </p>
               </div>
             </div>
 
