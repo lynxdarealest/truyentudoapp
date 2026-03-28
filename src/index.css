@@ -1272,6 +1272,11 @@ body {
     margin-bottom: 1.5rem;
   }
 
+  .story-detail h1.text-4xl {
+    font-size: 1.9rem;
+    line-height: 1.2;
+  }
+
   .chapter-nav {
     flex-direction: column;
     gap: 0.75rem;
@@ -1280,6 +1285,20 @@ body {
   .chapter-nav button {
     width: 100%;
     justify-content: center;
+  }
+
+  .chapter-row {
+    flex-direction: column;
+    align-items: stretch !important;
+    gap: 0.65rem;
+  }
+
+  .chapter-row > div {
+    width: 100%;
+  }
+
+  .chapter-row > svg {
+    align-self: flex-end;
   }
 
   .app-navbar {
@@ -1487,5 +1506,12 @@ body {
   .tf-break-mobile {
     overflow-wrap: anywhere !important;
     word-break: break-word !important;
+  }
+
+  .story-detail button[title="Cài đặt đọc"] {
+    right: 0.9rem !important;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 0.9rem) !important;
+    padding: 0.65rem 0.85rem !important;
+    border-radius: 0.9rem !important;
   }
 }

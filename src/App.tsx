@@ -6565,12 +6565,6 @@ const StoryDetail = ({
                 </span>
               </div>
               <div className="flex justify-between items-center py-3 border-b border-white/10">
-                <span className="text-white/50">Phân loại</span>
-                <span className={cn("font-bold px-2 py-0.5 rounded text-[10px] uppercase tracking-wider", story.isAdult ? "bg-red-500 text-white" : "bg-slate-700 text-slate-300")}>
-                  {story.isAdult ? '18+' : 'Bình thường'}
-                </span>
-              </div>
-              <div className="flex justify-between items-center py-3 border-b border-white/10">
                 <span className="text-white/50">Tổng số chữ</span>
                 <span className="font-bold text-white">
                   {totalWords.toLocaleString()} / {(story.expectedWordCount || 0).toLocaleString()}
@@ -10985,6 +10979,40 @@ const AppContent = () => {
       perspective, audience, styleReference, aiInstructions, chapterScript, selectedRuleId
     } = options;
     if (!user || !selectedStory) return;
+    const sanitizeChapterDrafts = (items: Array<{ title?: string; content?: string }>) => {
+      return items.map((item, idx) => {
+        const rawTitle = typeof item === 'object' && item ? String(item.title || '').trim() : '';
+        const rawContent = typeof item === 'object' && item ? String(item.content || '') : String(item || '');
+        const normalized = normalizeAiJsonContent(rawContent, rawTitle || `Chương mới ${idx + 1}`);
+        return {
+          title: String(rawTitle || normalized.title || `Chương mới ${idx + 1}`).trim(),
+          content: String(normalized.content || rawContent || '').trim(),
+        };
+      });
+    };
+    const looksLikeOutlineChapter = (title: string, content: string) => {
+      const text = String(content || '').trim();
+      if (!text) return true;
+      const lower = text.toLowerCase();
+      const outlineSignals = [
+        'dàn ý',
+        'ý tưởng',
+        'gợi ý',
+        'hướng phát triển',
+        'plot twist',
+        'mở bài',
+        'thân bài',
+        'kết bài',
+      ];
+      const hasOutlineSignal = outlineSignals.some((signal) => lower.includes(signal));
+      const bulletCount = (text.match(/(?:^|\n)\s*(?:[-*•]|\d+[.)])\s+/g) || []).length;
+      const dialogCount = (text.match(/[“"«»]/g) || []).length;
+      const paragraphCount = text.split(/\n{2,}/).filter(Boolean).length;
+      const shortBody = text.length < 1100;
+      const sparseNarrative = paragraphCount <= 2 && dialogCount <= 1;
+      const titleLooksPlanning = /(?:dàn ý|ý tưởng|kịch bản|phác thảo)/i.test(String(title || ''));
+      return titleLooksPlanning || hasOutlineSignal || (bulletCount >= 3 && shortBody) || (shortBody && sparseNarrative);
+    };
     setShowAIGen(false);
     const aiRun = beginAiRun("Đang chuẩn bị dữ liệu...", {
       stageLabel: 'Chuẩn bị đầu vào',
@@ -11080,6 +11108,7 @@ const AppContent = () => {
         YÊU CẦU VỀ ĐỘ DÀI VÀ CHI TIẾT:
         - Mỗi chương PHẢI đạt tối thiểu ${chapterLength} từ. Đây là yêu cầu bắt buộc.
         - Tuyệt đối KHÔNG ĐƯỢC tóm tắt diễn biến. Hãy viết chi tiết từng hành động, từng lời nói, từng suy nghĩ.
+        - Tuyệt đối KHÔNG trả dàn ý, không trả ý tưởng, không trả checklist, không trả gạch đầu dòng.
         - Nếu bạn viết quá ngắn hoặc quá sơ sài, bạn đang vi phạm yêu cầu công việc. Hãy mở rộng các tình tiết một cách tối đa.
         
         HƯỚNG DẪN VIẾT CHI TIẾT:
@@ -11135,18 +11164,77 @@ const AppContent = () => {
       if (!newChaptersData.length) {
         throw new Error("AI không trả về nội dung hợp lệ để tạo chương.");
       }
+      let chapterDrafts = sanitizeChapterDrafts(newChaptersData);
+      const outlineLikeCount = chapterDrafts.filter((item) => looksLikeOutlineChapter(item.title, item.content)).length;
+      if (chapterDrafts.length > 0 && outlineLikeCount >= Math.max(1, Math.ceil(chapterDrafts.length * 0.5))) {
+        updateAiRun(aiRun, {
+          message: 'Đang làm sạch đầu ra để đúng dạng chương truyện...',
+          stageLabel: 'Sửa đầu ra',
+          detail: 'Model vừa trả về thiên hướng dàn ý, hệ thống đang yêu cầu viết lại thành chương hoàn chỉnh.',
+        });
+        const rewritePrompt = `
+Bạn vừa nhận đầu ra chưa đạt: nội dung đang giống dàn ý/ý tưởng thay vì chương truyện hoàn chỉnh.
+Hãy viết lại thành ${chapterCount} chương truyện đầy đủ.
+
+YÊU CẦU BẮT BUỘC:
+- Mỗi chương là văn xuôi liền mạch, có bối cảnh, hành động, đối thoại, nội tâm.
+- Không dùng gạch đầu dòng, không liệt kê ý tưởng, không ghi "dàn ý", "gợi ý", "hướng phát triển".
+- Không giải thích cách viết. Chỉ trả nội dung truyện.
+- Mỗi chương tối thiểu ${chapterLength} từ.
+
+Bối cảnh truyện:
+- Tiêu đề: ${selectedStory.title}
+- Thể loại: ${selectedStory.genre || 'Tự do'}
+- Dàn ý tổng quát: ${outline}
+- Bối cảnh chương trước: ${previousContext || 'Không có'}
+- Sự kiện cần có: ${keyEvents || 'Tự suy luận hợp lý'}
+
+Đầu ra chưa đạt cần viết lại:
+${JSON.stringify(chapterDrafts)}
+
+Trả về JSON array: [{"title":"Chương ...","content":"..."}]
+CHỈ trả JSON thuần, không bọc markdown.
+`.trim();
+        const rewritten = await generateGeminiText(
+          ai,
+          'quality',
+          rewritePrompt,
+          {
+            responseMimeType: "application/json",
+            maxOutputTokens: 8192,
+            minOutputChars: batchMinChars,
+            maxRetries: 1,
+            signal: abortSignal,
+          },
+        );
+        const rewrittenParsed = tryParseJson<any>(rewritten || '[]', 'array');
+        let rewrittenItems: Array<{ title?: string; content?: string }> = [];
+        if (Array.isArray(rewrittenParsed)) {
+          rewrittenItems = rewrittenParsed;
+        } else if (rewrittenParsed && typeof rewrittenParsed === 'object') {
+          if (Array.isArray((rewrittenParsed as any).chapters)) rewrittenItems = (rewrittenParsed as any).chapters;
+          if (Array.isArray((rewrittenParsed as any).items) && !rewrittenItems.length) rewrittenItems = (rewrittenParsed as any).items;
+        }
+        if (!rewrittenItems.length) {
+          rewrittenItems = buildFallbackChapters(rewritten || '', chapterCount);
+        }
+        if (rewrittenItems.length) {
+          chapterDrafts = sanitizeChapterDrafts(rewrittenItems);
+        }
+      }
+      const unresolvedOutlineCount = chapterDrafts.filter((item) => looksLikeOutlineChapter(item.title, item.content)).length;
+      if (chapterDrafts.length > 0 && unresolvedOutlineCount >= Math.max(1, Math.ceil(chapterDrafts.length * 0.5))) {
+        throw new Error('AI vẫn đang trả kết quả dạng dàn ý. Hãy thử lại với model mạnh hơn hoặc giảm số chương mỗi lượt.');
+      }
 
       const currentChapters = selectedStory.chapters || [];
       const nextOrder = currentChapters.length + 1;
       
-      const newChapters = newChaptersData.map((c, i) => {
-        const sourceTitle = typeof c === 'object' && c ? String((c as any).title || '').trim() : '';
-        const sourceContent = typeof c === 'object' && c ? String((c as any).content || '') : String(c || '');
-        const normalizedChapter = normalizeAiJsonContent(sourceContent, sourceTitle || `Chương mới ${i + 1}`);
+      const newChapters = chapterDrafts.map((c, i) => {
         const chapter: any = {
           id: createClientId('chapter'),
-          title: String(sourceTitle || normalizedChapter.title || `Chương mới ${i + 1}`),
-          content: String(normalizedChapter.content || sourceContent || '').replace(/\]\s*\[/g, ']\n\n['), // Tự động xuống dòng đôi giữa các ngoặc vuông để Markdown nhận diện
+          title: String(c.title || `Chương mới ${i + 1}`),
+          content: String(c.content || '').replace(/\]\s*\[/g, ']\n\n['), // Tự động xuống dòng đôi giữa các ngoặc vuông để Markdown nhận diện
           order: nextOrder + i,
           createdAt: new Date().toISOString(),
         };
