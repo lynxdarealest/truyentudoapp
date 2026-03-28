@@ -11,6 +11,12 @@ const Phase3App = lazy(() => import('./phase3/Phase3App.tsx'));
 const Phase4App = lazy(() => import('./phase4/Phase4App.tsx'));
 const Phase5App = lazy(() => import('./phase5/Phase5App.tsx'));
 
+if (typeof window !== 'undefined' && /^\/{2,}/.test(window.location.pathname)) {
+  const normalizedPath = `/${window.location.pathname.replace(/^\/+/, '')}`;
+  const normalizedUrl = `${window.location.origin}${normalizedPath}${window.location.search}${window.location.hash}`;
+  window.history.replaceState(window.history.state, '', normalizedUrl);
+}
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <Suspense

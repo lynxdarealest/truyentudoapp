@@ -12458,6 +12458,7 @@ CHỈ trả JSON thuần, không bọc markdown.
         : 'Đang tắt';
 
   const routeTransitionClass = navigationType === 'POP' ? 'tf-route-pop' : 'tf-route-push';
+  const oauthConsentRedirectTarget = `/${location.search}${location.hash}`;
 
   const renderHomeWorkspace = () => {
     if (view === 'characters') {
@@ -13227,6 +13228,8 @@ CHỈ trả JSON thuần, không bọc markdown.
       <Routes>
         <Route element={<div className={cn('tf-route-scene', routeTransitionClass)}><Outlet /></div>}>
           <Route path="/" element={renderHomeWorkspace()} />
+          <Route path="/oauth/consent" element={<Navigate to={oauthConsentRedirectTarget} replace />} />
+          <Route path="/oauth/consent/" element={<Navigate to={oauthConsentRedirectTarget} replace />} />
           <Route path="/story/:id" element={<LegacyStoryRouteRedirect />} />
           <Route path="/reader/:chapterId" element={<LegacyReaderRouteRedirect />} />
           <Route path="/:storySlug" element={<StoryRouteLayout />}>

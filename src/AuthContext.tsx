@@ -109,7 +109,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const { error } = await supabase.auth.signInWithOAuth({
       provider,
       options: {
-        redirectTo: typeof window !== 'undefined' ? window.location.origin : undefined,
+        redirectTo: typeof window !== 'undefined' ? `${window.location.origin}/oauth/consent` : undefined,
       },
     });
     if (error) return { ok: false, message: error.message };
