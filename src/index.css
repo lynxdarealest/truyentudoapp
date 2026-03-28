@@ -1548,3 +1548,35 @@ body {
     transform: translateX(0);
   }
 }
+
+/* Performance mode: disable heavy background rendering effects */
+.app-shell {
+  transition: none !important;
+}
+
+.day-bg {
+  background: #f6f7f4 !important;
+  position: static !important;
+  overflow: visible !important;
+}
+
+.night-bg {
+  background: #0b1220 !important;
+  color: #e5edf7;
+  position: static !important;
+  overflow: visible !important;
+}
+
+.day-bg::before,
+.day-bg::after,
+.night-bg::before,
+.night-bg::after {
+  content: none !important;
+  display: none !important;
+  background: none !important;
+}
+
+.tf-route-pop,
+.tf-route-push {
+  animation: none !important;
+}
