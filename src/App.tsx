@@ -57,7 +57,7 @@ import { CURRENT_WRITER_VERSION, WRITER_RELEASE_NOTES } from './phase3/releaseHi
 import { APP_NOTICE_EVENT, notifyApp, type AppNoticePayload, type AppNoticeTone } from './notifications';
 import { loadPromptLibraryState, savePromptLibraryState, type PromptLibraryState } from './promptLibraryStore';
 import { LOCAL_WORKSPACE_CHANGED_EVENT, emitLocalWorkspaceChanged, loadLocalWorkspaceMeta, markLocalWorkspaceHydrated, type LocalWorkspaceSection } from './localWorkspaceSync';
-import { loadServerWorkspace, saveQaReport, saveServerWorkspace, SUPABASE_STORAGE_TABLES } from './supabaseWorkspace';
+import { WorkspaceConflictError, loadServerWorkspace, saveQaReport, saveServerWorkspace, SUPABASE_STORAGE_TABLES } from './supabaseWorkspace';
 import { IMAGE_AI_PROVIDER_META, getDefaultImageAiModel, type ImageAiProvider } from './imageAiProviders';
 import { createBackupSnapshot, getBackupSnapshot, listBackupSnapshots, updateBackupSnapshotDriveMeta, type BackupReason, type BackupSnapshot } from './backupVault';
 import { buildDriveBackupFilename, connectGoogleDriveInteractive, disconnectGoogleDrive, ensureGoogleDriveAccessToken, hasGoogleDriveBackupConfig, hasUsableDriveToken, loadStoredDriveAuth, uploadBackupSnapshotToDrive, type GoogleDriveAuthState, type GoogleDriveAccountProfile } from './googleDriveBackups';
@@ -302,6 +302,8 @@ const WORKSPACE_RECOVERY_KEY = 'truyenforge:workspace-recovery-v1';
 const ACCOUNT_CLOUD_AUTOSYNC_ENABLED = String(import.meta.env.VITE_ACCOUNT_AUTOSYNC ?? '1').trim() !== '0';
 const ACCOUNT_CLOUD_AUTOSYNC_DEBOUNCE_MS = 1200;
 const ACCOUNT_CLOUD_AUTOSYNC_INTERVAL_MS = 30000;
+const WORKSPACE_DEVICE_ID_KEY = 'truyenforge:workspace-device-id-v1';
+const WORKSPACE_EDIT_LOCK_TTL_MS = 3 * 60 * 1000;
 
 type ThemeMode = 'light' | 'dark';
 type ViewportMode = 'desktop' | 'mobile';
@@ -335,6 +337,15 @@ interface GoogleDriveBinding {
   picture: string;
   lockedAt: string;
   lastValidatedAt: string;
+}
+
+interface WorkspaceEditLock {
+  storyId: string;
+  storyTitle: string;
+  deviceId: string;
+  holder: string;
+  acquiredAt: string;
+  expiresAt: string;
 }
 
 const DEFAULT_PROFILE_AVATAR = 'https://api.dicebear.com/9.x/initials/svg?seed=User';
@@ -427,6 +438,42 @@ function saveDriveBindingForUser(userId: string, binding: GoogleDriveBinding | n
     delete next[userId];
   }
   localStorage.setItem(DRIVE_BINDING_MAP_KEY, JSON.stringify(next));
+}
+
+function getWorkspaceDeviceId(): string {
+  if (typeof window === 'undefined') return 'server-device';
+  try {
+    const existing = localStorage.getItem(WORKSPACE_DEVICE_ID_KEY);
+    if (existing && existing.trim()) return existing.trim();
+    const generated = `device-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`;
+    localStorage.setItem(WORKSPACE_DEVICE_ID_KEY, generated);
+    return generated;
+  } catch {
+    return `device-fallback-${Date.now().toString(36)}`;
+  }
+}
+
+function normalizeWorkspaceEditLock(value: unknown): WorkspaceEditLock | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const row = value as Partial<WorkspaceEditLock>;
+  const storyId = String(row.storyId || '').trim();
+  const deviceId = String(row.deviceId || '').trim();
+  if (!storyId || !deviceId) return null;
+  const nowIso = new Date().toISOString();
+  return {
+    storyId,
+    storyTitle: String(row.storyTitle || '').trim(),
+    deviceId,
+    holder: String(row.holder || '').trim(),
+    acquiredAt: String(row.acquiredAt || nowIso),
+    expiresAt: String(row.expiresAt || nowIso),
+  };
+}
+
+function isWorkspaceEditLockActive(lock: WorkspaceEditLock | null, nowMs = Date.now()): boolean {
+  if (!lock) return false;
+  const expMs = toTimestampMs(lock.expiresAt);
+  return expMs > nowMs;
 }
 
 function toDriveBinding(account: GoogleDriveAccountProfile, current?: GoogleDriveBinding | null): GoogleDriveBinding {
@@ -640,6 +687,8 @@ function saveViewportMode(mode: ViewportMode): void {
 
 interface AccountWorkspaceSnapshot {
   schemaVersion: number;
+  revision: number;
+  modifiedByDeviceId: string;
   updatedAt: string;
   sectionUpdatedAt: Partial<Record<LocalWorkspaceSection, string>>;
   uiProfile: UiProfile;
@@ -653,6 +702,7 @@ interface AccountWorkspaceSnapshot {
   promptLibrary: PromptLibraryState;
   finopsBudget: ReturnType<typeof loadBudgetState>;
   driveBinding?: GoogleDriveBinding | null;
+  editLock?: WorkspaceEditLock | null;
 }
 
 function normalizeOwnedRows<T>(rows: T[], userId?: string): T[] {
@@ -684,6 +734,8 @@ function sanitizeAccountWorkspaceForUser(snapshot: AccountWorkspaceSnapshot, use
 
 function buildWorkspacePayloadHash(snapshot: Partial<AccountWorkspaceSnapshot>): string {
   return JSON.stringify({
+    revision: Number(snapshot.revision) || 0,
+    modifiedByDeviceId: String(snapshot.modifiedByDeviceId || ''),
     uiProfile: snapshot.uiProfile || null,
     uiTheme: snapshot.uiTheme || null,
     uiViewportMode: snapshot.uiViewportMode || null,
@@ -695,6 +747,7 @@ function buildWorkspacePayloadHash(snapshot: Partial<AccountWorkspaceSnapshot>):
     promptLibrary: snapshot.promptLibrary || null,
     finopsBudget: snapshot.finopsBudget || null,
     driveBinding: normalizeDriveBinding(snapshot.driveBinding) || null,
+    editLock: normalizeWorkspaceEditLock(snapshot.editLock),
   });
 }
 
@@ -815,19 +868,103 @@ function chooseWorkspaceSectionValue<T>(
   return { value: localValue, updatedAt: localTimestamp || remoteTimestamp };
 }
 
+function mergeChaptersById(localChapters: Chapter[] = [], remoteChapters: Chapter[] = [], prefer: 'local' | 'remote'): Chapter[] {
+  const localMap = new Map(localChapters.map((chapter) => [String(chapter.id || ''), chapter]));
+  const remoteMap = new Map(remoteChapters.map((chapter) => [String(chapter.id || ''), chapter]));
+  const merged: Chapter[] = [];
+  const ids = new Set([...localMap.keys(), ...remoteMap.keys()].filter(Boolean));
+
+  ids.forEach((id) => {
+    const localChapter = localMap.get(id);
+    const remoteChapter = remoteMap.get(id);
+    if (localChapter && remoteChapter) {
+      merged.push(prefer === 'local' ? localChapter : remoteChapter);
+      return;
+    }
+    if (localChapter) merged.push(localChapter);
+    if (remoteChapter) merged.push(remoteChapter);
+  });
+
+  return merged.sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
+}
+
+function mergeStoriesByEntity(
+  localStories: Story[] = [],
+  remoteStories: Story[] = [],
+  lock: WorkspaceEditLock | null,
+  deviceId?: string,
+): Story[] {
+  const localMap = new Map(localStories.map((story) => [String(story.id || ''), story]));
+  const remoteMap = new Map(remoteStories.map((story) => [String(story.id || ''), story]));
+  const ids = new Set([...localMap.keys(), ...remoteMap.keys()].filter(Boolean));
+  const merged: Story[] = [];
+
+  ids.forEach((id) => {
+    const localStory = localMap.get(id);
+    const remoteStory = remoteMap.get(id);
+    if (!localStory && remoteStory) {
+      merged.push(remoteStory);
+      return;
+    }
+    if (localStory && !remoteStory) {
+      merged.push(localStory);
+      return;
+    }
+    if (!localStory || !remoteStory) return;
+
+    const lockByOtherDevice = Boolean(
+      lock &&
+      isWorkspaceEditLockActive(lock) &&
+      lock.storyId === id &&
+      lock.deviceId !== deviceId,
+    );
+    if (lockByOtherDevice) {
+      merged.push(remoteStory);
+      return;
+    }
+
+    const localUpdatedMs = toTimestampMs(localStory.updatedAt || localStory.createdAt);
+    const remoteUpdatedMs = toTimestampMs(remoteStory.updatedAt || remoteStory.createdAt);
+    const prefer = localUpdatedMs >= remoteUpdatedMs ? 'local' : 'remote';
+
+    const base = prefer === 'local'
+      ? { ...remoteStory, ...localStory }
+      : { ...localStory, ...remoteStory };
+    base.chapters = mergeChaptersById(localStory.chapters || [], remoteStory.chapters || [], prefer);
+    merged.push(base);
+  });
+
+  return merged.sort((a, b) => toTimestampMs(b.updatedAt || b.createdAt) - toTimestampMs(a.updatedAt || a.createdAt));
+}
+
 function mergeAccountWorkspaceSnapshots(
   localSnapshot: AccountWorkspaceSnapshot,
   remoteSnapshot: Partial<AccountWorkspaceSnapshot>,
+  options?: { deviceId?: string },
 ): AccountWorkspaceSnapshot {
+  const localLock = normalizeWorkspaceEditLock(localSnapshot.editLock);
+  const remoteLock = normalizeWorkspaceEditLock(remoteSnapshot.editLock);
+  const mergedLock = (() => {
+    if (!isWorkspaceEditLockActive(localLock) && !isWorkspaceEditLockActive(remoteLock)) return null;
+    if (isWorkspaceEditLockActive(localLock) && !isWorkspaceEditLockActive(remoteLock)) return localLock;
+    if (!isWorkspaceEditLockActive(localLock) && isWorkspaceEditLockActive(remoteLock)) return remoteLock;
+    return toTimestampMs(localLock?.expiresAt) >= toTimestampMs(remoteLock?.expiresAt)
+      ? localLock
+      : remoteLock;
+  })();
+
   const merged: AccountWorkspaceSnapshot = {
     ...localSnapshot,
     schemaVersion: Math.max(localSnapshot.schemaVersion || 1, Number(remoteSnapshot.schemaVersion) || 1),
+    revision: Math.max(Number(localSnapshot.revision) || 0, Number(remoteSnapshot.revision) || 0),
+    modifiedByDeviceId: String(localSnapshot.modifiedByDeviceId || remoteSnapshot.modifiedByDeviceId || ''),
     updatedAt: localSnapshot.updatedAt,
     sectionUpdatedAt: {
       ...buildSectionUpdatedAt(loadLocalWorkspaceMeta()),
       ...localSnapshot.sectionUpdatedAt,
     },
     driveBinding: localSnapshot.driveBinding || normalizeDriveBinding(remoteSnapshot.driveBinding) || null,
+    editLock: mergedLock,
   };
 
   ACCOUNT_WORKSPACE_BINDINGS.forEach(({ section, key }) => {
@@ -849,7 +986,17 @@ function mergeAccountWorkspaceSnapshots(
         merged.uiViewportMode = picked.value as ViewportMode;
         break;
       case 'stories':
-        merged.stories = picked.value as Story[];
+        merged.stories = mergeStoriesByEntity(
+          localSnapshot.stories,
+          Array.isArray(remoteSnapshot.stories) ? remoteSnapshot.stories : [],
+          mergedLock,
+          options?.deviceId,
+        );
+        merged.sectionUpdatedAt.stories = (
+          toTimestampMs(getSnapshotSectionTimestamp(localSnapshot, 'stories')) >= toTimestampMs(getSnapshotSectionTimestamp(remoteSnapshot, 'stories'))
+            ? getSnapshotSectionTimestamp(localSnapshot, 'stories')
+            : getSnapshotSectionTimestamp(remoteSnapshot, 'stories')
+        );
         break;
       case 'characters':
         merged.characters = picked.value as Character[];
@@ -872,7 +1019,9 @@ function mergeAccountWorkspaceSnapshots(
       default:
         break;
     }
-    merged.sectionUpdatedAt[section] = picked.updatedAt;
+    if (section !== 'stories') {
+      merged.sectionUpdatedAt[section] = picked.updatedAt;
+    }
   });
 
   const mergedUpdatedAt = ACCOUNT_WORKSPACE_BINDINGS.reduce((latest, { section }) => {
@@ -915,10 +1064,21 @@ function loadWorkspaceRecoverySnapshot(userId?: string): AccountWorkspaceSnapsho
   }
 }
 
-function buildAccountWorkspaceSnapshot(defaultName?: string, defaultAvatar?: string, userId?: string): AccountWorkspaceSnapshot {
+function buildAccountWorkspaceSnapshot(
+  defaultName?: string,
+  defaultAvatar?: string,
+  userId?: string,
+  context?: {
+    deviceId?: string;
+    baseRevision?: number;
+    editLock?: WorkspaceEditLock | null;
+  },
+): AccountWorkspaceSnapshot {
   const meta = loadLocalWorkspaceMeta();
   return sanitizeAccountWorkspaceForUser({
     schemaVersion: 1,
+    revision: Math.max(0, Number(context?.baseRevision) || 0),
+    modifiedByDeviceId: String(context?.deviceId || ''),
     updatedAt: meta.updatedAt || new Date().toISOString(),
     sectionUpdatedAt: buildSectionUpdatedAt(meta),
     uiProfile: loadUiProfile(defaultName, defaultAvatar),
@@ -932,6 +1092,7 @@ function buildAccountWorkspaceSnapshot(defaultName?: string, defaultAvatar?: str
     promptLibrary: loadPromptLibraryState(),
     finopsBudget: loadBudgetState(),
     driveBinding: loadDriveBindingForUser(userId),
+    editLock: normalizeWorkspaceEditLock(context?.editLock) || null,
   }, userId);
 }
 
@@ -939,6 +1100,8 @@ function applyAccountWorkspaceSnapshot(snapshot: Partial<AccountWorkspaceSnapsho
   const sanitizedSnapshot = snapshot.stories || snapshot.characters || snapshot.aiRules || snapshot.translationNames
     ? sanitizeAccountWorkspaceForUser({
         schemaVersion: Number(snapshot.schemaVersion) || 1,
+        revision: Math.max(0, Number(snapshot.revision) || 0),
+        modifiedByDeviceId: String(snapshot.modifiedByDeviceId || ''),
         updatedAt: String(snapshot.updatedAt || new Date().toISOString()),
         sectionUpdatedAt: snapshot.sectionUpdatedAt || {},
         uiProfile: (snapshot.uiProfile || loadUiProfile(defaultName, defaultAvatar)) as UiProfile,
@@ -952,6 +1115,7 @@ function applyAccountWorkspaceSnapshot(snapshot: Partial<AccountWorkspaceSnapsho
         promptLibrary: (snapshot.promptLibrary || loadPromptLibraryState()) as PromptLibraryState,
         finopsBudget: (snapshot.finopsBudget || loadBudgetState()) as ReturnType<typeof loadBudgetState>,
         driveBinding: snapshot.driveBinding,
+        editLock: normalizeWorkspaceEditLock(snapshot.editLock),
       }, userId)
     : null;
 
@@ -9364,6 +9528,8 @@ const AppContent = () => {
     lastSerialized: '',
     lastErrorNotifiedAt: 0,
     lastSyncedAt: '',
+    lastServerUpdatedAt: '',
+    lastKnownRevision: 0,
   });
   const localBackupRestoreAttemptedRef = useRef<Set<string>>(new Set());
   const backupAutomationRef = useRef({
@@ -9376,6 +9542,8 @@ const AppContent = () => {
   const lastHomeBackAttemptRef = useRef(0);
   const workspaceScopeRef = useRef<string>(getWorkspaceScopeUser());
   const syncUiTickRef = useRef(0);
+  const workspaceDeviceIdRef = useRef<string>(getWorkspaceDeviceId());
+  const activeStoryLockRef = useRef<WorkspaceEditLock | null>(null);
 
   const navigate = useNavigate();
   const location = useLocation();
@@ -9588,15 +9756,37 @@ const AppContent = () => {
       ? {
           ...(remoteSnapshot.payload as Partial<AccountWorkspaceSnapshot>),
         }
-      : buildAccountWorkspaceSnapshot(user.displayName || undefined, user.photoURL || undefined, user.uid);
+      : buildAccountWorkspaceSnapshot(
+          user.displayName || undefined,
+          user.photoURL || undefined,
+          user.uid,
+          {
+            deviceId: workspaceDeviceIdRef.current,
+            baseRevision: workspaceSyncRef.current.lastKnownRevision,
+            editLock: activeStoryLockRef.current,
+          },
+        );
 
     const nextSnapshot: AccountWorkspaceSnapshot = {
-      ...buildAccountWorkspaceSnapshot(user.displayName || undefined, user.photoURL || undefined, user.uid),
+      ...buildAccountWorkspaceSnapshot(
+        user.displayName || undefined,
+        user.photoURL || undefined,
+        user.uid,
+        {
+          deviceId: workspaceDeviceIdRef.current,
+          baseRevision: workspaceSyncRef.current.lastKnownRevision,
+          editLock: activeStoryLockRef.current,
+        },
+      ),
       ...baseSnapshot,
       updatedAt: typeof baseSnapshot.updatedAt === 'string' ? baseSnapshot.updatedAt : new Date().toISOString(),
       driveBinding: binding,
     };
-    await saveServerWorkspace(user.uid, sanitizeAccountWorkspaceForUser(nextSnapshot, user.uid));
+    await saveServerWorkspace(
+      user.uid,
+      sanitizeAccountWorkspaceForUser(nextSnapshot, user.uid),
+      { expectedUpdatedAt: remoteSnapshot.updatedAt },
+    );
   }, [hasSupabase, user]);
 
   const uploadSnapshotToDrive = useCallback(async (
@@ -10020,7 +10210,16 @@ const AppContent = () => {
     workspaceSyncRef.current.isHydrating = true;
     try {
       await createWorkspaceBackup('restore-point', { force: true, quiet: true });
-      const localSnapshot = buildAccountWorkspaceSnapshot(user.displayName || undefined, user.photoURL || undefined, user.uid);
+      const localSnapshot = buildAccountWorkspaceSnapshot(
+        user.displayName || undefined,
+        user.photoURL || undefined,
+        user.uid,
+        {
+          deviceId: workspaceDeviceIdRef.current,
+          baseRevision: workspaceSyncRef.current.lastKnownRevision,
+          editLock: activeStoryLockRef.current,
+        },
+      );
       const remoteSnapshot = await loadServerWorkspace<AccountWorkspaceSnapshot>(user.uid);
       const remotePayload = remoteSnapshot.payload
         ? {
@@ -10031,15 +10230,20 @@ const AppContent = () => {
           }
         : null;
       const mergedSnapshot = sanitizeAccountWorkspaceForUser(remotePayload
-        ? mergeAccountWorkspaceSnapshots(localSnapshot, remotePayload)
+        ? mergeAccountWorkspaceSnapshots(localSnapshot, remotePayload, { deviceId: workspaceDeviceIdRef.current })
         : localSnapshot, user.uid);
+      mergedSnapshot.revision = Math.max(localSnapshot.revision || 0, Number(remotePayload?.revision) || 0) + 1;
+      mergedSnapshot.modifiedByDeviceId = workspaceDeviceIdRef.current;
+      mergedSnapshot.editLock = normalizeWorkspaceEditLock(activeStoryLockRef.current);
 
       applyAccountWorkspaceSnapshot(mergedSnapshot, user.displayName || undefined, user.photoURL || undefined, user.uid);
       markLocalWorkspaceHydrated(mergedSnapshot.updatedAt, 'manual-sync', mergedSnapshot.sectionUpdatedAt);
       refreshWorkspaceUiFromStorage();
-      await saveServerWorkspace(user.uid, mergedSnapshot);
+      await saveServerWorkspace(user.uid, mergedSnapshot, { expectedUpdatedAt: remoteSnapshot.updatedAt });
       storeWorkspaceRecoverySnapshot(mergedSnapshot, 'manual-sync', user.uid);
       workspaceSyncRef.current.lastSerialized = JSON.stringify(mergedSnapshot);
+      workspaceSyncRef.current.lastKnownRevision = mergedSnapshot.revision || workspaceSyncRef.current.lastKnownRevision;
+      workspaceSyncRef.current.lastServerUpdatedAt = mergedSnapshot.updatedAt || '';
       const syncedAt = new Date().toISOString();
       commitAccountSyncedAt(syncedAt, true);
       setBackupSettings((prev) => ({ ...prev, lastManualSyncAt: syncedAt }));
@@ -10090,6 +10294,8 @@ const AppContent = () => {
     workspaceSyncRef.current.isHydrating = false;
     workspaceSyncRef.current.lastErrorNotifiedAt = 0;
     workspaceSyncRef.current.lastSyncedAt = '';
+    workspaceSyncRef.current.lastServerUpdatedAt = '';
+    workspaceSyncRef.current.lastKnownRevision = 0;
 
     backupAutomationRef.current.lastFingerprint = '';
     backupAutomationRef.current.startupSnapshotDone = false;
@@ -10441,7 +10647,22 @@ const AppContent = () => {
   const syncWorkspaceToAccount = useCallback(async () => {
     if (!ACCOUNT_CLOUD_AUTOSYNC_ENABLED) return;
     if (!user || !hasSupabase || workspaceSyncRef.current.isHydrating) return;
-    const localSnapshot = buildAccountWorkspaceSnapshot(user.displayName || undefined, user.photoURL || undefined, user.uid);
+    if (activeStoryLockRef.current?.storyId) {
+      activeStoryLockRef.current = {
+        ...activeStoryLockRef.current,
+        expiresAt: new Date(Date.now() + WORKSPACE_EDIT_LOCK_TTL_MS).toISOString(),
+      };
+    }
+    const localSnapshot = buildAccountWorkspaceSnapshot(
+      user.displayName || undefined,
+      user.photoURL || undefined,
+      user.uid,
+      {
+        deviceId: workspaceDeviceIdRef.current,
+        baseRevision: workspaceSyncRef.current.lastKnownRevision,
+        editLock: activeStoryLockRef.current,
+      },
+    );
     const remoteSnapshot = await loadServerWorkspace<AccountWorkspaceSnapshot>(user.uid);
     const remotePayload = remoteSnapshot.payload
       ? {
@@ -10451,9 +10672,29 @@ const AppContent = () => {
             : (remoteSnapshot.updatedAt || new Date(0).toISOString()),
         }
       : null;
+    const remoteLock = normalizeWorkspaceEditLock(remotePayload?.editLock);
+    if (
+      remoteLock &&
+      isWorkspaceEditLockActive(remoteLock) &&
+      remoteLock.deviceId !== workspaceDeviceIdRef.current &&
+      activeStoryLockRef.current?.storyId &&
+      activeStoryLockRef.current.storyId === remoteLock.storyId
+    ) {
+      notifyApp({
+        tone: 'warn',
+        message: `Truyện này đang được chỉnh trên thiết bị khác (${remoteLock.holder || 'thiết bị khác'}).`,
+        detail: 'Bạn vẫn có thể đọc, nhưng nên tránh sửa cùng lúc để không bị xung đột dữ liệu.',
+        groupKey: `workspace-edit-lock:${remoteLock.storyId}`,
+        timeoutMs: 5200,
+      });
+    }
+
     const mergedSnapshot = sanitizeAccountWorkspaceForUser(remotePayload
-      ? mergeAccountWorkspaceSnapshots(localSnapshot, remotePayload)
+      ? mergeAccountWorkspaceSnapshots(localSnapshot, remotePayload, { deviceId: workspaceDeviceIdRef.current })
       : localSnapshot, user.uid);
+    mergedSnapshot.revision = Math.max(localSnapshot.revision || 0, Number(remotePayload?.revision) || 0) + 1;
+    mergedSnapshot.modifiedByDeviceId = workspaceDeviceIdRef.current;
+    mergedSnapshot.editLock = normalizeWorkspaceEditLock(activeStoryLockRef.current);
 
     // Nếu cả local + remote đều trống phần stories/characters nhưng có recovery, ưu tiên recovery
     if ((!mergedSnapshot.stories?.length || mergedSnapshot.stories.length === 0) && !mergedSnapshot.characters?.length) {
@@ -10487,9 +10728,46 @@ const AppContent = () => {
       }
     }
 
-    await saveServerWorkspace(user.uid, mergedSnapshot);
-    storeWorkspaceRecoverySnapshot(mergedSnapshot, 'account-sync-save', user.uid);
-    workspaceSyncRef.current.lastSerialized = serialized;
+    let savedSnapshot = mergedSnapshot;
+    try {
+      await saveServerWorkspace(user.uid, mergedSnapshot, {
+        expectedUpdatedAt: remoteSnapshot.updatedAt || workspaceSyncRef.current.lastServerUpdatedAt || null,
+      });
+    } catch (error) {
+      if (!(error instanceof WorkspaceConflictError)) throw error;
+      const conflictPayload = error.remotePayload
+        ? {
+            ...(error.remotePayload as Partial<AccountWorkspaceSnapshot>),
+            updatedAt: typeof (error.remotePayload as Partial<AccountWorkspaceSnapshot>).updatedAt === 'string'
+              ? (error.remotePayload as Partial<AccountWorkspaceSnapshot>).updatedAt
+              : (error.remoteUpdatedAt || new Date(0).toISOString()),
+          }
+        : null;
+      const retriedMerged = sanitizeAccountWorkspaceForUser(
+        conflictPayload
+          ? mergeAccountWorkspaceSnapshots(localSnapshot, conflictPayload, { deviceId: workspaceDeviceIdRef.current })
+          : mergedSnapshot,
+        user.uid,
+      );
+      retriedMerged.revision = Math.max(localSnapshot.revision || 0, Number(conflictPayload?.revision) || 0) + 1;
+      retriedMerged.modifiedByDeviceId = workspaceDeviceIdRef.current;
+      retriedMerged.editLock = normalizeWorkspaceEditLock(activeStoryLockRef.current);
+      await saveServerWorkspace(user.uid, retriedMerged, {
+        expectedUpdatedAt: error.remoteUpdatedAt,
+      });
+      savedSnapshot = retriedMerged;
+      notifyApp({
+        tone: 'warn',
+        message: 'Phát hiện xung đột đồng bộ, app đã tự merge lại và lưu phiên bản mới.',
+        groupKey: 'account-sync-conflict-resolved',
+        timeoutMs: 5200,
+      });
+    }
+
+    storeWorkspaceRecoverySnapshot(savedSnapshot, 'account-sync-save', user.uid);
+    workspaceSyncRef.current.lastSerialized = JSON.stringify(savedSnapshot);
+    workspaceSyncRef.current.lastKnownRevision = savedSnapshot.revision || workspaceSyncRef.current.lastKnownRevision;
+    workspaceSyncRef.current.lastServerUpdatedAt = savedSnapshot.updatedAt || '';
     commitAccountSyncedAt(new Date().toISOString());
   }, [commitAccountSyncedAt, user, hasSupabase]);
 
@@ -10497,6 +10775,8 @@ const AppContent = () => {
     if (!user || !hasSupabase || !ACCOUNT_CLOUD_AUTOSYNC_ENABLED) {
       workspaceSyncRef.current.lastSerialized = '';
       workspaceSyncRef.current.isHydrating = false;
+      workspaceSyncRef.current.lastServerUpdatedAt = '';
+      workspaceSyncRef.current.lastKnownRevision = 0;
       return;
     }
 
@@ -10504,7 +10784,16 @@ const AppContent = () => {
     const hydrateWorkspace = async () => {
       workspaceSyncRef.current.isHydrating = true;
       try {
-        const localSnapshot = buildAccountWorkspaceSnapshot(user.displayName || undefined, user.photoURL || undefined, user.uid);
+        const localSnapshot = buildAccountWorkspaceSnapshot(
+          user.displayName || undefined,
+          user.photoURL || undefined,
+          user.uid,
+          {
+            deviceId: workspaceDeviceIdRef.current,
+            baseRevision: workspaceSyncRef.current.lastKnownRevision,
+            editLock: activeStoryLockRef.current,
+          },
+        );
         const localPayloadHash = buildWorkspacePayloadHash(localSnapshot);
         const remoteSnapshot = await loadServerWorkspace<AccountWorkspaceSnapshot>(user.uid);
         if (cancelled) return;
@@ -10512,11 +10801,16 @@ const AppContent = () => {
         if (!remoteSnapshot.payload) {
           const recovery = loadWorkspaceRecoverySnapshot(user.uid);
           const snapshotToSave = sanitizeAccountWorkspaceForUser(recovery && Array.isArray(recovery.stories) && recovery.stories.length > 0
-            ? mergeAccountWorkspaceSnapshots(localSnapshot, recovery)
+            ? mergeAccountWorkspaceSnapshots(localSnapshot, recovery, { deviceId: workspaceDeviceIdRef.current })
             : localSnapshot, user.uid);
-          await saveServerWorkspace(user.uid, snapshotToSave);
+          snapshotToSave.revision = Math.max(localSnapshot.revision || 0, Number(recovery?.revision) || 0) + 1;
+          snapshotToSave.modifiedByDeviceId = workspaceDeviceIdRef.current;
+          snapshotToSave.editLock = normalizeWorkspaceEditLock(activeStoryLockRef.current);
+          await saveServerWorkspace(user.uid, snapshotToSave, { expectedUpdatedAt: remoteSnapshot.updatedAt });
           storeWorkspaceRecoverySnapshot(snapshotToSave, 'account-sync-bootstrap', user.uid);
           workspaceSyncRef.current.lastSerialized = JSON.stringify(snapshotToSave);
+          workspaceSyncRef.current.lastKnownRevision = snapshotToSave.revision || workspaceSyncRef.current.lastKnownRevision;
+          workspaceSyncRef.current.lastServerUpdatedAt = snapshotToSave.updatedAt || '';
           if (recovery && recovery.stories?.length) {
             applyAccountWorkspaceSnapshot(snapshotToSave, user.displayName || undefined, user.photoURL || undefined, user.uid);
             setProfile(loadUiProfile(user.displayName || undefined, user.photoURL || undefined));
@@ -10536,17 +10830,23 @@ const AppContent = () => {
           ? remoteData.updatedAt
           : (remoteSnapshot.updatedAt || new Date(0).toISOString());
         let mergedSnapshot = sanitizeAccountWorkspaceForUser(
-          mergeAccountWorkspaceSnapshots(localSnapshot, { ...remoteData, updatedAt: remoteUpdatedAt }),
+          mergeAccountWorkspaceSnapshots(localSnapshot, { ...remoteData, updatedAt: remoteUpdatedAt }, { deviceId: workspaceDeviceIdRef.current }),
           user.uid,
         );
+        mergedSnapshot.revision = Math.max(localSnapshot.revision || 0, Number(remoteData.revision) || 0) + 1;
+        mergedSnapshot.modifiedByDeviceId = workspaceDeviceIdRef.current;
+        mergedSnapshot.editLock = normalizeWorkspaceEditLock(activeStoryLockRef.current);
 
         if ((!mergedSnapshot.stories?.length || mergedSnapshot.stories.length === 0) && !mergedSnapshot.characters?.length) {
           const recovery = loadWorkspaceRecoverySnapshot(user.uid);
           if (recovery && Array.isArray(recovery.stories) && recovery.stories.length > 0) {
             mergedSnapshot = sanitizeAccountWorkspaceForUser(
-              mergeAccountWorkspaceSnapshots(mergedSnapshot, recovery),
+              mergeAccountWorkspaceSnapshots(mergedSnapshot, recovery, { deviceId: workspaceDeviceIdRef.current }),
               user.uid,
             );
+            mergedSnapshot.revision = Math.max(mergedSnapshot.revision || 0, Number(recovery.revision) || 0) + 1;
+            mergedSnapshot.modifiedByDeviceId = workspaceDeviceIdRef.current;
+            mergedSnapshot.editLock = normalizeWorkspaceEditLock(activeStoryLockRef.current);
             notifyApp({
               tone: 'warn',
               message: 'Phát hiện dữ liệu trống, đã khôi phục truyện từ bản sao lưu cục bộ.',
@@ -10563,12 +10863,25 @@ const AppContent = () => {
           setThemeMode(loadThemeMode());
           setViewportMode(loadViewportMode());
           storeWorkspaceRecoverySnapshot(mergedSnapshot, 'account-sync-hydrate', user.uid);
-          workspaceSyncRef.current.lastSerialized = JSON.stringify(buildAccountWorkspaceSnapshot(user.displayName || undefined, user.photoURL || undefined, user.uid));
+          workspaceSyncRef.current.lastSerialized = JSON.stringify(
+            buildAccountWorkspaceSnapshot(
+              user.displayName || undefined,
+              user.photoURL || undefined,
+              user.uid,
+              {
+                deviceId: workspaceDeviceIdRef.current,
+                baseRevision: workspaceSyncRef.current.lastKnownRevision,
+                editLock: activeStoryLockRef.current,
+              },
+            ),
+          );
         }
 
-        await saveServerWorkspace(user.uid, mergedSnapshot);
+        await saveServerWorkspace(user.uid, mergedSnapshot, { expectedUpdatedAt: remoteSnapshot.updatedAt });
         storeWorkspaceRecoverySnapshot(mergedSnapshot, 'account-sync-save-after-hydrate', user.uid);
         workspaceSyncRef.current.lastSerialized = mergedSerialized;
+        workspaceSyncRef.current.lastKnownRevision = mergedSnapshot.revision || workspaceSyncRef.current.lastKnownRevision;
+        workspaceSyncRef.current.lastServerUpdatedAt = mergedSnapshot.updatedAt || '';
         commitAccountSyncedAt(new Date().toISOString());
       } catch (error) {
         console.warn('Không thể đồng bộ workspace theo tài khoản.', error);
@@ -10774,6 +11087,23 @@ const AppContent = () => {
       setIsUploadingProfileAvatar(false);
     }
   };
+
+  useEffect(() => {
+    const targetStory = editingStory || selectedStory;
+    if (!user?.uid || !targetStory?.id) {
+      activeStoryLockRef.current = null;
+      return;
+    }
+    const now = Date.now();
+    activeStoryLockRef.current = {
+      storyId: targetStory.id,
+      storyTitle: String(targetStory.title || '').trim(),
+      deviceId: workspaceDeviceIdRef.current,
+      holder: String(profile.displayName || user.email || 'Thiết bị khác').trim() || 'Thiết bị khác',
+      acquiredAt: new Date(now).toISOString(),
+      expiresAt: new Date(now + WORKSPACE_EDIT_LOCK_TTL_MS).toISOString(),
+    };
+  }, [editingStory, profile.displayName, selectedStory, user?.email, user?.uid]);
 
   const closeProfileModal = () => {
     setShowProfileModal(false);
