@@ -53,6 +53,14 @@ import { loadBudgetState, saveBudgetState } from './finops';
 import { ApiSectionPanel } from './components/tools/ApiSectionPanel';
 import { ToolsPage } from './features/tools/ToolsPage';
 import { PromptLibraryModal as PromptLibraryModalNew } from './features/prompt/PromptLibrary';
+import {
+  buildDictionaryBundle,
+  convertChineseToVietnamese,
+  createDefaultTranslateOptions,
+  loadBundledDictionaries,
+  type DictionaryKind,
+  type TranslateOptions,
+} from './features/tools/vietphraseLocal';
 import { CURRENT_WRITER_VERSION, WRITER_RELEASE_NOTES } from './phase3/releaseHistory';
 import { APP_NOTICE_EVENT, notifyApp, type AppNoticePayload, type AppNoticeTone } from './notifications';
 import { loadPromptLibraryState, savePromptLibraryState, type PromptLibraryState } from './promptLibraryStore';
@@ -312,6 +320,16 @@ const ACCOUNT_AUTOSYNC_TRIGGER_SECTIONS: ReadonlySet<LocalWorkspaceSection> = ne
 ]);
 const WORKSPACE_DEVICE_ID_KEY = 'truyenforge:workspace-device-id-v1';
 const WORKSPACE_EDIT_LOCK_TTL_MS = 3 * 60 * 1000;
+const STORY_TRANSLATE_SETTINGS_KEY = 'tools_story_translate_settings_v1';
+const DEFAULT_BUNDLED_DICTIONARY_USAGE: Record<DictionaryKind, boolean> = {
+  vp: true,
+  name: true,
+  pronouns: true,
+  hv: true,
+  luatNhan: true,
+};
+const CHINESE_CHAR_RE = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/g;
+const LATIN_OR_VI_LETTER_RE = /[A-Za-zÀ-ỹ]/g;
 
 type ThemeMode = 'light' | 'dark';
 type ViewportMode = 'desktop' | 'mobile';
@@ -345,6 +363,19 @@ interface GoogleDriveBinding {
   picture: string;
   lockedAt: string;
   lastValidatedAt: string;
+}
+
+function detectImportedStoryLanguage(text: string): 'zh' | 'vi' {
+  const source = String(text || '');
+  if (!source.trim()) return 'vi';
+  const chineseCount = (source.match(CHINESE_CHAR_RE) || []).length;
+  if (chineseCount === 0) return 'vi';
+  const latinCount = (source.match(LATIN_OR_VI_LETTER_RE) || []).length;
+  const ratio = chineseCount / Math.max(1, chineseCount + latinCount);
+  if (chineseCount >= 30) return 'zh';
+  if (ratio >= 0.12) return 'zh';
+  if (chineseCount >= 8 && ratio >= 0.06) return 'zh';
+  return 'vi';
 }
 
 interface WorkspaceEditLock {
@@ -11119,6 +11150,98 @@ const AppContent = () => {
     return file.text();
   };
 
+  const loadVietphraseAutoConvertSettings = () => {
+    const defaultOptions = createDefaultTranslateOptions();
+    const fallbackUseBundled = { ...DEFAULT_BUNDLED_DICTIONARY_USAGE };
+    try {
+      const raw = getScopedStorageItem(STORY_TRANSLATE_SETTINGS_KEY, {
+        allowLegacyFallback: shouldAllowLegacyScopeFallback(),
+      });
+      const parsed = raw ? JSON.parse(raw) as {
+        options?: Partial<TranslateOptions>;
+        useBundled?: Partial<Record<DictionaryKind, boolean>>;
+      } : null;
+      const options: TranslateOptions = {
+        ...defaultOptions,
+        ...(parsed?.options || {}),
+        maxPhraseLength: Number(parsed?.options?.maxPhraseLength || defaultOptions.maxPhraseLength),
+      };
+      return {
+        options,
+        useBundled: {
+          ...fallbackUseBundled,
+          ...(parsed?.useBundled || {}),
+        },
+      };
+    } catch {
+      return {
+        options: defaultOptions,
+        useBundled: fallbackUseBundled,
+      };
+    }
+  };
+
+  const buildStoryScopedNameMapForCurrentUser = useCallback(() => {
+    const map = new Map<string, string>();
+    if (!user?.uid) return map;
+    storage
+      .getTranslationNames()
+      .filter((entry: TranslationName) => entry.authorId === user.uid)
+      .forEach((entry: TranslationName) => {
+        const original = String(entry.original || '').trim();
+        const translation = String(entry.translation || '').trim();
+        if (!original || !translation) return;
+        map.set(original, translation);
+      });
+    return map;
+  }, [user?.uid]);
+
+  const saveImportedStoryToLibrary = useCallback((payload: {
+    fileName: string;
+    finalText: string;
+    sourceLanguage: 'zh' | 'vi';
+    converted: boolean;
+  }) => {
+    if (!user?.uid) return null;
+    const now = new Date().toISOString();
+    const trimmedText = String(payload.finalText || '').trim();
+    if (!trimmedText) return null;
+    const rawTitle = String(payload.fileName || 'Truyện tải lên').replace(/\.[^/.]+$/, '').trim();
+    const titleBase = rawTitle || 'Truyện tải lên';
+    const title = payload.converted ? `${titleBase} (Auto CVT)` : titleBase;
+    const chapterContent = trimmedText.replace(/\]\s*\[/g, ']\n\n[');
+    const chapter: Chapter = {
+      id: createClientId('chapter'),
+      title: 'Chương 1',
+      content: chapterContent,
+      order: 1,
+      createdAt: now,
+    };
+    const stories = storage.getStories() as Story[];
+    const usedSlugs = new Set(stories.map((item) => resolveStorySlug(item)));
+    const snippet = chapterContent.slice(0, 5000);
+    const story: Story = {
+      id: createClientId('story'),
+      slug: createStoryRouteSlug(usedSlugs),
+      authorId: user.uid,
+      title: title.slice(0, 480),
+      content: snippet,
+      introduction: payload.converted
+        ? 'Tệp tiếng Trung đã được nhận diện và convert tự động sang tiếng Việt bằng Vietphrase local.'
+        : 'Tệp tiếng Việt đã được nhập thẳng vào thư viện.',
+      genre: payload.converted ? 'Auto convert Trung - Việt' : 'Tải lên trực tiếp',
+      type: payload.converted ? 'translated' : 'original',
+      isPublic: false,
+      isAI: payload.converted,
+      createdAt: now,
+      updatedAt: now,
+      chapters: normalizeChaptersForLocal([chapter]),
+    };
+    storage.saveStories([story, ...stories]);
+    bumpStoriesVersion();
+    return story;
+  }, [user?.uid]);
+
   const clearPendingAiFileAction = () => {
     setShowAiFileActionModal(false);
     setPendingAiFileContent('');
@@ -11142,6 +11265,11 @@ const AppContent = () => {
   };
 
   const handleUnifiedAiFileFlow = () => {
+    if (!user) {
+      setShowAuthModal(true);
+      notifyApp({ tone: 'warn', message: 'Hãy đăng nhập để tải truyện vào thư viện.' });
+      return;
+    }
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = '.docx,.txt,.pdf,.epub';
@@ -11150,16 +11278,58 @@ const AppContent = () => {
       if (!file) return;
       const aiRun = beginAiRun("Đang đọc file...", {
         stageLabel: 'Nạp dữ liệu',
-        detail: 'Hệ thống đang mở tệp và nhận diện định dạng để quyết định luồng AI phù hợp.',
+        detail: 'Hệ thống đang mở tệp và nhận diện ngôn ngữ nội dung.',
       });
       try {
         const content = String(await readImportedStoryFile(file) || '').trim();
         if (!content) {
           throw new Error('File không có nội dung văn bản để AI xử lý.');
         }
-        setPendingAiFileContent(content);
-        setPendingAiFileName(file.name);
-        setShowAiFileActionModal(true);
+        const detectedLanguage = detectImportedStoryLanguage(content);
+        let finalText = content;
+        let converted = false;
+
+        if (detectedLanguage === 'zh') {
+          updateAiRun(aiRun, {
+            message: 'Phát hiện tiếng Trung, đang convert...',
+            stageLabel: 'Convert Trung → Việt',
+            detail: 'Sử dụng Vietphrase local + bộ từ điển hiện có để chuyển sang tiếng Việt trước khi lưu.',
+          });
+          const defaults = await loadBundledDictionaries();
+          const runtime = loadVietphraseAutoConvertSettings();
+          const bundle = buildDictionaryBundle(defaults, {}, runtime.useBundled);
+          const storyScopedNameMap = buildStoryScopedNameMapForCurrentUser();
+          finalText = convertChineseToVietnamese(content, runtime.options, bundle, storyScopedNameMap).trim() || content;
+          converted = finalText !== content;
+          if (defaults.warnings.length > 0) {
+            notifyApp({
+              tone: 'warn',
+              message: `Đã convert nhưng bộ từ điển mặc định có cảnh báo: ${defaults.warnings[0]}`,
+            });
+          }
+        } else {
+          updateAiRun(aiRun, {
+            message: 'Phát hiện tiếng Việt, đang lưu thư viện...',
+            stageLabel: 'Lưu truyện',
+            detail: 'Nội dung tiếng Việt sẽ được nhập thẳng vào thư viện để đọc/chỉnh sửa ngay.',
+          });
+        }
+
+        const savedStory = saveImportedStoryToLibrary({
+          fileName: file.name,
+          finalText,
+          sourceLanguage: detectedLanguage,
+          converted,
+        });
+        if (!savedStory) {
+          throw new Error('Không thể lưu truyện vào thư viện.');
+        }
+        notifyApp({
+          tone: 'success',
+          message: converted
+            ? 'Đã tự động convert Trung → Việt và lưu vào thư viện.'
+            : 'Đã nhận diện tiếng Việt và lưu truyện vào thư viện.',
+        });
       } catch (err) {
         notifyApp({ tone: "error", message: `Lỗi khi đọc file: ${String(err || '')}` });
       } finally {
@@ -12812,7 +12982,7 @@ ${JSON.stringify(violatingPayload)}
                 className="hero-action hero-action-warm glow-dot flex items-center justify-center gap-3 px-8 py-4 rounded-2xl bg-amber-600 hover:bg-amber-700 text-white transition-all shadow-xl shadow-amber-900/20 font-bold text-lg group"
               >
                 <Languages className="w-6 h-6 transition-transform duration-300 group-hover:scale-110 group-hover:-translate-y-0.5" />
-                AI từ file (Dịch / Viết tiếp)
+                Tải truyện & auto convert
               </button>
               <input
                 type="file"
