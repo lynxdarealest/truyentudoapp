@@ -21,7 +21,6 @@ const AIS_AUTH_BASE = 'https://ais-dev-qbnyavxszwzdl6ugpdjaxp-279055114293.asia-
 const EVOLINK_HOME_URL = 'https://evolink.ai';
 const EVOLINK_SIGNUP_URL = 'https://evolink.ai/signup';
 const EVOLINK_IMAGE_DOCS_URL = 'https://docs.evolink.ai/en/api-manual/image-series/z-image-turbo/z-image-turbo-image-generate';
-const AI_STUDIO_URL = 'https://aistudio.google.com/app/apikey';
 const CODE_REGEX = /\b(\d{4,8})\b/;
 
 function toWsUrl(url: string): string {
@@ -293,20 +292,6 @@ export function ApiSectionPanel({
         </div>
 
         <div className="space-y-3">
-          <div className="rounded-2xl border border-indigo-400/20 bg-indigo-500/5 p-4 space-y-2">
-            <p className="text-sm font-semibold text-white">Lấy Gemini API key trực tiếp từ Google AI Studio</p>
-            <p className="text-sm text-slate-300">
-              Cách dùng ổn định nhất hiện tại là để người dùng tự tạo Gemini API key trong Google AI Studio rồi dán vào đây.
-              TruyenForge chưa nên cố “rút key” tự động từ phiên đăng nhập AI Studio vì cách đó không rõ ràng, khó bền và dễ lỗi theo thay đổi của Google.
-            </p>
-            <ol className="list-decimal pl-5 space-y-1 text-sm text-slate-300">
-              <li>Mở <a href={AI_STUDIO_URL} target="_blank" rel="noreferrer" className="text-sky-300 underline underline-offset-2">Google AI Studio API Keys</a>.</li>
-              <li>Đăng nhập, tạo hoặc chọn project nếu cần.</li>
-              <li>Tạo key Gemini rồi copy chuỗi khóa.</li>
-              <li>Dán key vào ô API bên dưới và bấm <span className="font-semibold text-white">Lưu</span>.</li>
-            </ol>
-          </div>
-
           <div className="space-y-3">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <input
