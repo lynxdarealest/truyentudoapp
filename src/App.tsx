@@ -11715,14 +11715,14 @@ CHỈ trả JSON thuần, không bọc markdown.
       )}
       {showBackupCenterModal && (
         <div
-          className="fixed inset-0 z-[266] tf-modal-overlay bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+          className="fixed inset-0 z-[266] tf-modal-overlay bg-black/60 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4"
           onClick={(event) => {
             if (event.target === event.currentTarget) {
               closeBackupCenter();
             }
           }}
         >
-          <div className="tf-modal-panel relative w-full max-w-6xl tf-card p-6 space-y-5">
+          <div className="tf-modal-panel relative w-full max-w-[1100px] max-h-[92vh] overflow-hidden tf-card p-4 sm:p-5 md:p-6">
             <button
               type="button"
               aria-label="Đóng bảng sao lưu"
@@ -11731,6 +11731,7 @@ CHỈ trả JSON thuần, không bọc markdown.
             >
               <X className="h-5 w-5" />
             </button>
+            <div className="space-y-5 overflow-y-auto pr-1 sm:pr-2 max-h-[calc(92vh-2.25rem)]">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div className="space-y-2 pr-14">
                 <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Sao lưu & khôi phục</p>
@@ -12023,6 +12024,7 @@ CHỈ trả JSON thuần, không bọc markdown.
                   </div>
                 )}
               </div>
+            </div>
             </div>
           </div>
         </div>
