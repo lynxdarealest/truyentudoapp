@@ -632,17 +632,18 @@ interface AccountWorkspaceSnapshot {
   driveBinding?: GoogleDriveBinding | null;
 }
 
-function normalizeOwnedRows<T extends Record<string, unknown>>(rows: T[], userId?: string): T[] {
+function normalizeOwnedRows<T>(rows: T[], userId?: string): T[] {
   if (!userId) return rows;
   return (Array.isArray(rows) ? rows : [])
     .map((row) => {
       if (!row || typeof row !== 'object') return null;
-      const authorId = String(row.authorId || '').trim();
+      const rowObj = row as Record<string, unknown>;
+      const authorId = String(rowObj.authorId || '').trim();
       if (authorId && authorId !== userId) return null;
       return {
-        ...row,
+        ...rowObj,
         authorId: authorId || userId,
-      } as T;
+      } as unknown as T;
     })
     .filter((row): row is T => Boolean(row));
 }
@@ -651,9 +652,9 @@ function sanitizeAccountWorkspaceForUser(snapshot: AccountWorkspaceSnapshot, use
   if (!userId) return snapshot;
   return {
     ...snapshot,
-    stories: normalizeOwnedRows(snapshot.stories, userId) as Story[],
-    characters: normalizeOwnedRows(snapshot.characters, userId) as Character[],
-    aiRules: normalizeOwnedRows(snapshot.aiRules, userId) as AIRule[],
+    stories: normalizeOwnedRows(snapshot.stories, userId),
+    characters: normalizeOwnedRows(snapshot.characters, userId),
+    aiRules: normalizeOwnedRows(snapshot.aiRules, userId),
     translationNames: normalizeOwnedRows(snapshot.translationNames as Record<string, unknown>[], userId),
   };
 }

@@ -13,13 +13,12 @@ export const WRITER_RELEASE_NOTES: ReleaseNote[] = [
   {
     version: APP_VERSION_LABEL,
     dateLabel: '2026-03-28',
-    title: 'Đi lại luồng điều hướng cho mượt và dễ dùng hơn',
+    title: 'Thêm luồng tải truyện và tự convert Trung → Việt ngay trong app',
     items: [
-      'Đổi URL sang dạng gọn hơn: Trang chủ là `/`, trang truyện là `/:storySlug`, và trang đọc chương là `/:storySlug/:chapterSlug` để nhìn vào link là hiểu ngay đang ở đâu.',
-      'Mỗi truyện giờ có một slug ID chữ và số riêng, nên link ổn định hơn, ít đụng nhau hơn và không phụ thuộc vào tên truyện có dấu hay ký tự đặc biệt.',
-      'Sửa lại hành vi Back theo đúng thói quen đọc: từ trang chương Back sẽ về trang truyện, Back thêm lần nữa mới về trang chủ, không bị nhảy lung tung.',
-      'Thêm breadcrumb kiểu Home > Truyện > Chương để quay lại từng tầng nhanh hơn, nhất là khi đọc trên điện thoại.',
-      'Bổ sung trang 404 rõ ràng khi nhập sai link, đồng thời vẫn giữ redirect cho link cũ để ai đã lưu bookmark trước đây không bị gãy.',
+      'Bổ sung mục “Tải truyện & Convert” để bạn có thể đưa file truyện lên trực tiếp, lưu thành từng bản thảo trong kho cục bộ, mở lại bất cứ lúc nào và chỉnh sửa ngay trên màn hình mà không cần đổi qua công cụ khác.',
+      'Thêm luồng tự convert Trung → Việt chạy cục bộ: chỉ cần chọn truyện tiếng Trung rồi bấm convert là hệ thống xử lý ngay trong app, trả kết quả liền để bạn đọc lại, sửa tay hoặc áp dụng ngược vào bản thảo chỉ với một nút bấm.',
+      'Nâng phần convert theo hướng thực dụng hơn: cho phép giữ bộ từ điển mặc định để dùng ngay từ đầu, đồng thời vẫn hỗ trợ nạp file từ điển riêng để tinh chỉnh kết quả theo cách dịch của từng người dùng và từng bộ truyện.',
+      'Mục tiêu của bản 0.1c là gom việc tải truyện, đọc, sửa và convert về cùng một chỗ để thao tác liền mạch hơn: ít bước trung gian, đỡ gián đoạn, và tiết kiệm thời gian khi xử lý các chương dài.',
     ],
   },
   {

@@ -79,7 +79,7 @@ function loadStoredDocs(): LocalStoryDoc[] {
   const parsed = readJsonSafe<LocalStoryDoc[]>(raw);
   if (!Array.isArray(parsed)) return [];
   return parsed
-    .map((doc) => ({
+    .map((doc): LocalStoryDoc => ({
       id: String(doc?.id || `doc-${Date.now()}`),
       title: String(doc?.title || "Truyện chưa đặt tên").trim() || "Truyện chưa đặt tên",
       language: doc?.language === "vi" ? "vi" : "zh",
@@ -581,7 +581,7 @@ export const VietphraseWorkbench: React.FC = () => {
         </div>
 
         {!activeDoc ? (
-          <TFAlert tone="info">Hãy tạo mới hoặc tải truyện lên để bắt đầu chỉnh sửa.</TFAlert>
+          <TFAlert tone="warn">Hãy tạo mới hoặc tải truyện lên để bắt đầu chỉnh sửa.</TFAlert>
         ) : (
           <div className="grid xl:grid-cols-2 gap-4">
             <div className="space-y-2">
