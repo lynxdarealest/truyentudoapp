@@ -32,16 +32,24 @@ npm run dev
 
 ## Cấu hình Supabase
 - App hiện dùng Supabase cho đăng nhập và lưu trữ workspace tài khoản thay cho Firestore/Google.
-- Khai báo biến môi trường trong `.env`:
+- Khai báo biến môi trường trong `.env.local` (không commit file này):
   - `VITE_SUPABASE_URL`
   - `VITE_SUPABASE_ANON_KEY`
   - `VITE_SUPABASE_WORKSPACES_TABLE` mặc định `user_workspaces`
   - `VITE_SUPABASE_QA_REPORTS_TABLE` mặc định `qa_reports`
+  - `VITE_SUPABASE_API_TELEMETRY_TABLE` mặc định `api_key_telemetry_events`
+  - `VITE_ENABLE_API_TELEMETRY` mặc định `1` để bật theo dõi usage API
   - `VITE_RAPHAEL_API_KEY` để bật tạo ảnh bìa Raphael/Evolink ngay trong app
   - `VITE_RAPHAEL_MODEL` mặc định `z-image-turbo`
   - `VITE_RAPHAEL_SIZE` mặc định `2:3`
 - Chạy SQL khởi tạo ở [supabase/schema.sql](/Users/phand/Downloads/ai/truyentudoapp/supabase/schema.sql) trong Supabase SQL Editor trước khi test autosync.
+- Hướng dẫn đầy đủ từng bước: [DATABASE_SETUP_GUIDE.md](/Users/phand/Downloads/ai/truyentudoapp/docs/DATABASE_SETUP_GUIDE.md)
+- Checklist thao tác thực tế: [DATABASE_STEP_BY_STEP_CHECKLIST.md](/Users/phand/Downloads/ai/truyentudoapp/docs/DATABASE_STEP_BY_STEP_CHECKLIST.md)
+- SQL kiểm tra sau setup: [verify_setup.sql](/Users/phand/Downloads/ai/truyentudoapp/supabase/verify_setup.sql)
+- Hướng dẫn theo dõi usage API: [API_TELEMETRY_SETUP.md](/Users/phand/Downloads/ai/truyentudoapp/docs/API_TELEMETRY_SETUP.md)
 - Workspace tài khoản sẽ lưu chung các mục: truyện, nhân vật, AI Rules, từ điển dịch, văn mẫu, prompt library, hồ sơ giao diện và cấu hình budget AI.
+- Checklist bảo mật bắt buộc trước deploy: [SECURITY_PREDEPLOY_CHECKLIST.md](/Users/phand/Downloads/ai/truyentudoapp/docs/SECURITY_PREDEPLOY_CHECKLIST.md)
+- Checklist hoàn thiện trước khi go-live: [DEPLOY_READINESS_CHECKLIST.md](/Users/phand/Downloads/ai/truyentudoapp/docs/DEPLOY_READINESS_CHECKLIST.md)
 
 ## Chế độ demo theo phase (route query)
 - Phase 0 demo: `/?phase0=1`

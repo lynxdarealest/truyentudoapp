@@ -1,6 +1,7 @@
 import type { GlossaryTerm } from '../phase0/aiGateway';
 import { findGlossaryViolations } from '../phase0/aiGateway';
 import { canSpend, chargeBudget, estimateCostUsd } from '../finops';
+import { trackApiRequestTelemetry } from '../apiKeyTelemetry';
 import type {
   Phase2GeneratedIssue,
   Phase2SegmentSnapshot,
@@ -408,7 +409,7 @@ async function runProviderJson(
 }
 
 async function runTaskWithFallback<T>(input: {
-  taskKey: string;
+  taskCode: string;
   systemPrompt: string;
   userPrompt: string;
   normalize: (raw: unknown) => T | null;
@@ -420,7 +421,7 @@ async function runTaskWithFallback<T>(input: {
   const failoverTrail: string[] = [];
   const cacheKey = hashText(
     [
-      input.taskKey,
+      input.taskCode,
       normalizeProviderOrder(runtime.providerOrder).join(','),
       input.preferStrongModel ? '1' : '0',
       input.systemPrompt,
@@ -453,8 +454,9 @@ async function runTaskWithFallback<T>(input: {
 
   for (const candidate of candidates) {
     const model = pickTaskModel(candidate.provider, Boolean(input.preferStrongModel));
+    const promptChars = (input.systemPrompt?.length || 0) + (input.userPrompt?.length || 0);
+    const startedAt = Date.now();
     try {
-      const promptChars = (input.systemPrompt?.length || 0) + (input.userPrompt?.length || 0);
       const providerForPricing = candidate.provider === 'openrouter' ? 'openai' : candidate.provider;
       const estCost = estimateCostUsd(providerForPricing, model, promptChars, 1200);
       const spendCheck = canSpend(estCost);
@@ -468,7 +470,19 @@ async function runTaskWithFallback<T>(input: {
         failoverTrail.push(`${candidate.provider}(${model}) returned invalid QA payload`);
         continue;
       }
-      chargeBudget(estCost, `qa:${input.taskKey}`);
+      chargeBudget(estCost, `qa:${input.taskCode}`);
+      const responseChars = JSON.stringify(normalized).length;
+      trackApiRequestTelemetry({
+        provider: candidate.provider,
+        model,
+        apiKey: candidate.key,
+        task: `phase2:${input.taskCode}`,
+        success: true,
+        latencyMs: Date.now() - startedAt,
+        promptChars,
+        responseChars,
+        estimatedTokens: Math.max(1, Math.round((promptChars + responseChars) / 4)),
+      });
       setTaskCacheEntry(cacheKey, {
         provider: candidate.provider,
         model,
@@ -482,6 +496,18 @@ async function runTaskWithFallback<T>(input: {
         failoverTrail,
       };
     } catch (error) {
+      trackApiRequestTelemetry({
+        provider: candidate.provider,
+        model,
+        apiKey: candidate.key,
+        task: `phase2:${input.taskCode}`,
+        success: false,
+        latencyMs: Date.now() - startedAt,
+        promptChars,
+        responseChars: 0,
+        estimatedTokens: Math.max(1, Math.round(promptChars / 4)),
+        errorMessage: error instanceof Error ? error.message : 'unknown error',
+      });
       failoverTrail.push(`${candidate.provider}(${model}) failed: ${error instanceof Error ? error.message : 'unknown error'}`);
     }
   }
@@ -857,7 +883,7 @@ export async function runProofreadScan(input: QaScanInput): Promise<QaTaskRunRes
   const rulePayload = buildProofreadHeuristics(input);
   const started = performance.now();
   const result = await runTaskWithFallback<QaTaskPayload>({
-    taskKey: 'phase2-proofread',
+    taskCode: 'phase2-proofread',
     preferStrongModel: false,
     systemPrompt: [
       'Ban la AI proofreader cho ban dich van hoc tieng Viet.',
@@ -895,7 +921,7 @@ export async function runConsistencyScan(input: QaScanInput): Promise<QaTaskRunR
   const rulePayload = buildConsistencyHeuristics(input);
   const started = performance.now();
   const result = await runTaskWithFallback<QaTaskPayload>({
-    taskKey: 'phase2-consistency',
+    taskCode: 'phase2-consistency',
     preferStrongModel: true,
     systemPrompt: [
       'Ban la QA editor cho workspace dich truyen dai tap.',

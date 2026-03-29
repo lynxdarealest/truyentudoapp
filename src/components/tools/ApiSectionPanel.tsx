@@ -17,7 +17,7 @@ function maskSensitive(value: string, head = 6, tail = 4): string {
   return `${raw.slice(0, head)}...${raw.slice(-tail)}`;
 }
 
-const AIS_AUTH_BASE = 'https://ais-dev-qbnyavxszwzdl6ugpdjaxp-279055114293.asia-northeast1.run.app/';
+const RELAY_AUTH_BASE = ((import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_RELAY_AUTH_BASE || '').trim();
 const EVOLINK_HOME_URL = 'https://evolink.ai';
 const EVOLINK_SIGNUP_URL = 'https://evolink.ai/signup';
 const EVOLINK_IMAGE_DOCS_URL = 'https://docs.evolink.ai/en/api-manual/image-series/z-image-turbo/z-image-turbo-image-generate';
@@ -267,8 +267,13 @@ export function ApiSectionPanel({
 
   const authLink = useMemo(() => {
     const code = relayCode || '';
-    if (!code) return '';
-    const url = new URL(AIS_AUTH_BASE);
+    if (!code || !RELAY_AUTH_BASE) return '';
+    let url: URL;
+    try {
+      url = new URL(RELAY_AUTH_BASE);
+    } catch {
+      return '';
+    }
     url.searchParams.set('code', code);
     url.searchParams.set('relay', relayConnectUrl);
     url.searchParams.set('worker', relayWebBase);
@@ -312,6 +317,12 @@ export function ApiSectionPanel({
           <p className="text-lg font-semibold text-white">{currentStatusLabel}</p>
         </div>
       </div>
+
+      {!RELAY_AUTH_BASE ? (
+        <div className="rounded-2xl border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+          Relay OAuth đang tắt vì thiếu biến môi trường <code className="font-semibold">VITE_RELAY_AUTH_BASE</code>. Phần AI Văn bản vẫn hoạt động bình thường với API key trực tiếp.
+        </div>
+      ) : null}
 
       <div className="tf-card p-6 space-y-4">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">

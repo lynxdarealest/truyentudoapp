@@ -1,5 +1,6 @@
 export type AiProvider = 'gemini' | 'openai' | 'anthropic' | 'mock';
 import { canSpend, chargeBudget, estimateCostUsd } from '../finops';
+import { trackApiRequestTelemetry } from '../apiKeyTelemetry';
 
 export interface GlossaryTerm {
   source: string;
@@ -593,13 +594,59 @@ function loadCandidates(runtime: RuntimeApiConfig): ProviderCandidate[] {
 }
 
 async function runProvider(candidate: ProviderCandidate, input: TranslateRequest, model: string): Promise<string[]> {
-  if (candidate.provider === 'openai') {
-    return translateWithOpenAI(input, candidate.key, model, candidate.baseUrl);
+  const startedAt = Date.now();
+  const promptChars = readText(input.sourceText).length;
+  try {
+    let alternatives: string[] = [];
+    if (candidate.provider === 'openai') {
+      alternatives = await translateWithOpenAI(input, candidate.key, model, candidate.baseUrl);
+    } else if (candidate.provider === 'anthropic') {
+      alternatives = await translateWithAnthropic(input, candidate.key, model, candidate.baseUrl);
+    } else {
+      alternatives = await translateWithGemini(input, candidate.key, model, candidate.baseUrl);
+    }
+    const responseChars = alternatives.reduce((sum, item) => sum + readText(item).length, 0);
+    trackApiRequestTelemetry({
+      provider: candidate.provider,
+      model,
+      apiKey: candidate.key,
+      keyId: candidate.keyName,
+      task: 'phase0:translate',
+      success: true,
+      latencyMs: Date.now() - startedAt,
+      promptChars,
+      responseChars,
+      estimatedTokens: estimateTokens(input.sourceText) + estimateTokens(alternatives[0] || ''),
+      metadata: {
+        sourceLang: readText(input.sourceLang),
+        targetLang: readText(input.targetLang),
+      },
+    });
+    return alternatives;
+  } catch (error) {
+    const statusCode = Number.isFinite(Number((error as ApiHttpErrorLike)?.status))
+      ? Number((error as ApiHttpErrorLike)?.status)
+      : null;
+    trackApiRequestTelemetry({
+      provider: candidate.provider,
+      model,
+      apiKey: candidate.key,
+      keyId: candidate.keyName,
+      task: 'phase0:translate',
+      success: false,
+      statusCode,
+      latencyMs: Date.now() - startedAt,
+      promptChars,
+      responseChars: 0,
+      estimatedTokens: estimateTokens(input.sourceText),
+      errorMessage: error instanceof Error ? error.message : 'unknown error',
+      metadata: {
+        sourceLang: readText(input.sourceLang),
+        targetLang: readText(input.targetLang),
+      },
+    });
+    throw error;
   }
-  if (candidate.provider === 'anthropic') {
-    return translateWithAnthropic(input, candidate.key, model, candidate.baseUrl);
-  }
-  return translateWithGemini(input, candidate.key, model, candidate.baseUrl);
 }
 
 function selectCandidatesByOrder(runtime: RuntimeApiConfig, candidates: ProviderCandidate[]): ProviderCandidate[] {
