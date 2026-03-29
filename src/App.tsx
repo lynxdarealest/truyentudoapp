@@ -7400,15 +7400,26 @@ const StoryDetail = ({
     return normalizeAiJsonContent(content, '').content || content;
   };
 
+  const normalizeChapterTitleForDisplay = (raw: string) => {
+    if (!raw) return '';
+    return raw
+      .normalize('NFC')
+      .replace(/[\u200B-\u200D\uFEFF]/g, '')
+      .replace(/([A-Za-zÀ-Ỹà-ỹĐđ])\s+([a-zà-ỹđ])(?=[A-ZÀ-ỸĐ])/g, '$1$2')
+      .replace(/([a-zà-ỹđ])([A-ZÀ-ỸĐ])/g, '$1 $2')
+      .replace(/\s+/g, ' ')
+      .trim();
+  };
+
   const getDisplayChapterTitle = (chapter: Chapter) => {
     const baseTitle = String(chapter.title || '').trim();
     const parsed = extractJsonContent(chapter.content || '');
     const parsedTitle = String(parsed?.title || '').trim();
     const isGenericTitle = /^chương\s*\d+$/i.test(baseTitle) || /^chapter\s*\d+$/i.test(baseTitle);
     if (parsedTitle && (!baseTitle || isGenericTitle)) {
-      return parsedTitle;
+      return normalizeChapterTitleForDisplay(parsedTitle);
     }
-    return baseTitle || parsedTitle || `Chương ${chapter.order || ''}`.trim();
+    return normalizeChapterTitleForDisplay(baseTitle || parsedTitle || `Chương ${chapter.order || ''}`.trim());
   };
 
   const formatContent = (content: string) => {
@@ -7685,7 +7696,12 @@ const StoryDetail = ({
               </div>
             </div>
             
-              <h1 className="chapter-title text-4xl font-serif font-bold text-slate-900 mb-10">{getDisplayChapterTitle(selectedChapter)}</h1>
+              <h1
+                className="chapter-title text-4xl font-bold text-slate-900 mb-10"
+                style={{ fontFamily: 'var(--tf-reader-font-family)' }}
+              >
+                {getDisplayChapterTitle(selectedChapter)}
+              </h1>
             
             <div
             className="reader-markdown markdown-body text-lg leading-relaxed text-slate-700"
@@ -12308,7 +12324,7 @@ const AppContent = () => {
       prefs.fontFamily === 'mono'
         ? `"Fira Code", "JetBrains Mono", Consolas, "SFMono-Regular", Menlo, monospace`
         : prefs.fontFamily === 'serif'
-          ? `"Merriweather", "Times New Roman", Georgia, serif`
+          ? `"Noto Serif", "Times New Roman", Georgia, serif`
           : `"Inter", "Segoe UI", "Helvetica Neue", Arial, sans-serif`;
     root.style.setProperty('--tf-reader-font-family', fontStack);
   }, []);

@@ -1,9 +1,9 @@
-@import url("https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&family=Merriweather:wght@400;700;900&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&family=Noto+Serif:wght@400;600;700;800&display=swap");
 @import "tailwindcss";
 
 @theme {
   --font-sans: "Be Vietnam Pro", ui-sans-serif, system-ui, sans-serif;
-  --font-serif: "Merriweather", Georgia, serif;
+  --font-serif: "Noto Serif", Georgia, "Times New Roman", serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
 }
 
@@ -21,7 +21,7 @@
   --border: #d9e2ec;
   --tf-reader-font-size: 17px;
   --tf-reader-line-height: 1.7;
-  --tf-reader-font-family: "Merriweather", "Times New Roman", Georgia, serif;
+  --tf-reader-font-family: "Noto Serif", "Times New Roman", Georgia, serif;
   --tf-reader-bg: #f6f9ff;
   --tf-reader-text: #0f172a;
 }
