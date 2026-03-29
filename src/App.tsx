@@ -54,11 +54,7 @@ import { Link, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useNav
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { Navbar } from './components/Navbar';
-import { ReleaseHistoryAccordion } from './components/ReleaseHistoryAccordion';
 import { loadBudgetState, saveBudgetState } from './finops';
-import { ApiSectionPanel } from './components/tools/ApiSectionPanel';
-import { ToolsPage } from './features/tools/ToolsPage';
-import { PromptLibraryModal as PromptLibraryModalNew } from './features/prompt/PromptLibrary';
 import { CURRENT_WRITER_VERSION, WRITER_RELEASE_NOTES } from './phase3/releaseHistory';
 import { APP_NOTICE_EVENT, notifyApp, type AppNoticePayload, type AppNoticeTone } from './notifications';
 import { loadPromptLibraryState, savePromptLibraryState, type PromptLibraryState } from './promptLibraryStore';
@@ -73,8 +69,7 @@ import { clearWorkspaceSyncQueue, enqueueWorkspaceSyncJob, getWorkspaceSyncQueue
 
 import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { handleRelayMessage, relayGenerateContent, setRelaySender, notifyRelayDisconnected } from './relayBridge';
-import { QualityCenter, type QaIssue } from './components/QualityCenter';
-import JSZip from 'jszip';
+import type { QaIssue } from './components/QualityCenter';
 import {
   type ApiProvider,
   type AiProfileMode,
@@ -90,6 +85,22 @@ import {
 } from './apiVault';
 
 const MarkdownRenderer = React.lazy(() => import('./components/MarkdownRenderer'));
+const ApiSectionPanel = React.lazy(async () => {
+  const module = await import('./components/tools/ApiSectionPanel');
+  return { default: module.ApiSectionPanel };
+});
+const ToolsPage = React.lazy(async () => {
+  const module = await import('./features/tools/ToolsPage');
+  return { default: module.ToolsPage };
+});
+const PromptLibraryModalNew = React.lazy(async () => {
+  const module = await import('./features/prompt/PromptLibrary');
+  return { default: module.PromptLibraryModal };
+});
+const ReleaseHistoryAccordion = React.lazy(async () => {
+  const module = await import('./components/ReleaseHistoryAccordion');
+  return { default: module.ReleaseHistoryAccordion };
+});
 
 // Utility for tailwind classes
 function cn(...inputs: ClassValue[]) {
@@ -121,6 +132,7 @@ interface AiOverlayProgress {
 let mammothModulePromise: Promise<any> | null = null;
 let pdfjsModulePromise: Promise<any> | null = null;
 let epubModulePromise: Promise<any> | null = null;
+let jsZipModulePromise: Promise<any> | null = null;
 let pdfWorkerConfigured = false;
 const downloadBlob = (blob: Blob, filename: string) => {
   const url = URL.createObjectURL(blob);
@@ -201,6 +213,14 @@ async function loadEpubFactory(): Promise<(input: ArrayBuffer) => any> {
   return (module?.default || module) as (input: ArrayBuffer) => any;
 }
 
+async function loadJSZipFactory(): Promise<any> {
+  if (!jsZipModulePromise) {
+    jsZipModulePromise = import('jszip');
+  }
+  const module = await jsZipModulePromise;
+  return module?.default || module;
+}
+
 function sanitizeFilename(name: string): string {
   return name.replace(/[<>:"/\\|?*]+/g, '').trim() || 'truyen';
 }
@@ -223,6 +243,7 @@ async function buildTxtExport(story: Story, includeToc: boolean): Promise<Blob> 
 }
 
 async function buildEpubExport(story: Story, includeToc: boolean): Promise<Blob> {
+  const JSZip = await loadJSZipFactory();
   const zip = new JSZip();
   const sorted = [...(story.chapters || [])].sort((a, b) => a.order - b.order);
 
@@ -354,6 +375,7 @@ const STORIES_UPDATED_EVENT = 'stories:updated';
 const WORKSPACE_RECOVERY_KEY = 'truyenforge:workspace-recovery-v1';
 const ACCOUNT_CLOUD_AUTOSYNC_ENABLED = String(import.meta.env.VITE_ACCOUNT_AUTOSYNC ?? '1').trim() !== '0';
 const ACCOUNT_CLOUD_AUTOSYNC_DEBOUNCE_MS = 5 * 60 * 1000;
+const ACCOUNT_SYNC_QUEUE_STATS_DEBOUNCE_MS = 1200;
 const ACCOUNT_AUTOSYNC_TRIGGER_SECTIONS: ReadonlySet<LocalWorkspaceSection> = new Set([
   'stories',
   'characters',
@@ -6179,99 +6201,101 @@ const ToolsManager = ({
   if (isApiSection) {
     return (
       <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }}>
-        <ApiSectionPanel
-          onBack={onBack}
-          apiMode={apiMode}
-          currentProviderLabel={apiMode === 'relay' ? 'Trạm trung chuyển' : PROVIDER_LABELS[currentApiEntry?.provider || selectedProvider || 'gemini']}
-          currentModelLabel={apiMode === 'relay' ? (selectedModel || getProfileModel('quality', 'gemini')) : (currentApiEntry?.model || selectedModel || 'Chưa chọn')}
-          vaultCount={apiVault.length}
-          currentStatusLabel={apiMode === 'relay' ? relayStatusText : (currentApiEntry ? currentApiEntry.name : 'Chưa cấu hình')}
-          onSwitchToDirect={() => {
-            setApiMode('manual');
-            persistRuntimeConfig({ mode: 'manual' });
-          }}
-          onSwitchToRelay={() => {
-            setApiMode('relay');
-            persistRuntimeConfig({ mode: 'relay', selectedProvider: 'gemini', selectedModel: selectedModel || getProfileModel('quality', 'gemini') });
-          }}
-          apiEntryName={apiEntryName}
-          apiEntryText={apiEntryText}
-          displayedDraftProvider={displayedDraftProvider}
-          effectiveDraftProvider={effectiveDraftProvider}
-          availableDraftModels={availableDraftModels}
-          apiEntryModel={apiEntryModel}
-          apiEntryBaseUrl={apiEntryBaseUrl}
-          aiProfile={aiProfile}
-          apiVault={apiVault}
-          currentApiEntry={currentApiEntry}
-          testingApiId={testingApiId}
-          relayStatus={relayStatus}
-          relayStatusText={relayStatusText}
-          relayUrl={relayUrl}
-          relayMatchedLong={relayMatchedLong}
-          relayMaskedToken={relayMaskedToken}
-          relayModel={selectedModel || getProfileModel('quality', 'gemini')}
-          relayModelOptions={PROVIDER_MODEL_OPTIONS.gemini}
-          relayWebBase={RELAY_WEB_BASE}
-          relaySocketBase={RELAY_SOCKET_BASE}
-          manualRelayTokenInput={manualRelayTokenInput}
-          isCheckingAi={isCheckingAi}
-          aiCheckStatus={aiCheckStatus}
-          aiUsageRequests={aiUsageStats.requests}
-          aiUsageTokens={aiUsageStats.estTokens}
-          quickImportText={quickImportText}
-          quickImportResult={quickImportResult}
-          imageAiEnabled={imageAiEnabled}
-          imageAiApiKey={imageAiApiKey}
-          imageAiProvider={imageAiProvider}
-          imageAiModel={imageAiModel}
-          imageAiStatusLabel={
-            imageAiEnabled
-              ? (imageAiApiKey.trim()
-                ? `Đang bật và sẽ ưu tiên dùng ${IMAGE_AI_PROVIDER_META[imageAiProvider].label} cho tạo ảnh bìa.`
-                : 'Đang bật nhưng chưa có API key, nên vẫn sẽ rơi xuống nhánh dự phòng.')
-              : 'Đang tắt. TruyenForge sẽ bỏ qua nhánh AI sinh ảnh riêng khi tạo bìa.'
-          }
-          onApiEntryNameChange={setApiEntryName}
-          onApiEntryTextChange={setApiEntryText}
-          onApiEntryProviderChange={setApiEntryProvider}
-          onApiEntryModelChange={setApiEntryModel}
-          onApiEntryBaseUrlChange={setApiEntryBaseUrl}
-          onImageAiEnabledChange={setImageAiEnabled}
-          onImageAiApiKeyChange={setImageAiApiKey}
-          onImageAiProviderChange={(value) => {
-            const nextConfig = getImageApiConfig();
-            setImageAiProvider(value);
-            setImageAiModel(nextConfig.providers[value]?.model || getDefaultImageAiModel(value));
-            setImageAiApiKey(nextConfig.providers[value]?.apiKey || '');
-          }}
-          onImageAiModelChange={setImageAiModel}
-          onSaveImageAiConfig={handleSaveImageAiConfig}
-          onSaveApiEntry={handleSaveApiEntry}
-          onTestApiEntry={handleTestApiEntry}
-          onActivateApiEntry={handleActivateApiEntry}
-          onDeleteApiEntry={handleDeleteApiEntry}
-          onStoredApiModelChange={handleApiModelChange}
-          onStoredApiBaseUrlChange={handleApiBaseUrlChange}
-          onConnectRelay={handleConnectRelay}
-          onDisconnectRelay={handleDisconnectRelay}
-          onRelayUrlChange={(value) => {
-            setRelayUrl(value);
-            setRelayIdentityHint(value);
-            persistRuntimeConfig({ relayUrl: value, identityHint: value, selectedProvider: 'gemini', selectedModel: selectedModel || getProfileModel('quality', 'gemini') });
-          }}
-          onRelayModelChange={handleRelayModelChange}
-          onManualRelayTokenInputChange={setManualRelayTokenInput}
-          onSaveManualRelayToken={handleSaveManualRelayToken}
-          onCheckAiHealth={handleCheckAiHealth}
-          onResetAiUsage={handleResetAiUsage}
-          onQuickImportTextChange={setQuickImportText}
-          onQuickImportKeys={handleQuickImportKeys}
-          onAiProfileChange={(next) => {
-            setAiProfile(next);
-            persistRuntimeConfig({ aiProfile: next });
-          }}
-        />
+        <React.Suspense fallback={<div className="tf-card p-6 text-sm text-slate-300">Đang tải khu API...</div>}>
+          <ApiSectionPanel
+            onBack={onBack}
+            apiMode={apiMode}
+            currentProviderLabel={apiMode === 'relay' ? 'Trạm trung chuyển' : PROVIDER_LABELS[currentApiEntry?.provider || selectedProvider || 'gemini']}
+            currentModelLabel={apiMode === 'relay' ? (selectedModel || getProfileModel('quality', 'gemini')) : (currentApiEntry?.model || selectedModel || 'Chưa chọn')}
+            vaultCount={apiVault.length}
+            currentStatusLabel={apiMode === 'relay' ? relayStatusText : (currentApiEntry ? currentApiEntry.name : 'Chưa cấu hình')}
+            onSwitchToDirect={() => {
+              setApiMode('manual');
+              persistRuntimeConfig({ mode: 'manual' });
+            }}
+            onSwitchToRelay={() => {
+              setApiMode('relay');
+              persistRuntimeConfig({ mode: 'relay', selectedProvider: 'gemini', selectedModel: selectedModel || getProfileModel('quality', 'gemini') });
+            }}
+            apiEntryName={apiEntryName}
+            apiEntryText={apiEntryText}
+            displayedDraftProvider={displayedDraftProvider}
+            effectiveDraftProvider={effectiveDraftProvider}
+            availableDraftModels={availableDraftModels}
+            apiEntryModel={apiEntryModel}
+            apiEntryBaseUrl={apiEntryBaseUrl}
+            aiProfile={aiProfile}
+            apiVault={apiVault}
+            currentApiEntry={currentApiEntry}
+            testingApiId={testingApiId}
+            relayStatus={relayStatus}
+            relayStatusText={relayStatusText}
+            relayUrl={relayUrl}
+            relayMatchedLong={relayMatchedLong}
+            relayMaskedToken={relayMaskedToken}
+            relayModel={selectedModel || getProfileModel('quality', 'gemini')}
+            relayModelOptions={PROVIDER_MODEL_OPTIONS.gemini}
+            relayWebBase={RELAY_WEB_BASE}
+            relaySocketBase={RELAY_SOCKET_BASE}
+            manualRelayTokenInput={manualRelayTokenInput}
+            isCheckingAi={isCheckingAi}
+            aiCheckStatus={aiCheckStatus}
+            aiUsageRequests={aiUsageStats.requests}
+            aiUsageTokens={aiUsageStats.estTokens}
+            quickImportText={quickImportText}
+            quickImportResult={quickImportResult}
+            imageAiEnabled={imageAiEnabled}
+            imageAiApiKey={imageAiApiKey}
+            imageAiProvider={imageAiProvider}
+            imageAiModel={imageAiModel}
+            imageAiStatusLabel={
+              imageAiEnabled
+                ? (imageAiApiKey.trim()
+                  ? `Đang bật và sẽ ưu tiên dùng ${IMAGE_AI_PROVIDER_META[imageAiProvider].label} cho tạo ảnh bìa.`
+                  : 'Đang bật nhưng chưa có API key, nên vẫn sẽ rơi xuống nhánh dự phòng.')
+                : 'Đang tắt. TruyenForge sẽ bỏ qua nhánh AI sinh ảnh riêng khi tạo bìa.'
+            }
+            onApiEntryNameChange={setApiEntryName}
+            onApiEntryTextChange={setApiEntryText}
+            onApiEntryProviderChange={setApiEntryProvider}
+            onApiEntryModelChange={setApiEntryModel}
+            onApiEntryBaseUrlChange={setApiEntryBaseUrl}
+            onImageAiEnabledChange={setImageAiEnabled}
+            onImageAiApiKeyChange={setImageAiApiKey}
+            onImageAiProviderChange={(value) => {
+              const nextConfig = getImageApiConfig();
+              setImageAiProvider(value);
+              setImageAiModel(nextConfig.providers[value]?.model || getDefaultImageAiModel(value));
+              setImageAiApiKey(nextConfig.providers[value]?.apiKey || '');
+            }}
+            onImageAiModelChange={setImageAiModel}
+            onSaveImageAiConfig={handleSaveImageAiConfig}
+            onSaveApiEntry={handleSaveApiEntry}
+            onTestApiEntry={handleTestApiEntry}
+            onActivateApiEntry={handleActivateApiEntry}
+            onDeleteApiEntry={handleDeleteApiEntry}
+            onStoredApiModelChange={handleApiModelChange}
+            onStoredApiBaseUrlChange={handleApiBaseUrlChange}
+            onConnectRelay={handleConnectRelay}
+            onDisconnectRelay={handleDisconnectRelay}
+            onRelayUrlChange={(value) => {
+              setRelayUrl(value);
+              setRelayIdentityHint(value);
+              persistRuntimeConfig({ relayUrl: value, identityHint: value, selectedProvider: 'gemini', selectedModel: selectedModel || getProfileModel('quality', 'gemini') });
+            }}
+            onRelayModelChange={handleRelayModelChange}
+            onManualRelayTokenInputChange={setManualRelayTokenInput}
+            onSaveManualRelayToken={handleSaveManualRelayToken}
+            onCheckAiHealth={handleCheckAiHealth}
+            onResetAiUsage={handleResetAiUsage}
+            onQuickImportTextChange={setQuickImportText}
+            onQuickImportKeys={handleQuickImportKeys}
+            onAiProfileChange={(next) => {
+              setAiProfile(next);
+              persistRuntimeConfig({ aiProfile: next });
+            }}
+          />
+        </React.Suspense>
       </motion.div>
     );
   }
@@ -6282,7 +6306,9 @@ const ToolsManager = ({
       animate={{ opacity: 1, x: 0 }}
       className="max-w-5xl mx-auto pt-24 pb-12 px-6"
     >
-      <ToolsPage onBack={onBack} onRequireAuth={onRequireAuth} />
+      <React.Suspense fallback={<div className="tf-card p-6 text-sm text-slate-300">Đang tải Công cụ...</div>}>
+        <ToolsPage onBack={onBack} onRequireAuth={onRequireAuth} />
+      </React.Suspense>
     </motion.div>
   );
 };
@@ -10472,7 +10498,7 @@ const AppContent = () => {
     }
   }, [applyAccountSyncQueueStats, user?.uid]);
 
-  const scheduleRefreshAccountSyncQueueStats = useCallback((delayMs = 220) => {
+  const scheduleRefreshAccountSyncQueueStats = useCallback((delayMs = ACCOUNT_SYNC_QUEUE_STATS_DEBOUNCE_MS) => {
     if (typeof window === 'undefined') return;
     if (queueStatsRefreshTimerRef.current) {
       window.clearTimeout(queueStatsRefreshTimerRef.current);
@@ -13723,10 +13749,12 @@ ${JSON.stringify(violatingPayload)}
     if (view === 'tools') {
       if (user) {
         return (
-          <ToolsPage
-            onBack={() => setView('stories')}
-            onRequireAuth={() => setShowAuthModal(true)}
-          />
+          <React.Suspense fallback={<div className="tf-card p-6 text-sm text-slate-300">Đang tải Công cụ...</div>}>
+            <ToolsPage
+              onBack={() => setView('stories')}
+              onRequireAuth={() => setShowAuthModal(true)}
+            />
+          </React.Suspense>
         );
       }
       return (
@@ -14036,11 +14064,15 @@ ${JSON.stringify(violatingPayload)}
         </div>
       )}
 
-      <PromptLibraryModalNew
-        isOpen={showPromptManager}
-        onClose={() => setShowPromptManager(false)}
-        onSelect={() => setShowPromptManager(false)}
-      />
+      {showPromptManager && (
+        <React.Suspense fallback={null}>
+          <PromptLibraryModalNew
+            isOpen={showPromptManager}
+            onClose={() => setShowPromptManager(false)}
+            onSelect={() => setShowPromptManager(false)}
+          />
+        </React.Suspense>
+      )}
 
       <input
         ref={backupImportInputRef}
@@ -14153,11 +14185,13 @@ ${JSON.stringify(violatingPayload)}
               <button className="tf-btn tf-btn-ghost px-3 py-1" onClick={() => setShowReleaseHistoryModal(false)}>Đóng</button>
             </div>
             <div className="space-y-3">
-              <ReleaseHistoryAccordion
-                notes={WRITER_RELEASE_NOTES}
-                currentVersion={CURRENT_WRITER_VERSION}
-                variant="dark"
-              />
+              <React.Suspense fallback={<div className="rounded-xl border border-white/10 bg-slate-900/40 px-4 py-3 text-sm text-slate-300">Đang tải lịch sử cập nhật...</div>}>
+                <ReleaseHistoryAccordion
+                  notes={WRITER_RELEASE_NOTES}
+                  currentVersion={CURRENT_WRITER_VERSION}
+                  variant="dark"
+                />
+              </React.Suspense>
             </div>
           </div>
         </div>

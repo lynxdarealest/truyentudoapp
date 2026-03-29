@@ -180,6 +180,19 @@ async function deleteJob(id: string): Promise<void> {
   });
 }
 
+async function deleteJobs(ids: string[]): Promise<void> {
+  if (!ids.length) return;
+  const db = await openDatabase();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    const store = tx.objectStore(STORE_NAME);
+    ids.forEach((id) => store.delete(id));
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error || new Error('Không thể dọn job trùng trong queue đồng bộ.'));
+    tx.onabort = () => reject(tx.error || new Error('Dọn job trùng trong queue bị hủy.'));
+  });
+}
+
 function computeBackoff(attempts: number): number {
   const power = Math.max(1, attempts);
   return Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS * (2 ** (power - 1)));
@@ -191,12 +204,13 @@ export async function enqueueWorkspaceSyncJob(input: {
   idempotencyKey: string;
 }): Promise<void> {
   const jobs = await getJobsForUser(input.userId);
-  const sameSectionPending = jobs.find(
-    (job) => job.section === input.section && job.status !== 'running',
-  );
-  if (sameSectionPending) {
+  const reusable = jobs
+    .filter((job) => job.status !== 'running')
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0];
+  if (reusable) {
     await putJob({
-      ...sameSectionPending,
+      ...reusable,
+      section: input.section,
       idempotencyKey: input.idempotencyKey,
       status: 'pending',
       attempts: 0,
@@ -204,17 +218,10 @@ export async function enqueueWorkspaceSyncJob(input: {
       nextRunAt: Date.now(),
       updatedAt: nowIso(),
     });
-    dispatchQueueUpdate();
-    return;
-  }
-  const duplicated = jobs.find((job) => job.idempotencyKey === input.idempotencyKey && job.status !== 'running');
-  if (duplicated) {
-    await putJob({
-      ...duplicated,
-      status: 'pending',
-      nextRunAt: Date.now(),
-      updatedAt: nowIso(),
-    });
+    const staleIds = jobs
+      .filter((job) => job.status !== 'running' && job.id !== reusable.id)
+      .map((job) => job.id);
+    await deleteJobs(staleIds);
     dispatchQueueUpdate();
     return;
   }
