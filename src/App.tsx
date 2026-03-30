@@ -3532,6 +3532,12 @@ function stringifyError(err: unknown): string {
   }
 }
 
+function isAbortLikeError(err: unknown): boolean {
+  if (err instanceof DOMException && err.name === 'AbortError') return true;
+  const message = stringifyError(err).toLowerCase();
+  return message.includes('aborterror') || message.includes('aborted');
+}
+
 function extractRetryDelayMs(err: unknown): number {
   const message = stringifyError(err);
   const retryDelayMatch = message.match(/retryDelay["'\s:]*"?(\d+(?:\.\d+)?)s/i);
@@ -3608,16 +3614,41 @@ const fetchWithTimeout = async (
   outerSignal?: AbortSignal,
 ) => {
   const controller = new AbortController();
-  const abort = () => controller.abort();
-  const timer = window.setTimeout(abort, timeoutMs);
-  outerSignal?.addEventListener('abort', abort, { once: true });
+  let timedOut = false;
+  const onTimeout = () => {
+    timedOut = true;
+    try {
+      controller.abort(new Error(`AI request timed out after ${Math.round(timeoutMs / 1000)}s`));
+    } catch {
+      controller.abort();
+    }
+  };
+  const onOuterAbort = () => {
+    try {
+      controller.abort(outerSignal?.reason || new Error('AI operation cancelled by user.'));
+    } catch {
+      controller.abort();
+    }
+  };
+  const timer = window.setTimeout(onTimeout, timeoutMs);
+  outerSignal?.addEventListener('abort', onOuterAbort, { once: true });
   try {
     throwIfAborted(outerSignal);
     const resp = await fetch(input, { ...init, signal: controller.signal });
     return resp;
+  } catch (error) {
+    if (timedOut) {
+      throw new Error(
+        `AI request timed out after ${Math.round(timeoutMs / 1000)}s. Hãy thử lại hoặc giảm kích thước lô.`,
+      );
+    }
+    if (isAbortLikeError(error) && outerSignal?.aborted) {
+      throw new Error('AI operation cancelled by user.');
+    }
+    throw error;
   } finally {
     window.clearTimeout(timer);
-    outerSignal?.removeEventListener('abort', abort);
+    outerSignal?.removeEventListener('abort', onOuterAbort);
   }
 };
 
@@ -3887,6 +3918,14 @@ async function generateGeminiText(
           throw new Error('Nhà cung cấp hiện tại chưa được hỗ trợ.');
         }
       } catch (err) {
+        if (isAbortLikeError(err)) {
+          if (splitConfig.signal?.aborted) {
+            throw new Error('AI operation cancelled by user.');
+          }
+          throw new Error(
+            `AI request timed out after ${Math.round(timeoutMs / 1000)}s. Hãy thử lại, giảm kích thước lô hoặc đổi model nhanh hơn.`,
+          );
+        }
         const isQuotaError = isQuotaOrRateLimitError(err);
         const isTransientError = isTransientAiServiceError(err);
         if (isQuotaError || isTransientError) {
