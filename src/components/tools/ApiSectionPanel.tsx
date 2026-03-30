@@ -318,12 +318,6 @@ export function ApiSectionPanel({
         </div>
       </div>
 
-      {!RELAY_AUTH_BASE ? (
-        <div className="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 shadow-sm">
-          Relay OAuth đang tắt vì thiếu biến môi trường <code className="rounded bg-amber-100 px-1.5 py-0.5 font-semibold text-amber-950">VITE_RELAY_AUTH_BASE</code>. Phần AI Văn bản vẫn hoạt động bình thường với API key trực tiếp.
-        </div>
-      ) : null}
-
       <div className="tf-card p-6 space-y-4">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-2 min-w-0">
