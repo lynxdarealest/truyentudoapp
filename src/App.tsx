@@ -1636,8 +1636,24 @@ function toWsUrl(url: string): string {
   return `wss://${u.replace(/^\/+/, '')}`;
 }
 
-function normalizeOllamaOpenAiBaseUrl(input: string): string {
+function normalizeOllamaLocalHostTypo(input: string): string {
   const raw = String(input || '').trim();
+  if (!raw) return raw;
+  try {
+    const parsed = new URL(raw);
+    const host = parsed.hostname.toLowerCase();
+    if ((host === '127.0.0.1' || host === 'localhost') && parsed.port === '1143') {
+      parsed.port = '11434';
+      return parsed.toString().replace(/\/+$/, '');
+    }
+    return raw;
+  } catch {
+    return raw;
+  }
+}
+
+function normalizeOllamaOpenAiBaseUrl(input: string): string {
+  const raw = normalizeOllamaLocalHostTypo(input);
   if (!raw) return getProviderBaseUrl('ollama');
   const clean = raw.replace(/\/+$/, '');
   if (/\/v1$/i.test(clean) || /\/chat\/completions$/i.test(clean)) {
@@ -1647,7 +1663,7 @@ function normalizeOllamaOpenAiBaseUrl(input: string): string {
 }
 
 function normalizeOllamaApiBaseUrl(input: string): string {
-  const raw = String(input || '').trim() || getProviderBaseUrl('ollama');
+  const raw = normalizeOllamaLocalHostTypo(input) || getProviderBaseUrl('ollama');
   const clean = raw.replace(/\/+$/, '');
   return clean
     .replace(/\/v1\/chat\/completions$/i, '')
@@ -4395,7 +4411,7 @@ async function generateGeminiText(
 ): Promise<string> {
   const taskStartedAt = Date.now();
   const runtime = getApiRuntimeConfig();
-  const initialModel = auth.model || getProfileModel(kind, auth.provider);
+  let initialModel = String(auth.model || getProfileModel(kind, auth.provider) || '').trim();
   let modelCandidates = auth.provider === 'gemini' || auth.provider === 'gcli'
     ? getGeminiFallbackModels(initialModel, kind)
     : getProviderFallbackModels(auth.provider, initialModel, kind);
@@ -4410,10 +4426,16 @@ async function generateGeminiText(
     );
     if (ollamaInstalledModels.length) {
       const installedSet = new Set(ollamaInstalledModels.map((item) => item.toLowerCase()));
-      const baseExists = installedSet.has(initialModel.toLowerCase());
+      const preferredInstalled =
+        ollamaInstalledModels.find((item) => item.toLowerCase() === 'qwen2.5:7b') ||
+        ollamaInstalledModels[0];
+      const baseExists = Boolean(initialModel) && installedSet.has(initialModel.toLowerCase());
+      if (!baseExists && preferredInstalled) {
+        initialModel = preferredInstalled;
+      }
       const merged = baseExists
         ? [...modelCandidates, ...ollamaInstalledModels]
-        : [...ollamaInstalledModels, ...modelCandidates];
+        : [initialModel, ...ollamaInstalledModels, ...modelCandidates];
       modelCandidates = Array.from(new Set(merged.map((item) => String(item || '').trim()).filter(Boolean)));
     }
   }
