@@ -1622,6 +1622,16 @@ function toWsUrl(url: string): string {
   return `wss://${u.replace(/^\/+/, '')}`;
 }
 
+function normalizeOllamaOpenAiBaseUrl(input: string): string {
+  const raw = String(input || '').trim();
+  if (!raw) return getProviderBaseUrl('ollama');
+  const clean = raw.replace(/\/+$/, '');
+  if (/\/v1$/i.test(clean) || /\/chat\/completions$/i.test(clean)) {
+    return clean;
+  }
+  return `${clean}/v1`;
+}
+
 function normalizeStoredRelayUrl(input: string): string {
   const raw = String(input || '').trim();
   if (!raw) return buildRelaySocketUrl('');
@@ -3810,7 +3820,9 @@ async function generateGeminiText(
           auth.provider === 'openrouter' ||
           auth.provider === 'mistral'
         ) {
-          const openAiBase = auth.baseUrl || getProviderBaseUrl(auth.provider);
+          const openAiBase = auth.provider === 'ollama'
+            ? normalizeOllamaOpenAiBaseUrl(auth.baseUrl || getProviderBaseUrl('ollama'))
+            : (auth.baseUrl || getProviderBaseUrl(auth.provider));
           const completionEndpoint = /\/chat\/completions$/i.test(openAiBase)
             ? openAiBase
             : `${openAiBase.replace(/\/+$/, '')}/chat/completions`;
