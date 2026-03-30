@@ -550,6 +550,11 @@ interface BackupSettings {
   lastManualSyncAt: string;
 }
 
+interface TranslationSafetyProfileSettings {
+  autoSafeModeEnabled: boolean;
+  checkpointEveryChunks: number;
+}
+
 interface GoogleDriveBinding {
   sub: string;
   email: string;
@@ -572,12 +577,21 @@ const DEFAULT_PROFILE_AVATAR = 'https://api.dicebear.com/9.x/initials/svg?seed=U
 const BACKUP_SETTINGS_KEY = 'truyenforge:backup-settings-v1';
 const DRIVE_BINDING_MAP_KEY = 'truyenforge:drive-binding-map-v1';
 const ACCOUNT_SYNC_DISABLED_NOTICE_KEY = 'truyenforge:account-sync-disabled-notice-v1';
+const TRANSLATION_SAFETY_PROFILE_KEY = 'truyenforge:translation-safety-profile-v1';
+const TRANSLATION_PIPELINE_CHECKPOINT_KEY = 'truyenforge:translation-pipeline-checkpoint-v1';
+const STORY_BIBLE_PREFIX = 'TF_STORY_BIBLE::';
+const STORY_BIBLE_VERSION = 1;
 const DEFAULT_BACKUP_SETTINGS: BackupSettings = {
   autoSnapshotEnabled: true,
   autoUploadToDrive: true,
   staleAfterHours: 6,
   lastSuccessfulBackupAt: '',
   lastManualSyncAt: '',
+};
+
+const DEFAULT_TRANSLATION_SAFETY_PROFILE_SETTINGS: TranslationSafetyProfileSettings = {
+  autoSafeModeEnabled: true,
+  checkpointEveryChunks: 10,
 };
 
 function loadBackupSettings(): BackupSettings {
@@ -2429,6 +2443,432 @@ function splitTextForTranslation(text: string, maxChars: number): string[] {
   return units.map((unit) => `${unit.title}\n${unit.source}`.trim());
 }
 
+type PipelinePhase = 'structure' | 'knowledge' | 'draft' | 'qa';
+
+interface LocalStructureAnalysis {
+  chapterCount: number;
+  paragraphCount: number;
+  dialogueCount: number;
+  namedEntities: string[];
+  timeMarkers: string[];
+  hasExplicitChapters: boolean;
+}
+
+interface StoryBibleSummaryItem {
+  title: string;
+  summary: string;
+}
+
+interface StoryBiblePayload {
+  version: number;
+  fileFingerprint: string;
+  createdAt: string;
+  updatedAt: string;
+  sourceStats: {
+    words: number;
+    chars: number;
+    tokens: number;
+  };
+  structure: LocalStructureAnalysis;
+  chapterSummaries: StoryBibleSummaryItem[];
+  arcSummaries: StoryBibleSummaryItem[];
+  globalSummary: string;
+  keyMoments: string[];
+}
+
+interface TranslationPipelineCheckpoint {
+  version: number;
+  fileFingerprint: string;
+  updatedAt: string;
+  processedSegments: number;
+  processedChunkCount: number;
+  chapterStates: Record<string, {
+    title: string;
+    segments: string[];
+    completedBatches: number;
+    lastTail: string;
+  }>;
+}
+
+interface LocalTranslationQaResult {
+  normalizedContent: string;
+  missingDictionaryTerms: string[];
+  forbiddenPhraseHits: string[];
+  totalIssues: number;
+}
+
+function trimTextByTokenBudget(text: string, tokenBudget: number): string {
+  const safeBudget = Math.max(120, Math.floor(tokenBudget));
+  const maxChars = safeBudget * 4;
+  const normalized = String(text || '').trim();
+  if (normalized.length <= maxChars) return normalized;
+  return `${normalized.slice(0, maxChars).trim()}…`;
+}
+
+function extractNamedEntitiesLocal(text: string, maxItems = 80): string[] {
+  const source = String(text || '');
+  const pattern = /\b([A-ZÀ-ỴĐ][a-zà-ỹđ]+(?:\s+[A-ZÀ-ỴĐ][a-zà-ỹđ]+){0,3})\b/g;
+  const blocked = new Set(['Chương', 'Quyển', 'Mở đầu', 'Nội dung', 'Giới thiệu', 'Truyện']);
+  const counter = new Map<string, number>();
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(source)) !== null) {
+    const token = String(match[1] || '').trim();
+    if (!token || blocked.has(token)) continue;
+    counter.set(token, (counter.get(token) || 0) + 1);
+  }
+  return Array.from(counter.entries())
+    .filter(([, count]) => count >= 2)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, maxItems)
+    .map(([name]) => name);
+}
+
+function extractTimeMarkersLocal(text: string, maxItems = 60): string[] {
+  const source = String(text || '');
+  const patterns = [
+    /\b(?:năm|tháng|ngày|đêm|sáng|chiều|tối|hôm nay|hôm sau|hôm qua)\b/gi,
+    /\b\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?\b/g,
+    /(?:第?\s*\d+\s*(?:ngày|tháng|năm|h|giờ|phút))/gi,
+    /(?:\d+年\d+月\d+日)/g,
+  ];
+  const counter = new Map<string, number>();
+  patterns.forEach((pattern) => {
+    const matches = source.match(pattern) || [];
+    matches.forEach((item) => {
+      const token = String(item || '').trim();
+      if (!token) return;
+      counter.set(token, (counter.get(token) || 0) + 1);
+    });
+  });
+  return Array.from(counter.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, maxItems)
+    .map(([item]) => item);
+}
+
+function summarizeLocalText(text: string, fallback = 'Nội dung đang phát triển.'): string {
+  const normalized = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!normalized) return fallback;
+  const sentences = splitTextIntoNaturalSentences(normalized).filter(Boolean);
+  if (!sentences.length) return trimTextByTokenBudget(normalized, 120);
+  if (sentences.length === 1) return trimTextByTokenBudget(sentences[0], 120);
+  const first = sentences[0];
+  const middle = sentences[Math.floor(sentences.length / 2)];
+  const last = sentences[sentences.length - 1];
+  return trimTextByTokenBudget([first, middle, last].filter(Boolean).join(' '), 180);
+}
+
+function runLocalStructurePhase(text: string, units: ChapterTranslationUnit[]): LocalStructureAnalysis {
+  const normalized = String(text || '').replace(/\r\n/g, '\n').trim();
+  const paragraphCount = normalized
+    ? normalized.split(/\n{2,}/).map((item) => item.trim()).filter(Boolean).length
+    : 0;
+  const dialogueCount = (normalized.match(/[“"『「].{1,120}[”"』」]/g) || []).length;
+  const namedEntities = extractNamedEntitiesLocal(normalized, 80);
+  const timeMarkers = extractTimeMarkersLocal(normalized, 60);
+  return {
+    chapterCount: units.length,
+    paragraphCount,
+    dialogueCount,
+    namedEntities,
+    timeMarkers,
+    hasExplicitChapters: detectChapterSections(normalized).length >= 2,
+  };
+}
+
+function buildStoryBiblePayload(input: {
+  text: string;
+  units: ChapterTranslationUnit[];
+  structure: LocalStructureAnalysis;
+  fileFingerprint: string;
+}): StoryBiblePayload {
+  const text = String(input.text || '').trim();
+  const chapterSummaries = input.units.map((unit, index) => {
+    const paragraphs = String(unit.source || '')
+      .split(/\n{2,}/)
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .slice(0, 32);
+    const paragraphSummaries = paragraphs.map((paragraph) =>
+      summarizeLocalText(paragraph, 'Đoạn văn cần rà soát thêm.'),
+    );
+    return {
+      title: unit.title || `Chương ${index + 1}`,
+      summary: summarizeLocalText(
+        paragraphSummaries.join(' '),
+        summarizeLocalText(unit.source, 'Chương này cần phân tích lại.'),
+      ),
+    };
+  });
+  const arcChunkSize = chapterSummaries.length >= 24 ? 6 : chapterSummaries.length >= 12 ? 4 : 3;
+  const arcSummaries: StoryBibleSummaryItem[] = [];
+  for (let i = 0; i < chapterSummaries.length; i += arcChunkSize) {
+    const chunk = chapterSummaries.slice(i, i + arcChunkSize);
+    const start = i + 1;
+    const end = i + chunk.length;
+    arcSummaries.push({
+      title: `Arc ${Math.floor(i / arcChunkSize) + 1} (Chương ${start}-${end})`,
+      summary: summarizeLocalText(chunk.map((item) => `${item.title}: ${item.summary}`).join(' ')),
+    });
+  }
+  const keyMoments = chapterSummaries.slice(0, 18).map((item) => item.summary).filter(Boolean);
+  const now = new Date().toISOString();
+  return {
+    version: STORY_BIBLE_VERSION,
+    fileFingerprint: input.fileFingerprint,
+    createdAt: now,
+    updatedAt: now,
+    sourceStats: {
+      words: countWords(text),
+      chars: text.length,
+      tokens: estimateTextTokens(text),
+    },
+    structure: input.structure,
+    chapterSummaries,
+    arcSummaries,
+    globalSummary: summarizeLocalText(
+      [
+        ...chapterSummaries.slice(0, 3).map((item) => item.summary),
+        ...chapterSummaries.slice(-3).map((item) => item.summary),
+      ].join(' '),
+      'Tổng quan truyện đang được cập nhật.',
+    ),
+    keyMoments,
+  };
+}
+
+function stripStoryBibleFromNotes(notes: string): string {
+  const raw = String(notes || '').trim();
+  const idx = raw.indexOf(STORY_BIBLE_PREFIX);
+  if (idx < 0) return raw;
+  return raw.slice(0, idx).trim();
+}
+
+function readStoryBibleFromNotes(notes?: string): StoryBiblePayload | null {
+  const raw = String(notes || '').trim();
+  const idx = raw.indexOf(STORY_BIBLE_PREFIX);
+  if (idx < 0) return null;
+  const jsonPart = raw.slice(idx + STORY_BIBLE_PREFIX.length).trim();
+  const parsed = tryParseJson<StoryBiblePayload>(jsonPart, 'object');
+  if (!parsed || typeof parsed !== 'object') return null;
+  if (!parsed.fileFingerprint || !Array.isArray(parsed.chapterSummaries)) return null;
+  return parsed;
+}
+
+function attachStoryBibleToNotes(existingNotes: string, bible: StoryBiblePayload): string {
+  const cleaned = stripStoryBibleFromNotes(existingNotes || '');
+  return [cleaned, `${STORY_BIBLE_PREFIX}${JSON.stringify(bible)}`].filter(Boolean).join('\n\n');
+}
+
+function buildBibleRetrievalContext(input: {
+  bible: StoryBiblePayload | null;
+  chapterIndex: number;
+  topK: number;
+  tokenBudget: number;
+}): string {
+  if (!input.bible) return '';
+  const entries = input.bible.chapterSummaries || [];
+  if (!entries.length) return '';
+  const chapterIndex = Math.max(0, input.chapterIndex);
+  const scored = entries.map((entry, index) => ({
+    entry,
+    score: 1 / (1 + Math.abs(index - chapterIndex)),
+  }));
+  const top = scored
+    .sort((a, b) => b.score - a.score)
+    .slice(0, Math.max(1, input.topK))
+    .map((item) => `- ${item.entry.title}: ${item.entry.summary}`);
+  const payload = [
+    `GLOBAL: ${input.bible.globalSummary}`,
+    `ARC: ${(input.bible.arcSummaries || []).slice(0, 4).map((item) => `${item.title} => ${item.summary}`).join(' | ')}`,
+    'CHƯƠNG LIÊN QUAN:',
+    ...top,
+  ].join('\n');
+  return trimTextByTokenBudget(payload, Math.max(220, input.tokenBudget));
+}
+
+function scoreTranslationEntryComplexity(text: string): number {
+  const source = String(text || '');
+  const lengthScore = Math.min(1, source.length / 2200);
+  const dialogueScore = Math.min(1, (source.match(/[“"『「]/g) || []).length / 10);
+  const punctuationScore = Math.min(1, (source.match(/[,:;!?。！？]/g) || []).length / 50);
+  const denseEntityScore = Math.min(1, extractNamedEntitiesLocal(source, 20).length / 10);
+  return Number((lengthScore * 0.35 + dialogueScore * 0.25 + punctuationScore * 0.15 + denseEntityScore * 0.25).toFixed(3));
+}
+
+function buildAdaptiveTranslationSegmentBatches(
+  entries: TranslationBatchEntry[],
+  maxCharsPerBatch: number,
+  maxItemsPerBatch: number,
+): TranslationSegmentBatch[] {
+  const safeMaxChars = Math.max(1000, maxCharsPerBatch);
+  const safeMaxItems = Math.max(1, maxItemsPerBatch);
+  const batches: TranslationSegmentBatch[] = [];
+  let current: TranslationBatchEntry[] = [];
+  let currentChars = 0;
+  let dynamicCharCap = safeMaxChars;
+
+  const flush = () => {
+    if (!current.length) return;
+    batches.push({
+      entries: current,
+      sourceText: current.map((entry, idx) => `[${idx + 1}]\n${entry.text}`).join('\n\n'),
+    });
+    current = [];
+    currentChars = 0;
+    dynamicCharCap = safeMaxChars;
+  };
+
+  entries.forEach((entry) => {
+    const text = String(entry.text || '').trim();
+    if (!text) return;
+    const complexity = scoreTranslationEntryComplexity(text);
+    const complexityMultiplier = complexity >= 0.66 ? 0.68 : complexity <= 0.28 ? 1.2 : 0.9;
+    dynamicCharCap = Math.max(900, Math.min(safeMaxChars, Math.round(safeMaxChars * complexityMultiplier)));
+    const entryChars = text.length;
+    const wouldOverflow =
+      current.length >= safeMaxItems ||
+      (current.length > 0 && (currentChars + entryChars > dynamicCharCap));
+    if (wouldOverflow) flush();
+    current.push({ ...entry, text });
+    currentChars += entryChars;
+  });
+
+  flush();
+  return batches;
+}
+
+function loadTranslationPipelineCheckpoint(fileFingerprint: string): TranslationPipelineCheckpoint | null {
+  if (typeof window === 'undefined') return null;
+  const normalizedKey = String(fileFingerprint || '').trim();
+  if (!normalizedKey) return null;
+  try {
+    const raw = localStorage.getItem(TRANSLATION_PIPELINE_CHECKPOINT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Record<string, TranslationPipelineCheckpoint>;
+    const row = parsed?.[normalizedKey];
+    if (!row || row.fileFingerprint !== normalizedKey) return null;
+    return row;
+  } catch {
+    return null;
+  }
+}
+
+function saveTranslationPipelineCheckpoint(checkpoint: TranslationPipelineCheckpoint): void {
+  if (typeof window === 'undefined') return;
+  const key = String(checkpoint.fileFingerprint || '').trim();
+  if (!key) return;
+  try {
+    const raw = localStorage.getItem(TRANSLATION_PIPELINE_CHECKPOINT_KEY);
+    const parsed = raw ? (JSON.parse(raw) as Record<string, TranslationPipelineCheckpoint>) : {};
+    parsed[key] = checkpoint;
+    localStorage.setItem(TRANSLATION_PIPELINE_CHECKPOINT_KEY, JSON.stringify(parsed));
+  } catch {
+    // ignore checkpoint write failure
+  }
+}
+
+function clearTranslationPipelineCheckpoint(fileFingerprint: string): void {
+  if (typeof window === 'undefined') return;
+  const key = String(fileFingerprint || '').trim();
+  if (!key) return;
+  try {
+    const raw = localStorage.getItem(TRANSLATION_PIPELINE_CHECKPOINT_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw) as Record<string, TranslationPipelineCheckpoint>;
+    if (Object.prototype.hasOwnProperty.call(parsed, key)) {
+      delete parsed[key];
+      localStorage.setItem(TRANSLATION_PIPELINE_CHECKPOINT_KEY, JSON.stringify(parsed));
+    }
+  } catch {
+    // ignore checkpoint clear failure
+  }
+}
+
+function buildChapterDagLayers(units: ChapterTranslationUnit[], maxParallel = 2): number[][] {
+  if (!units.length) return [];
+  const safeParallel = Math.max(1, Math.min(2, Math.floor(maxParallel)));
+  const layers: number[][] = [];
+  let currentLayer: number[] = [];
+  const dependentPattern = /\b(?:hồi trước|chương trước|tiếp theo|to be continued|上一章|下回分解)\b/i;
+
+  units.forEach((unit, index) => {
+    const source = String(unit?.source || '').slice(0, 380);
+    const mustRunSequential = dependentPattern.test(source);
+    if (mustRunSequential) {
+      if (currentLayer.length) {
+        layers.push(currentLayer);
+        currentLayer = [];
+      }
+      layers.push([index]);
+      return;
+    }
+
+    currentLayer.push(index);
+    if (currentLayer.length >= safeParallel) {
+      layers.push(currentLayer);
+      currentLayer = [];
+    }
+  });
+
+  if (currentLayer.length) layers.push(currentLayer);
+  return layers;
+}
+
+function estimateProcessingEtaSeconds(startedAtMs: number, completed: number, total: number): number {
+  const safeCompleted = Math.max(0, completed);
+  const safeTotal = Math.max(0, total);
+  if (safeCompleted <= 0 || safeCompleted >= safeTotal) return 0;
+  const elapsedSeconds = Math.max(1, (Date.now() - startedAtMs) / 1000);
+  const rate = safeCompleted / elapsedSeconds;
+  if (!Number.isFinite(rate) || rate <= 0) return 0;
+  const remaining = Math.max(0, safeTotal - safeCompleted);
+  return Math.max(0, Math.round(remaining / rate));
+}
+
+function formatEtaShort(seconds: number): string {
+  const safe = Math.max(0, Math.round(seconds));
+  if (!safe) return '';
+  if (safe < 60) return `${safe}s`;
+  const minutes = Math.floor(safe / 60);
+  const remain = safe % 60;
+  if (minutes < 60) return `${minutes}m${remain ? ` ${remain}s` : ''}`;
+  const hours = Math.floor(minutes / 60);
+  const minuteRemain = minutes % 60;
+  return `${hours}h${minuteRemain ? ` ${minuteRemain}m` : ''}`;
+}
+
+function runLocalTranslationConsistencyQa(input: {
+  sourceText: string;
+  translatedText: string;
+  dictionary: TranslationDictionaryEntry[];
+  forbiddenPhrases: string[];
+}): LocalTranslationQaResult {
+  const source = String(input.sourceText || '');
+  let normalizedContent = improveBracketSystemSpacing(improveDialogueSpacing(String(input.translatedText || ''))).trim();
+  const dictionary = Array.isArray(input.dictionary) ? input.dictionary : [];
+  const forbiddenPhrases = Array.isArray(input.forbiddenPhrases) ? input.forbiddenPhrases : [];
+
+  const missingDictionaryTerms = dictionary
+    .filter((entry) => source.includes(entry.original))
+    .filter((entry) => !normalizedContent.includes(entry.translation))
+    .slice(0, 12)
+    .map((entry) => `${entry.original} -> ${entry.translation}`);
+
+  const forbiddenPhraseHits = findForbiddenPhrasesInText(normalizedContent, forbiddenPhrases).slice(0, 12);
+
+  if (missingDictionaryTerms.length) {
+    normalizedContent = applyTranslationDictionaryToText(source, normalizedContent, dictionary);
+  }
+
+  return {
+    normalizedContent,
+    missingDictionaryTerms,
+    forbiddenPhraseHits,
+    totalIssues: missingDictionaryTerms.length + forbiddenPhraseHits.length,
+  };
+}
+
 function normalizeTranslationDictionary(
   rows: Array<{ original?: string; translation?: string }>,
 ): TranslationDictionaryEntry[] {
@@ -2639,7 +3079,7 @@ function normalizeTranslationBatchResponse(
 
 function parseStoryGenreAndPrompt(rawGenre: string, existingPrompt = ''): { genreLabel: string; promptNotes: string } {
   const source = String(rawGenre || '').trim();
-  const inheritedPrompt = String(existingPrompt || '').trim();
+  const inheritedPrompt = stripStoryBibleFromNotes(String(existingPrompt || '')).trim();
   if (!source) {
     return {
       genreLabel: '',
@@ -3670,6 +4110,45 @@ function sleepMs(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+interface RequestTokenBucketState {
+  tokens: number;
+  capacity: number;
+  refillPerSecond: number;
+  lastRefillAt: number;
+}
+
+const REQUEST_TOKEN_BUCKETS = new Map<string, RequestTokenBucketState>();
+
+function getRateLimitProfile(provider: ApiProvider): { capacity: number; refillPerSecond: number } {
+  if (provider === 'ollama') return { capacity: 2, refillPerSecond: 0.9 };
+  if (provider === 'openrouter') return { capacity: 3, refillPerSecond: 1.2 };
+  if (provider === 'gemini' || provider === 'gcli') return { capacity: 4, refillPerSecond: 1.5 };
+  return { capacity: 4, refillPerSecond: 1.6 };
+}
+
+async function acquireRequestToken(provider: ApiProvider, model: string): Promise<void> {
+  const profile = getRateLimitProfile(provider);
+  const key = `${provider}:${String(model || '').trim().toLowerCase()}`;
+  const now = Date.now();
+  const bucket = REQUEST_TOKEN_BUCKETS.get(key) || {
+    tokens: profile.capacity,
+    capacity: profile.capacity,
+    refillPerSecond: profile.refillPerSecond,
+    lastRefillAt: now,
+  };
+  const elapsed = Math.max(0, now - bucket.lastRefillAt) / 1000;
+  bucket.tokens = Math.min(bucket.capacity, bucket.tokens + elapsed * bucket.refillPerSecond);
+  bucket.lastRefillAt = now;
+  if (bucket.tokens < 1) {
+    const waitMs = Math.ceil(((1 - bucket.tokens) / bucket.refillPerSecond) * 1000);
+    REQUEST_TOKEN_BUCKETS.set(key, bucket);
+    await sleepMs(Math.max(120, waitMs));
+    return acquireRequestToken(provider, model);
+  }
+  bucket.tokens -= 1;
+  REQUEST_TOKEN_BUCKETS.set(key, bucket);
+}
+
 function stringifyError(err: unknown): string {
   if (err instanceof Error) return err.message || String(err);
   try {
@@ -3733,6 +4212,32 @@ function isTransientAiServiceError(err: unknown): boolean {
     message.includes('failed to fetch') ||
     /\b503\b/.test(message) ||
     /\b504\b/.test(message)
+  );
+}
+
+function loadTranslationSafetyProfileSettings(): TranslationSafetyProfileSettings {
+  if (typeof window === 'undefined') return DEFAULT_TRANSLATION_SAFETY_PROFILE_SETTINGS;
+  try {
+    const raw = localStorage.getItem(TRANSLATION_SAFETY_PROFILE_KEY);
+    if (!raw) return DEFAULT_TRANSLATION_SAFETY_PROFILE_SETTINGS;
+    const parsed = JSON.parse(raw) as Partial<TranslationSafetyProfileSettings>;
+    return {
+      autoSafeModeEnabled: parsed.autoSafeModeEnabled !== false,
+      checkpointEveryChunks: Math.max(3, Math.min(30, Number(parsed.checkpointEveryChunks) || 10)),
+    };
+  } catch {
+    return DEFAULT_TRANSLATION_SAFETY_PROFILE_SETTINGS;
+  }
+}
+
+function saveTranslationSafetyProfileSettings(settings: TranslationSafetyProfileSettings): void {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(
+    TRANSLATION_SAFETY_PROFILE_KEY,
+    JSON.stringify({
+      autoSafeModeEnabled: settings.autoSafeModeEnabled !== false,
+      checkpointEveryChunks: Math.max(3, Math.min(30, Number(settings.checkpointEveryChunks) || 10)),
+    }),
   );
 }
 
@@ -3895,6 +4400,23 @@ async function generateGeminiText(
     ? getGeminiFallbackModels(initialModel, kind)
     : getProviderFallbackModels(auth.provider, initialModel, kind);
   const splitConfig = splitGenConfig(config);
+  let ollamaInstalledModels: string[] = [];
+  if (auth.provider === 'ollama') {
+    ollamaInstalledModels = await fetchOllamaInstalledModels(
+      auth.baseUrl || getProviderBaseUrl('ollama'),
+      auth.apiKey || '',
+      12000,
+      splitConfig.signal,
+    );
+    if (ollamaInstalledModels.length) {
+      const installedSet = new Set(ollamaInstalledModels.map((item) => item.toLowerCase()));
+      const baseExists = installedSet.has(initialModel.toLowerCase());
+      const merged = baseExists
+        ? [...modelCandidates, ...ollamaInstalledModels]
+        : [...ollamaInstalledModels, ...modelCandidates];
+      modelCandidates = Array.from(new Set(merged.map((item) => String(item || '').trim()).filter(Boolean)));
+    }
+  }
   const traceTask = splitConfig.taskType || (kind === 'quality' ? 'story_generate' : 'story_translate');
   const initialConfig = buildDefaultGenConfig(kind, splitConfig.providerConfig);
   let lastModelUsed = initialModel;
@@ -3906,6 +4428,7 @@ async function generateGeminiText(
       config: initialConfig,
       maxRetries: splitConfig.maxRetries,
       minOutputChars: splitConfig.minOutputChars,
+      promptVersion: splitConfig.promptVersion || '',
     }),
   );
   const cacheKey = `v1:${reqFingerprint}`;
@@ -3947,6 +4470,7 @@ async function generateGeminiText(
         kind,
         Number(attemptConfig.maxOutputTokens || 0) || (kind === 'fast' ? 1800 : 4200),
       );
+      await acquireRequestToken(auth.provider, currentModel);
       try {
         if (runtime.mode === 'relay') {
           const body = {
@@ -4319,24 +4843,6 @@ async function generateGeminiText(
     throw error;
   } finally {
     inFlightAiRequests.delete(cacheKey);
-  }
-
-  let ollamaInstalledModels: string[] = [];
-  if (auth.provider === 'ollama') {
-    ollamaInstalledModels = await fetchOllamaInstalledModels(
-      auth.baseUrl || getProviderBaseUrl('ollama'),
-      auth.apiKey || '',
-      12000,
-      splitConfig.signal,
-    );
-    if (ollamaInstalledModels.length) {
-      const installedSet = new Set(ollamaInstalledModels.map((item) => item.toLowerCase()));
-      const baseExists = installedSet.has(initialModel.toLowerCase());
-      const merged = baseExists
-        ? [...modelCandidates, ...ollamaInstalledModels]
-        : [...ollamaInstalledModels, ...modelCandidates];
-      modelCandidates = Array.from(new Set(merged.map((item) => String(item || '').trim()).filter(Boolean)));
-    }
   }
 }
 
@@ -9541,6 +10047,8 @@ interface TranslateStoryModalProps {
     useDictionary: boolean,
     chapteringMode: 'auto' | 'chars',
     charsPerChapter: number,
+    autoSafeModeEnabled: boolean,
+    checkpointEveryChunks: number,
   }) => void;
   fileName: string;
   fileContent: string;
@@ -9649,6 +10157,7 @@ const TranslateStoryModal: React.FC<TranslateStoryModalProps> = ({ isOpen, onClo
   const [showPromptLibrary, setShowPromptLibrary] = useState(false);
   const [chapteringMode, setChapteringMode] = useState<'auto' | 'chars'>('auto');
   const [charsPerChapter, setCharsPerChapter] = useState(3000);
+  const [safetySettings, setSafetySettings] = useState<TranslationSafetyProfileSettings>(() => loadTranslationSafetyProfileSettings());
 
   const sourceAnalysis = React.useMemo(() => {
     const normalized = String(fileContent || '').replace(/\r\n/g, '\n').trim();
@@ -9709,6 +10218,41 @@ const TranslateStoryModal: React.FC<TranslateStoryModalProps> = ({ isOpen, onClo
 
         <div className="tf-modal-content p-6 md:p-8 overflow-y-auto space-y-8">
           <div className="space-y-4">
+            <div className="rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-4 space-y-3">
+              <p className="text-sm font-bold text-indigo-900">Profile an toàn cho file lớn</p>
+              <label className="flex items-center gap-2 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={safetySettings.autoSafeModeEnabled}
+                  onChange={(e) => {
+                    const next = { ...safetySettings, autoSafeModeEnabled: e.target.checked };
+                    setSafetySettings(next);
+                    saveTranslationSafetyProfileSettings(next);
+                  }}
+                />
+                Tự động bật chế độ an toàn theo độ nặng file
+              </label>
+              <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
+                Checkpoint mỗi bao nhiêu chunk
+                <input
+                  type="number"
+                  min={3}
+                  max={30}
+                  step={1}
+                  value={safetySettings.checkpointEveryChunks}
+                  onChange={(e) => {
+                    const next = {
+                      ...safetySettings,
+                      checkpointEveryChunks: Math.max(3, Math.min(30, Number(e.target.value) || 10)),
+                    };
+                    setSafetySettings(next);
+                    saveTranslationSafetyProfileSettings(next);
+                  }}
+                  className="w-full rounded-xl border border-indigo-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800"
+                />
+              </label>
+            </div>
+
             <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
               <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Phân tích file trước khi dịch</p>
               <p className="mt-2 text-sm text-slate-700">
@@ -9838,7 +10382,15 @@ const TranslateStoryModal: React.FC<TranslateStoryModalProps> = ({ isOpen, onClo
             Hủy bỏ
           </button>
           <button 
-            onClick={() => onConfirm({ isAdult, additionalInstructions, useDictionary, chapteringMode, charsPerChapter })}
+            onClick={() => onConfirm({
+              isAdult,
+              additionalInstructions,
+              useDictionary,
+              chapteringMode,
+              charsPerChapter,
+              autoSafeModeEnabled: safetySettings.autoSafeModeEnabled,
+              checkpointEveryChunks: safetySettings.checkpointEveryChunks,
+            })}
             className="flex-1 px-8 py-4 rounded-2xl bg-indigo-600 text-white font-bold hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-900/20"
           >
             Bắt đầu dịch
@@ -13289,6 +13841,8 @@ const AppContent = () => {
     useDictionary: boolean,
     chapteringMode: 'auto' | 'chars',
     charsPerChapter: number,
+    autoSafeModeEnabled: boolean,
+    checkpointEveryChunks: number,
   }) => {
     if (!user || !translateFileContent) return;
     
@@ -13299,6 +13853,8 @@ const AppContent = () => {
     });
     const abortSignal = aiRun.controller.signal;
     let translateTaskRun: ReturnType<typeof startAiTaskRun> | null = null;
+    let checkpointFingerprint = '';
+    let flushTranslationCheckpoint: (() => void) | null = null;
 
     try {
       const ai = createGeminiClient();
@@ -13342,9 +13898,13 @@ const AppContent = () => {
         provider: ai.provider,
         detectedChapterCount: detectedSections.length,
       });
-      const hugeFileMode = translateLoadProfile.hugeFileMode;
+      const profileSafeMode = Boolean(options.autoSafeModeEnabled);
+      const forcedSafeMode =
+        profileSafeMode &&
+        (translateLoadProfile.hugeFileMode || sourceTokenEstimate >= 14000 || sourceCharCount >= 58000);
+      const hugeFileMode = translateLoadProfile.hugeFileMode || forcedSafeMode;
       const extremeFileMode = translateLoadProfile.extremeFileMode;
-      const turboMode = translateLoadProfile.turboMode;
+      const turboMode = translateLoadProfile.turboMode || forcedSafeMode;
       let segmentCharLimit = extremeFileMode ? 3400 : hugeFileMode ? 4300 : (turboMode ? 6000 : 3800);
       if (ai.provider === 'gemini' || ai.provider === 'gcli') {
         if (extremeFileMode) {
@@ -13376,7 +13936,10 @@ const AppContent = () => {
       const analysisLane = analysisRouteDecision.lane;
       const translationLane = translationRouteDecision.lane;
       const overloadSafeMode = ai.provider === 'ollama' || ai.provider === 'openrouter';
-      const translationConcurrency = overloadSafeMode ? 1 : (hugeFileMode ? 1 : (turboMode ? 2 : 1));
+      const translationConcurrency = Math.max(
+        1,
+        Math.min(2, overloadSafeMode ? 1 : (hugeFileMode ? 1 : (turboMode ? 2 : 1))),
+      );
       const requestSpacingMs = ai.provider === 'ollama' ? 700 : (ai.provider === 'openrouter' ? 280 : 0);
       const overloadFallbackRetries = ai.provider === 'ollama' ? 3 : 2;
       const hasClearChapterStructure = detectedSections.length >= 2;
@@ -13406,6 +13969,7 @@ const AppContent = () => {
       }
       const batchItemLimit = overloadSafeMode ? 1 : (extremeFileMode ? 1 : lowQuotaMode ? 1 : hugeFileMode ? 2 : (turboMode ? 3 : 2));
       const translationRequestRetries = overloadSafeMode ? 0 : (lowQuotaMode && !hugeFileMode ? 0 : 1);
+      const checkpointEveryChunks = Math.max(3, Math.min(30, Number(options.checkpointEveryChunks || 10)));
       const sharedSafetySettings = GEMINI_UNRESTRICTED_SAFETY_SETTINGS;
       const preparationLabel = shouldRunAnalysis ? 'Đang phân tích nội dung gốc...' : 'Đang chuẩn bị dịch theo lô...';
 
@@ -13429,11 +13993,74 @@ const AppContent = () => {
       const autoProfileReasons = translateLoadProfile.reasons.length
         ? `Tín hiệu tải: ${translateLoadProfile.reasons.join(' · ')}.`
         : '';
+
+      checkpointFingerprint = quickHash(JSON.stringify({
+        content: quickHash(String(translateFileContent || '')),
+        file: String(translateFileName || '').toLowerCase(),
+        mode: translateLoadProfile.mode,
+        chapteringMode: useManualChapterSplit ? 'chars' : 'auto',
+        charsPerChapter: useManualChapterSplit ? manualCharsPerChapter : 0,
+        provider: ai.provider,
+        model: ai.model,
+        dictionary: storyTranslationMemory.map((item) => `${item.original}=>${item.translation}`),
+        promptVersion: translateBlueprint.version,
+      }));
+      const resumedCheckpoint = loadTranslationPipelineCheckpoint(checkpointFingerprint);
+      const checkpointChapterStates: TranslationPipelineCheckpoint['chapterStates'] = resumedCheckpoint?.chapterStates
+        ? { ...resumedCheckpoint.chapterStates }
+        : {};
+      const structureAnalysis = runLocalStructurePhase(translateFileContent, effectiveUnits);
+      const userStories = storage.getStories().filter((story: Story) => story.authorId === user.uid);
+      let storyBible =
+        userStories
+          .map((story: Story) => readStoryBibleFromNotes(story.storyPromptNotes))
+          .find((candidate): candidate is StoryBiblePayload => Boolean(candidate && candidate.fileFingerprint === checkpointFingerprint)) ||
+        null;
+      if (!storyBible) {
+        storyBible = buildStoryBiblePayload({
+          text: translateFileContent,
+          units: effectiveUnits,
+          structure: structureAnalysis,
+          fileFingerprint: checkpointFingerprint,
+        });
+      } else {
+        storyBible = {
+          ...storyBible,
+          updatedAt: new Date().toISOString(),
+        };
+      }
+      let processedSegments = Math.max(0, resumedCheckpoint?.processedSegments || 0);
+      let processedChunkCount = Math.max(0, resumedCheckpoint?.processedChunkCount || 0);
+      processedSegments = Math.min(processedSegments, totalSegments);
+      flushTranslationCheckpoint = () => {
+        if (!checkpointFingerprint) return;
+        saveTranslationPipelineCheckpoint({
+          version: 1,
+          fileFingerprint: checkpointFingerprint,
+          updatedAt: new Date().toISOString(),
+          processedSegments,
+          processedChunkCount,
+          chapterStates: checkpointChapterStates,
+        });
+      };
       updateAiRun(aiRun, {
-        message: 'Đang phân tích cấu trúc truyện...',
-        stageLabel: 'Phân tích cấu trúc',
-        detail: `${translationPreparationMessage} ${preparationLabel}${translationProfileNote ? ` ${translationProfileNote}` : ''} ${autoProfileDetail} ${autoProfileReasons}`.trim(),
-        progress: { completed: 0, total: Math.max(totalSegments, 1) },
+        message: 'Đang chạy Pha 1/4: Phân tích cấu trúc local...',
+        stageLabel: 'Pha 1/4 · Cấu trúc',
+        detail: `${translationPreparationMessage} ${preparationLabel}${translationProfileNote ? ` ${translationProfileNote}` : ''} ${autoProfileDetail} ${autoProfileReasons} Nhận diện ${structureAnalysis.chapterCount} chương, ${structureAnalysis.paragraphCount} đoạn, ${structureAnalysis.dialogueCount} hội thoại, ${structureAnalysis.namedEntities.length} tên riêng và ${structureAnalysis.timeMarkers.length} mốc thời gian.`,
+        progress: { completed: processedSegments, total: Math.max(totalSegments, 1) },
+      });
+      if (resumedCheckpoint) {
+        notifyApp({
+          tone: 'warn',
+          message: `Phát hiện checkpoint cũ: tiếp tục từ ${processedSegments}/${totalSegments} đoạn đã xử lý.`,
+          timeoutMs: 4200,
+        });
+      }
+      updateAiRun(aiRun, {
+        message: 'Đang chạy Pha 2/4: Trích xuất tri thức...',
+        stageLabel: 'Pha 2/4 · Tri thức',
+        detail: `Story Bible: ${storyBible.chapterSummaries.length} chương, ${storyBible.arcSummaries.length} arc. Dữ liệu này sẽ được tái sử dụng cho lần dịch sau cùng file.`,
+        progress: { completed: processedSegments, total: Math.max(totalSegments, 1) },
       });
 
       // 1. Analyze the story for metadata (skip on low quota mode)
@@ -13511,9 +14138,22 @@ const AppContent = () => {
         };
       }
       
+      analysis.characters = Array.from(
+        new Set([
+          ...analysis.characters,
+          ...(storyBible?.structure?.namedEntities || []),
+        ]),
+      ).slice(0, 24);
+
       // 3. Split content into chapters/chunks and translate
       const maxTranslateChunks = effectiveUnits.length;
-      let processedSegments = 0;
+      let runtimeConcurrency = translationConcurrency;
+      let runtimeRequestSpacingMs = requestSpacingMs;
+      let runtimeBatchCharLimit = batchCharLimit;
+      let runtimeBatchItemLimit = batchItemLimit;
+      let overloadStreak = 0;
+      let degradeModeActive = false;
+      let qaIssueCount = 0;
 
       const adultContentInstruction = options.isAdult 
         ? "CHẾ ĐỘ 18+ KHÔNG GIỚI HẠN: Bạn là một dịch giả chuyên nghiệp. Bạn ĐƯỢC PHÉP và NÊN dịch các nội dung nhạy cảm, bạo lực, tình dục một cách CHI TIẾT và TRẦN TRỤI. Tuyệt đối không được né tránh hoặc tóm tắt."
@@ -13526,8 +14166,15 @@ const AppContent = () => {
         totalSegmentsInUnit: number;
         previousTranslatedTail: string;
         includeTitleField: boolean;
+        retrievalContext: string;
       }): Promise<{ title: string; content: string }> => {
-        const scopedDictionaryContext = buildScopedDictionaryContext(params.segmentText, dictionaryEntries, 18);
+        const scopedDictionaryContext = trimTextByTokenBudget(
+          buildScopedDictionaryContext(params.segmentText, dictionaryEntries, 18),
+          220,
+        );
+        const retrievalContext = trimTextByTokenBudget(params.retrievalContext, 320);
+        const previousContext = trimTextByTokenBudget(params.previousTranslatedTail, 260);
+        const additionalInstructions = trimTextByTokenBudget(options.additionalInstructions, 220);
         const segmentRouteDecision = routeAiExecutionLane({
           task: 'story_translate',
           stage: 'draft',
@@ -13544,8 +14191,9 @@ const AppContent = () => {
             
             ${adultContentInstruction}
             ${scopedDictionaryContext}
-            YÊU CẦU BỔ SUNG: ${options.additionalInstructions}
-            ${params.previousTranslatedTail ? `NGỮ CẢNH NGAY TRƯỚC (để giữ xưng hô, nhịp văn và continuity):\n${params.previousTranslatedTail}` : ''}
+            YÊU CẦU BỔ SUNG: ${additionalInstructions || 'Giữ mạch truyện tự nhiên, chuẩn xưng hô.'}
+            ${retrievalContext ? `BỐI CẢNH TRUY HỒI TỪ STORY BIBLE (top-k):\n${retrievalContext}` : ''}
+            ${previousContext ? `NGỮ CẢNH NGAY TRƯỚC (để giữ xưng hô, nhịp văn và continuity):\n${previousContext}` : ''}
             
             NỘI DUNG CẦN DỊCH:
             ${params.segmentText}
@@ -13650,8 +14298,15 @@ const AppContent = () => {
         totalBatches: number;
         totalSegmentsInUnit: number;
         previousTranslatedTail: string;
+        retrievalContext: string;
       }): Promise<{ title: string; segments: string[] }> => {
-        const scopedDictionaryContext = buildScopedDictionaryContext(params.batch.sourceText, dictionaryEntries, 24);
+        const scopedDictionaryContext = trimTextByTokenBudget(
+          buildScopedDictionaryContext(params.batch.sourceText, dictionaryEntries, 24),
+          260,
+        );
+        const retrievalContext = trimTextByTokenBudget(params.retrievalContext, 340);
+        const previousContext = trimTextByTokenBudget(params.previousTranslatedTail, 240);
+        const additionalInstructions = trimTextByTokenBudget(options.additionalInstructions, 220);
         const includeTitleField = params.batchIndex === 0;
         const batchRouteDecision = routeAiExecutionLane({
           task: 'story_translate',
@@ -13669,8 +14324,9 @@ const AppContent = () => {
 
             ${adultContentInstruction}
             ${scopedDictionaryContext}
-            YÊU CẦU BỔ SUNG: ${options.additionalInstructions}
-            ${params.previousTranslatedTail ? `NGỮ CẢNH NGAY TRƯỚC (để giữ xưng hô, nhịp văn và continuity):\n${params.previousTranslatedTail}` : ''}
+            YÊU CẦU BỔ SUNG: ${additionalInstructions || 'Giữ phong cách kể chuyện tự nhiên.'}
+            ${retrievalContext ? `BỐI CẢNH TRUY HỒI TỪ STORY BIBLE (top-k):\n${retrievalContext}` : ''}
+            ${previousContext ? `NGỮ CẢNH NGAY TRƯỚC (để giữ xưng hô, nhịp văn và continuity):\n${previousContext}` : ''}
 
             Trả về JSON (không bọc bằng dấu 3 backtick):
             {
@@ -13753,6 +14409,7 @@ const AppContent = () => {
             totalSegmentsInUnit: params.totalSegmentsInUnit,
             previousTranslatedTail: params.previousTranslatedTail,
             includeTitleField: includeTitleField && localIndex === 0,
+            retrievalContext: params.retrievalContext,
           });
           translatedSegments[localIndex] = single.content;
           if (includeTitleField && localIndex === 0 && single.title.trim()) {
@@ -13766,31 +14423,57 @@ const AppContent = () => {
         };
       };
 
-      const chapterResults = await mapWithConcurrency(effectiveUnits, translationConcurrency, async (unit, chapterIndex) => {
+      const translateSingleChapter = async (unit: ChapterTranslationUnit, chapterIndex: number): Promise<Chapter | null> => {
         const sourceSegments = unit.segments.length ? unit.segments : [unit.source];
         const meaningfulEntries = sourceSegments
           .map((segment, index) => ({ index, text: String(segment || '').trim() }))
           .filter((entry) => entry.text.length >= 30);
         if (!meaningfulEntries.length) return null;
-        const translatedSegments: string[] = [];
+        const chapterCheckpointKey = `chapter:${chapterIndex}`;
+        const chapterCheckpoint = checkpointChapterStates[chapterCheckpointKey];
+        const translatedSegments: string[] = Array.isArray(chapterCheckpoint?.segments)
+          ? chapterCheckpoint.segments.map((item) => String(item || '').trim()).filter(Boolean)
+          : [];
         let translatedTitle = String(unit.title || `Chương ${chapterIndex + 1}`).trim() || `Chương ${chapterIndex + 1}`;
-        let previousTranslatedTail = '';
-        const batches = buildTranslationSegmentBatches(meaningfulEntries, batchCharLimit, batchItemLimit);
+        let previousTranslatedTail = String(chapterCheckpoint?.lastTail || '').trim();
+        const retrievalContext = buildBibleRetrievalContext({
+          bible: storyBible,
+          chapterIndex,
+          topK: degradeModeActive ? 3 : 6,
+          tokenBudget: degradeModeActive ? 260 : 420,
+        });
+        const effectiveBatchCharLimit = degradeModeActive
+          ? Math.max(1200, Math.round(runtimeBatchCharLimit * 0.75))
+          : runtimeBatchCharLimit;
+        const effectiveBatchItemLimit = degradeModeActive ? 1 : runtimeBatchItemLimit;
+        const batches = buildAdaptiveTranslationSegmentBatches(
+          meaningfulEntries,
+          effectiveBatchCharLimit,
+          effectiveBatchItemLimit,
+        );
+        const startBatchIndex = Math.max(0, Math.min(batches.length, Number(chapterCheckpoint?.completedBatches || 0)));
 
-        for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+        for (let batchIndex = startBatchIndex; batchIndex < batches.length; batchIndex++) {
           const batch = batches[batchIndex];
           throwIfAborted(abortSignal);
+          const etaSeconds = estimateProcessingEtaSeconds(translateStartedAt, processedSegments, totalSegments);
+          const etaLabel = formatEtaShort(etaSeconds);
           updateAiRun(aiRun, {
             message: 'Đang dịch truyện...',
-            stageLabel: `Dịch chương ${chapterIndex + 1}/${maxTranslateChunks}`,
-            detail: `Đã dịch ${processedSegments}/${totalSegments} đoạn · Lô ${batchIndex + 1}/${batches.length} với ${batch.entries.length} đoạn${turboMode ? ' · Turbo' : ''}${lowQuotaMode ? ' · Quota-safe' : ''}.`,
+            stageLabel: `Pha 3/4 · Dịch chương ${chapterIndex + 1}/${maxTranslateChunks}`,
+            detail:
+              `Đã dịch ${processedSegments}/${totalSegments} đoạn · Lô ${batchIndex + 1}/${batches.length} với ${batch.entries.length} đoạn` +
+              `${turboMode ? ' · Turbo' : ''}${lowQuotaMode ? ' · Quota-safe' : ''}` +
+              `${degradeModeActive ? ' · Degrade mode ON' : ''}` +
+              `${overloadStreak > 0 ? ' · recovering' : ''}` +
+              `${etaLabel ? ` · ETA ~${etaLabel}` : ''}.`,
             progress: {
               completed: Math.min(processedSegments + batch.entries.length, totalSegments),
               total: Math.max(totalSegments, 1),
             },
           });
-          if (requestSpacingMs > 0 && (chapterIndex > 0 || batchIndex > 0)) {
-            await sleepMs(requestSpacingMs);
+          if (runtimeRequestSpacingMs > 0 && (chapterIndex > 0 || batchIndex > 0)) {
+            await sleepMs(runtimeRequestSpacingMs);
           }
           let batchResult: { title: string; segments: string[] };
           try {
@@ -13802,13 +14485,23 @@ const AppContent = () => {
               totalBatches: batches.length,
               totalSegmentsInUnit: meaningfulEntries.length,
               previousTranslatedTail,
+              retrievalContext,
             });
+            overloadStreak = Math.max(0, overloadStreak - 1);
           } catch (batchError) {
             if (!isTransientAiServiceError(batchError)) throw batchError;
+            overloadStreak += 1;
+            runtimeConcurrency = Math.max(1, runtimeConcurrency - 1);
+            runtimeBatchItemLimit = Math.max(1, runtimeBatchItemLimit - 1);
+            runtimeBatchCharLimit = Math.max(1400, Math.round(runtimeBatchCharLimit * 0.82));
+            runtimeRequestSpacingMs = Math.min(2400, runtimeRequestSpacingMs + 240);
+            if (overloadStreak >= 2) degradeModeActive = true;
             updateAiRun(aiRun, {
               message: 'Model đang quá tải, tự chuyển chế độ an toàn...',
-              stageLabel: `Dịch chương ${chapterIndex + 1}/${maxTranslateChunks}`,
-              detail: `Lô ${batchIndex + 1}/${batches.length} bị quá tải, hệ thống sẽ đổi sang dịch từng đoạn để tránh fail cả chương.`,
+              stageLabel: `Pha 3/4 · Dịch chương ${chapterIndex + 1}/${maxTranslateChunks}`,
+              detail:
+                `Lô ${batchIndex + 1}/${batches.length} bị quá tải. Đã giảm concurrency=${runtimeConcurrency}, ` +
+                `batchSize=${runtimeBatchItemLimit}, charCap=${runtimeBatchCharLimit}, delay=${runtimeRequestSpacingMs}ms.`,
               progress: {
                 completed: Math.min(processedSegments, totalSegments),
                 total: Math.max(totalSegments, 1),
@@ -13822,8 +14515,8 @@ const AppContent = () => {
               let resolved = false;
               for (let retryIndex = 0; retryIndex <= overloadFallbackRetries; retryIndex++) {
                 try {
-                  if (requestSpacingMs > 0) {
-                    await sleepMs(requestSpacingMs + retryIndex * 220);
+                  if (runtimeRequestSpacingMs > 0) {
+                    await sleepMs(runtimeRequestSpacingMs + retryIndex * 220);
                   }
                   const single = await translateSingleStorySegment({
                     unitTitle: unit.title || recoveredTitle,
@@ -13833,6 +14526,7 @@ const AppContent = () => {
                     totalSegmentsInUnit: meaningfulEntries.length,
                     previousTranslatedTail,
                     includeTitleField: batchIndex === 0 && localIndex === 0,
+                    retrievalContext,
                   });
                   translatedSingle = single.content;
                   if (single.title.trim() && (localIndex === 0 || /^chương\s*\d+$/i.test(recoveredTitle))) {
@@ -13850,7 +14544,7 @@ const AppContent = () => {
                   const waitMs = Math.min(15000, 1800 * (retryIndex + 1));
                   updateAiRun(aiRun, {
                     message: 'Đang tự hồi phục do model quá tải...',
-                    stageLabel: `Dịch chương ${chapterIndex + 1}/${maxTranslateChunks}`,
+                    stageLabel: `Pha 3/4 · Dịch chương ${chapterIndex + 1}/${maxTranslateChunks}`,
                     detail: `Đoạn ${entry.index + 1}/${meaningfulEntries.length} tạm quá tải, thử lại sau ${Math.round(waitMs / 1000)}s.`,
                     progress: {
                       completed: Math.min(processedSegments + recoveredSegments.length, totalSegments),
@@ -13872,6 +14566,7 @@ const AppContent = () => {
             };
           }
           processedSegments += batch.entries.length;
+          processedChunkCount += 1;
 
           const parsedTitle = String(batchResult.title || '').trim();
           if (parsedTitle && (batchIndex === 0 || /^chương\s*\d+$/i.test(translatedTitle))) {
@@ -13883,27 +14578,173 @@ const AppContent = () => {
             translatedSegments.push(content.trim());
             previousTranslatedTail = extractTranslationContextTail(content, turboMode ? 680 : 920);
           });
+          checkpointChapterStates[chapterCheckpointKey] = {
+            title: translatedTitle,
+            segments: [...translatedSegments],
+            completedBatches: batchIndex + 1,
+            lastTail: previousTranslatedTail,
+          };
+          if (processedChunkCount % checkpointEveryChunks === 0) {
+            flushTranslationCheckpoint?.();
+          }
         }
 
         const mergedChapterContent = translatedSegments.join('\n\n').trim();
         if (!mergedChapterContent) return null;
+        checkpointChapterStates[chapterCheckpointKey] = {
+          title: translatedTitle,
+          segments: [...translatedSegments],
+          completedBatches: Number.MAX_SAFE_INTEGER,
+          lastTail: previousTranslatedTail,
+        };
+        flushTranslationCheckpoint?.();
 
         return {
           id: createClientId('chapter'),
           title: translatedTitle,
-          content: mergedChapterContent,
+          content: improveBracketSystemSpacing(improveDialogueSpacing(mergedChapterContent)),
           order: chapterIndex + 1,
           createdAt: new Date().toISOString(),
         } as Chapter;
-      });
-      const translatedChapters = chapterResults.filter((chapter): chapter is Chapter => Boolean(chapter));
+      };
+      const dagLayers = buildChapterDagLayers(effectiveUnits, runtimeConcurrency);
+      const chapterResultMap = new Map<number, Chapter | null>();
+      for (let layerIndex = 0; layerIndex < dagLayers.length; layerIndex++) {
+        const layer = dagLayers[layerIndex];
+        const chapterWorkItems = layer.map((index) => ({ index, unit: effectiveUnits[index] }));
+        const layerConcurrency = Math.max(1, Math.min(runtimeConcurrency, 2, chapterWorkItems.length));
+        updateAiRun(aiRun, {
+          message: 'Đang xử lý DAG dịch...',
+          stageLabel: 'Pha 3/4 · Lập lịch DAG',
+          detail: `Layer ${layerIndex + 1}/${dagLayers.length}, concurrency=${layerConcurrency}, degrade=${degradeModeActive ? 'ON' : 'OFF'}.`,
+          progress: { completed: Math.min(processedSegments, totalSegments), total: Math.max(totalSegments, 1) },
+        });
+        const layerResults = await mapWithConcurrency(chapterWorkItems, layerConcurrency, async (item) => (
+          translateSingleChapter(item.unit, item.index)
+        ));
+        layerResults.forEach((chapter, localIndex) => {
+          chapterResultMap.set(layer[localIndex], chapter);
+        });
+      }
+      let translatedChapters = effectiveUnits
+        .map((_, index) => chapterResultMap.get(index) || null)
+        .filter((chapter): chapter is Chapter => Boolean(chapter));
 
       if (!translatedChapters.length) {
         throw new Error('Không thể nhận diện nội dung hợp lệ để dịch. Vui lòng kiểm tra lại file nguồn.');
       }
 
+      updateAiRun(aiRun, {
+        message: 'Đang chạy Pha 4/4: QA nhất quán...',
+        stageLabel: 'Pha 4/4 · QA nhất quán',
+        detail: 'Đang kiểm tra cục bộ tên riêng, cụm từ cấm và format hội thoại trước khi hoàn tất.',
+        progress: { completed: Math.min(processedSegments, totalSegments), total: Math.max(totalSegments, 1) },
+      });
+      const forbiddenPhrases = parseForbiddenClichePhrases('');
+      const qaReports: Array<{
+        chapterIndex: number;
+        missingTerms: string[];
+        forbiddenHits: string[];
+      }> = [];
+      translatedChapters = translatedChapters.map((chapter) => {
+        const sourceUnit = effectiveUnits[Math.max(0, chapter.order - 1)];
+        const qa = runLocalTranslationConsistencyQa({
+          sourceText: sourceUnit?.source || '',
+          translatedText: chapter.content,
+          dictionary: dictionaryEntries,
+          forbiddenPhrases,
+        });
+        qaIssueCount += qa.totalIssues;
+        if (qa.totalIssues > 0) {
+          qaReports.push({
+            chapterIndex: Math.max(0, chapter.order - 1),
+            missingTerms: qa.missingDictionaryTerms,
+            forbiddenHits: qa.forbiddenPhraseHits,
+          });
+        }
+        return {
+          ...chapter,
+          content: qa.normalizedContent,
+          updatedAt: new Date().toISOString(),
+        };
+      });
+
+      const qaRepairCandidates = qaReports
+        .filter((item) => item.missingTerms.length > 0 || item.forbiddenHits.length > 0)
+        .slice(0, hugeFileMode ? 0 : 2);
+      for (const candidate of qaRepairCandidates) {
+        const chapter = translatedChapters.find((item) => item.order - 1 === candidate.chapterIndex);
+        if (!chapter) continue;
+        const sourceUnit = effectiveUnits[candidate.chapterIndex];
+        const qaRoute = routeAiExecutionLane({
+          task: 'story_translate',
+          stage: 'quality_gate',
+          provider: ai.provider,
+          profile: runtimeProfileMode,
+          inputChars: chapter.content.length,
+          preferredLane: 'quality',
+        });
+        const qaPrompt = prependPromptContract(`
+          Bạn là biên tập viên hậu kỳ bản dịch.
+          Hãy chỉnh lại chương đã dịch theo đúng các lỗi đã chỉ ra, KHÔNG thêm nội dung mới và KHÔNG đổi ý nghĩa.
+
+          Danh sách lỗi cục bộ:
+          ${candidate.missingTerms.length ? `- Thiếu thuật ngữ/tên riêng: ${candidate.missingTerms.join(' | ')}` : '- Không có lỗi tên riêng.'}
+          ${candidate.forbiddenHits.length ? `- Cụm từ sáo rỗng cần loại bỏ: ${candidate.forbiddenHits.join(' | ')}` : '- Không có cụm từ cấm.'}
+
+          TỪ ĐIỂN BẮT BUỘC:
+          ${trimTextByTokenBudget(buildScopedDictionaryContext(sourceUnit?.source || '', dictionaryEntries, 24), 220)}
+
+          NGUỒN GỐC:
+          ${trimTextByTokenBudget(sourceUnit?.source || '', 460)}
+
+          BẢN DỊCH HIỆN TẠI:
+          ${trimTextByTokenBudget(chapter.content, 520)}
+
+          Trả về JSON:
+          {
+            "title": "${chapter.title}",
+            "content": "Bản đã sửa"
+          }
+        `.trim(), {
+          task: 'story_translate',
+          stage: 'quality_gate',
+          promptVersion: translateBlueprint.version,
+          outputSchema: 'translated_segment_json_v1',
+          strictJson: true,
+        });
+        const repairedRaw = await generateGeminiText(ai, qaRoute.lane, qaPrompt, {
+          responseMimeType: 'application/json',
+          maxOutputTokens: 6200,
+          minOutputChars: Math.max(220, Math.round(chapter.content.length * 0.78)),
+          maxRetries: 1,
+          safetySettings: sharedSafetySettings,
+          signal: abortSignal,
+          ...buildTranslateTraceConfig('quality_gate', {
+            lane: qaRoute.lane,
+            routeReason: qaRoute.reason,
+            chapterIndex: candidate.chapterIndex,
+            phase: 'qa_repair',
+          }),
+        });
+        const repaired = normalizeAiJsonContent(repairedRaw || '', chapter.title);
+        chapter.content = improveBracketSystemSpacing(
+          improveDialogueSpacing(
+            applyTranslationDictionaryToText(sourceUnit?.source || '', repaired.content || chapter.content, dictionaryEntries),
+          ),
+        );
+      }
+
       // Save to local storage so it shows up in the UI
       const localChapters = normalizeChaptersForLocal(translatedChapters);
+      const pipelineNotes = [
+        'Pipeline dịch 4 pha đã chạy:',
+        `1) Cấu trúc local: ${structureAnalysis.chapterCount} chương, ${structureAnalysis.paragraphCount} đoạn, ${structureAnalysis.dialogueCount} hội thoại.`,
+        `2) Tri thức: Story Bible ${storyBible.chapterSummaries.length} chương / ${storyBible.arcSummaries.length} arc.`,
+        `3) Dịch: ${processedSegments}/${totalSegments} đoạn, concurrency tối đa ${translationConcurrency}, degrade mode ${degradeModeActive ? 'bật' : 'tắt'}.`,
+        `4) QA nhất quán: phát hiện ${qaIssueCount} cảnh báo cục bộ và đã xử lý hậu kỳ.`,
+      ].join('\n');
+      const mergedStoryPromptNotes = attachStoryBibleToNotes(pipelineNotes, storyBible);
       createAndStoreStory(({ storyId, storySlug, now }) => ({
         id: storyId,
         slug: storySlug,
@@ -13915,11 +14756,13 @@ const AppContent = () => {
         type: 'translated',
         isAdult: Boolean(options.isAdult),
         isPublic: false,
+        storyPromptNotes: mergedStoryPromptNotes,
         translationMemory: storyTranslationMemory,
         createdAt: now,
         updatedAt: now,
         chapters: localChapters,
       }));
+      clearTranslationPipelineCheckpoint(checkpointFingerprint);
 
       const elapsedSeconds = Math.max(1, Math.round((Date.now() - translateStartedAt) / 1000));
       translateTaskRun.complete({
@@ -13929,11 +14772,12 @@ const AppContent = () => {
       });
       notifyApp({
         tone: 'success',
-        message: `Đã dịch thành công ${translatedChapters.length} chương (${processedSegments} phân đoạn) trong ${elapsedSeconds}s${turboMode ? ' [Turbo]' : ''}.`,
+        message: `Đã dịch thành công ${translatedChapters.length} chương (${processedSegments} phân đoạn) trong ${elapsedSeconds}s${turboMode ? ' [Turbo]' : ''}${degradeModeActive ? ' [Degrade]' : ''}.`,
         timeoutMs: 5200,
       });
       setView('stories');
     } catch (error) {
+      flushTranslationCheckpoint?.();
       translateTaskRun?.fail(error, {
         at: 'handleTranslateStory',
       });
@@ -14881,10 +15725,18 @@ ${JSON.stringify(violatingPayload)}
     let newList;
 
     if (editingStory) {
+      const existingBible = readStoryBibleFromNotes(editingStory.storyPromptNotes || '');
+      const incomingPromptNotes = stripStoryBibleFromNotes(
+        String(data.storyPromptNotes ?? editingStory.storyPromptNotes ?? ''),
+      ).trim();
+      const mergedPromptNotes = existingBible
+        ? attachStoryBibleToNotes(incomingPromptNotes, existingBible)
+        : incomingPromptNotes;
       const updatedStory: Story = {
         ...editingStory,
         ...data,
         slug: data.slug || editingStory.slug || resolveStorySlug(editingStory),
+        storyPromptNotes: mergedPromptNotes || undefined,
         chapters: normalizeChaptersForLocal((data.chapters || editingStory.chapters || []) as Chapter[]),
         updatedAt: new Date().toISOString(),
       };
@@ -14904,6 +15756,7 @@ ${JSON.stringify(violatingPayload)}
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         ...data,
+        storyPromptNotes: stripStoryBibleFromNotes(String(data.storyPromptNotes || '')).trim() || undefined,
         slug: newStorySlug,
       };
       newList = [newStory, ...stories];
