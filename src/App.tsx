@@ -4287,8 +4287,8 @@ function getProviderFallbackModels(
     preferred = ['openrouter/auto', ...listed.filter((value) => value !== 'openrouter/auto')];
   } else if (provider === 'ollama') {
     preferred = kind === 'quality'
-      ? ['qwen2.5:7b', 'llama3.1:8b', 'gemma2:9b', 'mistral:7b', ...listed]
-      : ['llama3.1:8b', 'gemma2:9b', 'mistral:7b', 'qwen2.5:7b', ...listed];
+      ? ['qwen2.5:7b', 'llama3.1:8b', 'gemma2:9b', ...listed]
+      : ['qwen2.5:7b', 'llama3.1:8b', 'gemma2:9b', ...listed];
   }
 
   const merged = [normalizedBase, ...preferred].map((item) => String(item || '').trim()).filter(Boolean);
