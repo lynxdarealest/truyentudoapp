@@ -2521,6 +2521,45 @@ function trimTextByTokenBudget(text: string, tokenBudget: number): string {
   return `${normalized.slice(0, maxChars).trim()}…`;
 }
 
+function trimTextHeadTailByTokenBudget(text: string, tokenBudget: number, headRatio = 0.38): string {
+  const safeBudget = Math.max(120, Math.floor(tokenBudget));
+  const maxChars = safeBudget * 4;
+  const normalized = String(text || '').trim();
+  if (normalized.length <= maxChars) return normalized;
+  const safeHeadRatio = Math.min(0.75, Math.max(0.2, headRatio));
+  const headChars = Math.max(220, Math.floor(maxChars * safeHeadRatio));
+  const tailChars = Math.max(220, maxChars - headChars - 8);
+  return `${normalized.slice(0, headChars).trim()}\n...\n${normalized.slice(-tailChars).trim()}`;
+}
+
+function compactPromptForOllama(prompt: string, kind: 'fast' | 'quality'): string {
+  const normalized = String(prompt || '').trim();
+  if (!normalized) return normalized;
+  const inputBudget = kind === 'fast' ? 900 : 1180;
+  if (estimateTextTokens(normalized) <= inputBudget) return normalized;
+
+  const markers = ['NỘI DUNG CẦN DỊCH:', 'NỘI DUNG CẦN VIẾT:', 'NỘI DUNG:'];
+  const upper = normalized.toUpperCase();
+  const markerIndex = markers
+    .map((marker) => upper.lastIndexOf(marker))
+    .filter((index) => index >= 0)
+    .sort((a, b) => b - a)[0] ?? -1;
+
+  if (markerIndex >= 0) {
+    const markerText = normalized.slice(markerIndex, markerIndex + 24).includes(':')
+      ? normalized.slice(markerIndex, normalized.indexOf(':', markerIndex) + 1)
+      : 'NỘI DUNG:';
+    const prefix = normalized.slice(0, markerIndex).trim();
+    const payload = normalized.slice(markerIndex + markerText.length).trim();
+    const trimmedPrefix = trimTextByTokenBudget(prefix, Math.max(220, Math.floor(inputBudget * 0.35)));
+    const remainingBudget = Math.max(340, inputBudget - estimateTextTokens(trimmedPrefix) - 24);
+    const trimmedPayload = trimTextHeadTailByTokenBudget(payload, remainingBudget, 0.22);
+    return `${trimmedPrefix}\n${markerText}\n${trimmedPayload}`.trim();
+  }
+
+  return trimTextHeadTailByTokenBudget(normalized, inputBudget, 0.35);
+}
+
 function extractNamedEntitiesLocal(text: string, maxItems = 80): string[] {
   const source = String(text || '');
   const pattern = /\b([A-ZÀ-ỴĐ][a-zà-ỹđ]+(?:\s+[A-ZÀ-ỴĐ][a-zà-ỹđ]+){0,3})\b/g;
@@ -4612,7 +4651,10 @@ async function generateGeminiText(
   const task = (async () => {
     let attemptConfig: Record<string, unknown> = { ...initialConfig };
     let promptForAttempt = contents;
-    const expectedMinChars = calculateAdaptiveMinOutputChars(contents, kind, splitConfig.minOutputChars);
+    let expectedMinChars = calculateAdaptiveMinOutputChars(contents, kind, splitConfig.minOutputChars);
+    if (auth.provider === 'ollama') {
+      expectedMinChars = Math.min(expectedMinChars, kind === 'fast' ? 320 : 560);
+    }
     let currentModelIndex = 0;
     let currentModel = modelCandidates[currentModelIndex] || initialModel;
     const triedOllamaModels = new Set<string>();
@@ -4756,9 +4798,10 @@ async function generateGeminiText(
           const data = await resp.json();
           text = extractTextFromModelPayload(data) || '';
         } else if (auth.provider === 'ollama') {
+          const compactPrompt = compactPromptForOllama(promptForAttempt, kind);
           text = await callOllamaLocalWithFallback({
             model: currentModel,
-            prompt: promptForAttempt,
+            prompt: compactPrompt,
             baseUrl: auth.baseUrl || getProviderBaseUrl('ollama'),
             apiKey: auth.apiKey,
             timeoutMs,
