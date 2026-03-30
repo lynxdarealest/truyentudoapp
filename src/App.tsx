@@ -1632,6 +1632,16 @@ function normalizeOllamaOpenAiBaseUrl(input: string): string {
   return `${clean}/v1`;
 }
 
+function normalizeOllamaApiBaseUrl(input: string): string {
+  const raw = String(input || '').trim() || getProviderBaseUrl('ollama');
+  const clean = raw.replace(/\/+$/, '');
+  return clean
+    .replace(/\/v1\/chat\/completions$/i, '')
+    .replace(/\/chat\/completions$/i, '')
+    .replace(/\/v1$/i, '')
+    .replace(/\/+$/, '');
+}
+
 function normalizeStoredRelayUrl(input: string): string {
   const raw = String(input || '').trim();
   if (!raw) return buildRelaySocketUrl('');
@@ -3726,6 +3736,14 @@ function isTransientAiServiceError(err: unknown): boolean {
   );
 }
 
+function isModelNotFoundError(err: unknown): boolean {
+  const message = stringifyError(err).toLowerCase();
+  return (
+    message.includes('model') &&
+    (message.includes('not found') || message.includes('does not exist'))
+  );
+}
+
 function getGeminiFallbackModels(baseModel: string, kind: 'fast' | 'quality'): string[] {
   const normalizedBase = String(baseModel || '').trim().toLowerCase();
   const isFlashLiteFamily = normalizedBase.includes('flash-lite');
@@ -3817,6 +3835,43 @@ const fetchWithTimeout = async (
   }
 };
 
+async function fetchOllamaInstalledModels(
+  baseUrl: string,
+  apiKey: string,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  try {
+    const apiBase = normalizeOllamaApiBaseUrl(baseUrl);
+    const endpoint = `${apiBase.replace(/\/+$/, '')}/api/tags`;
+    const headers: Record<string, string> = {};
+    if (apiKey.trim()) {
+      headers.Authorization = `Bearer ${apiKey.trim()}`;
+    }
+    const resp = await fetchWithTimeout(
+      endpoint,
+      {
+        method: 'GET',
+        headers,
+      },
+      Math.max(7000, Math.min(timeoutMs, 20000)),
+      signal,
+    );
+    if (!resp.ok) return [];
+    const payload = await resp.json();
+    const models = Array.isArray(payload?.models) ? payload.models : [];
+    return models
+      .map((item: unknown) => {
+        if (typeof item === 'string') return item.trim();
+        const record = asRecord(item);
+        return String(record?.name || record?.model || '').trim();
+      })
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 type AiAuth = {
   provider: ApiProvider;
   apiKey: string;
@@ -3836,7 +3891,7 @@ async function generateGeminiText(
   const taskStartedAt = Date.now();
   const runtime = getApiRuntimeConfig();
   const initialModel = auth.model || getProfileModel(kind, auth.provider);
-  const modelCandidates = auth.provider === 'gemini' || auth.provider === 'gcli'
+  let modelCandidates = auth.provider === 'gemini' || auth.provider === 'gcli'
     ? getGeminiFallbackModels(initialModel, kind)
     : getProviderFallbackModels(auth.provider, initialModel, kind);
   const splitConfig = splitGenConfig(config);
@@ -4054,10 +4109,50 @@ async function generateGeminiText(
           }, timeoutMs, splitConfig.signal);
           if (!resp.ok) {
             const body = await resp.text();
+            if (auth.provider === 'ollama' && resp.status === 404) {
+              const ollamaLegacyEndpoint = `${normalizeOllamaApiBaseUrl(openAiBase)}/api/chat`;
+              const legacyResp = await fetchWithTimeout(ollamaLegacyEndpoint, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  ...(auth.apiKey.trim() ? { Authorization: `Bearer ${auth.apiKey}` } : {}),
+                },
+                body: JSON.stringify({
+                  model: currentModel,
+                  messages: [{ role: 'user', content: promptForAttempt }],
+                  stream: false,
+                  options: {
+                    temperature: typeof attemptConfig.temperature === 'number' ? attemptConfig.temperature : 0.7,
+                    num_predict: typeof attemptConfig.maxOutputTokens === 'number' ? attemptConfig.maxOutputTokens : undefined,
+                  },
+                }),
+              }, timeoutMs, splitConfig.signal);
+              if (legacyResp.ok) {
+                const legacyData = await legacyResp.json();
+                text = legacyData?.message?.content || extractTextFromModelPayload(legacyData) || '';
+                if (text) {
+                  // Recovered via legacy Ollama endpoint.
+                } else {
+                  throw new Error('Ollama legacy endpoint trả về rỗng.');
+                }
+              } else {
+                const legacyBody = await legacyResp.text();
+                throw new Error(`Ollama Local error ${legacyResp.status}: ${legacyBody.slice(0, 260)}`);
+              }
+              if (text) {
+                // Skip provider error throw below because we already recovered.
+              } else {
+                throw new Error(`Ollama Local error ${resp.status}: ${body.slice(0, 260)}`);
+              }
+            }
+            if (text) {
+              // recovered path, do not throw
+            } else {
             const providerLabel = auth.provider === 'custom'
               ? 'Custom endpoint'
               : (PROVIDER_LABELS[auth.provider] || 'OpenAI-compatible provider');
             throw new Error(`${providerLabel} error ${resp.status}: ${body.slice(0, 220)}`);
+            }
           }
           const data = await resp.json();
           text = data?.choices?.[0]?.message?.content || extractTextFromModelPayload(data) || '';
@@ -4098,6 +4193,20 @@ async function generateGeminiText(
         }
         const isQuotaError = isQuotaOrRateLimitError(err);
         const isTransientError = isTransientAiServiceError(err);
+        const isMissingModelError = auth.provider === 'ollama' && isModelNotFoundError(err);
+        if (isMissingModelError) {
+          if (currentModelIndex < modelCandidates.length - 1) {
+            currentModelIndex += 1;
+            currentModel = modelCandidates[currentModelIndex];
+            continue;
+          }
+          const available = ollamaInstalledModels.length
+            ? ollamaInstalledModels.join(', ')
+            : 'không đọc được danh sách model từ /api/tags';
+          throw new Error(
+            `Model "${currentModel}" chưa có trong Ollama local. Model khả dụng: ${available}. Hãy chạy "ollama pull <model>" rồi thử lại.`,
+          );
+        }
         if (isQuotaError || isTransientError) {
           const retryDelayMs = extractRetryDelayMs(err);
           if (currentModelIndex < modelCandidates.length - 1) {
@@ -4210,6 +4319,24 @@ async function generateGeminiText(
     throw error;
   } finally {
     inFlightAiRequests.delete(cacheKey);
+  }
+
+  let ollamaInstalledModels: string[] = [];
+  if (auth.provider === 'ollama') {
+    ollamaInstalledModels = await fetchOllamaInstalledModels(
+      auth.baseUrl || getProviderBaseUrl('ollama'),
+      auth.apiKey || '',
+      12000,
+      splitConfig.signal,
+    );
+    if (ollamaInstalledModels.length) {
+      const installedSet = new Set(ollamaInstalledModels.map((item) => item.toLowerCase()));
+      const baseExists = installedSet.has(initialModel.toLowerCase());
+      const merged = baseExists
+        ? [...modelCandidates, ...ollamaInstalledModels]
+        : [...ollamaInstalledModels, ...modelCandidates];
+      modelCandidates = Array.from(new Set(merged.map((item) => String(item || '').trim()).filter(Boolean)));
+    }
   }
 }
 

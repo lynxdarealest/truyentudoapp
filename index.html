@@ -6,25 +6,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
-    <script>
-      (function () {
-        if (typeof window === "undefined") return;
-        const w = window;
-        try {
-          sessionStorage.setItem("vercel-live-feedback-optout", "1");
-          sessionStorage.setItem("vercel-live-feedback-hidden", "1");
-        } catch (e) {
-          // ignore storage errors
-        }
-        if (!w.chrome) w.chrome = {};
-        if (!w.chrome.runtime) w.chrome.runtime = {};
-        if (typeof w.chrome.runtime.sendMessage !== "function") {
-          w.chrome.runtime.sendMessage = function () {
-            return undefined;
-          };
-        }
-      })();
-    </script>
+    <script src="/bootstrap-compat.js"></script>
     <title>TruyenForge</title>
   </head>
   <body>
