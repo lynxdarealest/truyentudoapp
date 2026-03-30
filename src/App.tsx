@@ -3343,6 +3343,84 @@ function countWords(text: string): number {
     .filter((word) => word.length > 0).length;
 }
 
+interface AutoContentLoadProfile {
+  mode: 'normal' | 'turbo' | 'huge' | 'extreme';
+  score: number;
+  turboMode: boolean;
+  hugeFileMode: boolean;
+  extremeFileMode: boolean;
+  reasons: string[];
+}
+
+function computeAutoContentLoadProfile(input: {
+  text: string;
+  provider: ApiProvider;
+  detectedChapterCount?: number;
+}): AutoContentLoadProfile {
+  const normalized = String(input.text || '').replace(/\r\n/g, '\n').trim();
+  const words = countWords(normalized);
+  const chars = normalized.length;
+  const tokens = estimateTextTokens(normalized);
+  const paragraphs = normalized
+    .split(/\n{2,}/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const paragraphCount = paragraphs.length;
+  const longestParagraphChars = paragraphs.reduce((max, item) => Math.max(max, item.length), 0);
+  const detectedChapters = Math.max(0, Number(input.detectedChapterCount || 0));
+
+  const wordPressure = words / 2600;
+  const charPressure = chars / 42000;
+  const tokenPressure = tokens / 10500;
+  const paragraphPressure = paragraphCount / 85;
+  const chapterPressure = detectedChapters >= 2 ? detectedChapters / 14 : (chars > 32000 ? 0.5 : 0.25);
+  const longestParagraphPressure = longestParagraphChars / 2400;
+  const providerMultiplier = input.provider === 'ollama'
+    ? 1.22
+    : input.provider === 'openrouter'
+      ? 1.1
+      : 1;
+
+  let score =
+    (wordPressure * 0.24) +
+    (charPressure * 0.24) +
+    (tokenPressure * 0.24) +
+    (paragraphPressure * 0.15) +
+    (chapterPressure * 0.08) +
+    (longestParagraphPressure * 0.12);
+
+  if (detectedChapters < 2 && chars > 32000) score += 0.3;
+  if (longestParagraphChars > 3200) score += 0.25;
+  score *= providerMultiplier;
+
+  const normalizedScore = Number(score.toFixed(2));
+  const mode: AutoContentLoadProfile['mode'] =
+    normalizedScore >= 3.6 ? 'extreme'
+    : normalizedScore >= 2.35 ? 'huge'
+    : normalizedScore >= 1.35 ? 'turbo'
+    : 'normal';
+
+  const reasons: string[] = [];
+  if (words > 0) reasons.push(`${words.toLocaleString('vi-VN')} từ`);
+  if (chars > 0) reasons.push(`${chars.toLocaleString('vi-VN')} ký tự`);
+  if (tokens > 0) reasons.push(`~${tokens.toLocaleString('vi-VN')} token`);
+  if (paragraphCount > 0) reasons.push(`${paragraphCount.toLocaleString('vi-VN')} đoạn`);
+  if (detectedChapters > 0) reasons.push(`${detectedChapters.toLocaleString('vi-VN')} mốc chương`);
+  if (longestParagraphChars > 1800) reasons.push(`đoạn dài nhất ~${longestParagraphChars.toLocaleString('vi-VN')} ký tự`);
+  if (input.provider === 'ollama' || input.provider === 'openrouter') {
+    reasons.push(`provider ${PROVIDER_LABELS[input.provider]}`);
+  }
+
+  return {
+    mode,
+    score: normalizedScore,
+    turboMode: mode !== 'normal',
+    hugeFileMode: mode === 'huge' || mode === 'extreme',
+    extremeFileMode: mode === 'extreme',
+    reasons,
+  };
+}
+
 function buildFallbackChapters(raw: string, targetCount: number): Array<{ title: string; content: string }> {
   const cleaned = stripJsonFence(raw);
   if (!cleaned) return [];
@@ -13129,12 +13207,17 @@ const AppContent = () => {
       }
       const storyTranslationMemory = normalizeTranslationDictionary(dictionaryEntries);
 
-      const sourceWordCount = countWords(translateFileContent);
       const sourceCharCount = String(translateFileContent || '').length;
       const sourceTokenEstimate = estimateTextTokens(translateFileContent);
-      const hugeFileMode = sourceWordCount >= 6500 || sourceCharCount >= 90000 || sourceTokenEstimate >= 22000;
-      const extremeFileMode = sourceWordCount >= 11000 || sourceCharCount >= 160000 || sourceTokenEstimate >= 36000;
-      const turboMode = hugeFileMode || sourceWordCount >= 3200 || sourceCharCount >= 45000 || sourceTokenEstimate >= 12000;
+      const detectedSections = detectChapterSections(translateFileContent);
+      const translateLoadProfile = computeAutoContentLoadProfile({
+        text: translateFileContent,
+        provider: ai.provider,
+        detectedChapterCount: detectedSections.length,
+      });
+      const hugeFileMode = translateLoadProfile.hugeFileMode;
+      const extremeFileMode = translateLoadProfile.extremeFileMode;
+      const turboMode = translateLoadProfile.turboMode;
       let segmentCharLimit = extremeFileMode ? 3400 : hugeFileMode ? 4300 : (turboMode ? 6000 : 3800);
       if (ai.provider === 'gemini' || ai.provider === 'gcli') {
         if (extremeFileMode) {
@@ -13169,7 +13252,6 @@ const AppContent = () => {
       const translationConcurrency = overloadSafeMode ? 1 : (hugeFileMode ? 1 : (turboMode ? 2 : 1));
       const requestSpacingMs = ai.provider === 'ollama' ? 700 : (ai.provider === 'openrouter' ? 280 : 0);
       const overloadFallbackRetries = ai.provider === 'ollama' ? 3 : 2;
-      const detectedSections = detectChapterSections(translateFileContent);
       const hasClearChapterStructure = detectedSections.length >= 2;
       const useManualChapterSplit = !hasClearChapterStructure && options.chapteringMode === 'chars';
       const manualCharsPerChapter = Math.max(1200, Math.min(22000, Math.round(Number(options.charsPerChapter || 3000))));
@@ -13209,17 +13291,21 @@ const AppContent = () => {
           : detectedSections.length >= 2
             ? `Đã nhận diện ${effectiveUnits.length} chương và giữ nguyên cấu trúc chương.`
             : turboMode
-              ? 'File lớn nên hệ thống sẽ tự chia đoạn và ưu tiên tốc độ.'
-              : 'Chưa thấy mốc chương rõ ràng, hệ thống sẽ tự chia đoạn để dịch ổn định hơn.';
+            ? 'File lớn nên hệ thống sẽ tự chia đoạn và ưu tiên tốc độ.'
+            : 'Chưa thấy mốc chương rõ ràng, hệ thống sẽ tự chia đoạn để dịch ổn định hơn.';
       const translationProfileNote = extremeFileMode
         ? 'Đang dùng chế độ an toàn cao cho file rất lớn: giảm kích thước lô, dịch tuần tự và hạn chế prompt phình to.'
         : hugeFileMode
           ? 'Đang dùng chế độ an toàn cho file lớn: giảm concurrency và chia lô nhỏ hơn để hạn chế lỗi trả về.'
           : '';
+      const autoProfileDetail = `Chế độ tự động: ${translateLoadProfile.mode.toUpperCase()} (score ${translateLoadProfile.score.toFixed(2)}).`;
+      const autoProfileReasons = translateLoadProfile.reasons.length
+        ? `Tín hiệu tải: ${translateLoadProfile.reasons.join(' · ')}.`
+        : '';
       updateAiRun(aiRun, {
         message: 'Đang phân tích cấu trúc truyện...',
         stageLabel: 'Phân tích cấu trúc',
-        detail: `${translationPreparationMessage} ${preparationLabel}${translationProfileNote ? ` ${translationProfileNote}` : ''}`,
+        detail: `${translationPreparationMessage} ${preparationLabel}${translationProfileNote ? ` ${translationProfileNote}` : ''} ${autoProfileDetail} ${autoProfileReasons}`.trim(),
         progress: { completed: 0, total: Math.max(totalSegments, 1) },
       });
 
@@ -13786,19 +13872,23 @@ const AppContent = () => {
         traceStage: stage,
         traceMeta: buildTraceMetadata(continueTaskRun.traceFor(stage), extra),
       });
-      const continueWordCount = countWords(continueFileContent);
       const continueCharCount = String(continueFileContent || '').length;
-      const continueTokenEstimate = estimateTextTokens(continueFileContent);
-      const largeContinueMode = continueWordCount >= 4500 || continueCharCount >= 70000 || continueTokenEstimate >= 17000;
-      const extremeContinueMode = continueWordCount >= 9000 || continueCharCount >= 140000 || continueTokenEstimate >= 32000;
+      const continueDetectedSections = detectChapterSections(continueFileContent);
+      const continueLoadProfile = computeAutoContentLoadProfile({
+        text: continueFileContent,
+        provider: ai.provider,
+        detectedChapterCount: continueDetectedSections.length,
+      });
+      const largeContinueMode = continueLoadProfile.turboMode;
+      const extremeContinueMode = continueLoadProfile.extremeFileMode;
       const analysisExcerpt = buildBalancedStoryExcerpt(
         continueFileContent,
-        extremeContinueMode ? 11000 : largeContinueMode ? 14500 : 18000,
+        extremeContinueMode ? 11000 : continueLoadProfile.hugeFileMode ? 13000 : largeContinueMode ? 15000 : 18000,
       );
       const recentStoryTail = String(continueFileContent || '')
         .replace(/\r\n/g, '\n')
         .trim()
-        .slice(-(extremeContinueMode ? 2600 : largeContinueMode ? 3800 : 5200));
+        .slice(-(extremeContinueMode ? 2600 : continueLoadProfile.hugeFileMode ? 3400 : largeContinueMode ? 4000 : 5200));
       
       // 1. Analyze the story
       const continueAnalysisRoute = routeAiExecutionLane({
@@ -13874,7 +13964,7 @@ const AppContent = () => {
       updateAiRun(aiRun, {
         message: 'Đang lập kế hoạch các chương tiếp theo...',
         stageLabel: 'Lập kế hoạch',
-        detail: `${largeContinueMode ? 'Đã phân tích theo chế độ file lớn, giữ cả phần đầu và diễn biến gần cuối. ' : ''}AI đang dựng roadmap cho các chương mới.`,
+        detail: `${largeContinueMode ? 'Đã phân tích theo chế độ file lớn, giữ cả phần đầu và diễn biến gần cuối. ' : ''}Chế độ tự động: ${continueLoadProfile.mode.toUpperCase()} (score ${continueLoadProfile.score.toFixed(2)}). AI đang dựng roadmap cho các chương mới.`,
         progress: { completed: 2, total: 3 },
       });
 
