@@ -8,6 +8,7 @@ export type ApiProvider =
   | 'deepseek'
   | 'openrouter'
   | 'mistral'
+  | 'ollama'
   | 'custom'
   | 'unknown';
 export type AiProfileMode = 'economy' | 'balanced' | 'quality';
@@ -54,6 +55,7 @@ export const PROVIDER_LABELS: Record<ApiProvider, string> = {
   deepseek: 'DeepSeek',
   openrouter: 'OpenRouter',
   mistral: 'Mistral AI',
+  ollama: 'Ollama Local',
   custom: 'Máy chủ AI riêng',
   unknown: 'Không rõ',
 };
@@ -121,6 +123,13 @@ export const API_PROVIDER_META: Record<Exclude<ApiProvider, 'unknown'>, ApiProvi
     tradeoffs: 'Danh mục model thay đổi khá nhanh theo vòng đời release, nên cần theo dõi model cũ/mới kỹ hơn.',
     docsUrl: 'https://docs.mistral.ai/getting-started/introduction',
     keyUrl: 'https://console.mistral.ai/api-keys/',
+  },
+  ollama: {
+    title: 'Ollama Local',
+    strengths: 'Chạy model ngay trên máy của bạn, không phụ thuộc quota cloud và không cần gửi dữ liệu ra ngoài.',
+    tradeoffs: 'Tốc độ/chất lượng phụ thuộc phần cứng máy; model lớn sẽ cần RAM/VRAM cao để chạy mượt.',
+    docsUrl: 'https://ollama.com/',
+    keyUrl: '',
   },
   custom: {
     title: 'Máy chủ AI riêng',
@@ -193,6 +202,13 @@ export const PROVIDER_MODEL_OPTIONS: Record<Exclude<ApiProvider, 'unknown'>, Api
     { value: 'mistral-large-latest', label: 'Mistral Large Latest', description: 'Ưu tiên chất lượng và suy luận tốt hơn trong hệ Mistral.' },
     { value: 'open-mixtral-8x22b', label: 'Mixtral 8x22B', description: 'Mẫu cũ nhưng vẫn đáng giá cho ai thích open-weight lớn.' },
   ],
+  ollama: [
+    { value: 'qwen2.5:7b', label: 'Qwen 2.5 7B', description: 'Cân bằng giữa chất lượng và tốc độ trên máy cá nhân.' },
+    { value: 'llama3.1:8b', label: 'Llama 3.1 8B', description: 'Phổ biến, dễ chạy, hợp viết/dịch cơ bản.' },
+    { value: 'gemma2:9b', label: 'Gemma 2 9B', description: 'Open model gọn, hợp tác vụ hằng ngày khi máy không quá mạnh.' },
+    { value: 'mistral:7b', label: 'Mistral 7B', description: 'Nhẹ, tốc độ tốt trên CPU/GPU tầm trung.' },
+    { value: 'ollama-custom', label: 'Tự nhập model Ollama', description: 'Tự điền đúng tên model bạn đã pull trong máy.' },
+  ],
   custom: [
     { value: 'custom-model', label: 'Model tự nhập', description: 'Tự nhập model khi dùng máy chủ AI riêng hoặc gateway tương thích OpenAI.' },
   ],
@@ -219,6 +235,7 @@ export function getProviderBaseUrl(provider: ApiProvider): string {
   if (provider === 'deepseek') return 'https://api.deepseek.com/v1';
   if (provider === 'openrouter') return 'https://openrouter.ai/api/v1';
   if (provider === 'mistral') return 'https://api.mistral.ai/v1';
+  if (provider === 'ollama') return 'http://127.0.0.1:11434/v1';
   if (provider === 'custom') return 'https://api.openai.com/v1/chat/completions';
   return '';
 }
@@ -264,6 +281,11 @@ export function getDefaultModelForProvider(provider: ApiProvider, profile: AiPro
     if (profile === 'quality') return 'mistral-large-latest';
     return 'mistral-small-3.2';
   }
+  if (provider === 'ollama') {
+    if (profile === 'economy') return 'llama3.1:8b';
+    if (profile === 'quality') return 'qwen2.5:7b';
+    return 'qwen2.5:7b';
+  }
   if (provider === 'anthropic') {
     if (profile === 'economy') return 'claude-3-5-haiku-latest';
     if (profile === 'quality') return 'claude-3-7-sonnet-latest';
@@ -295,7 +317,7 @@ export function normalizeStoredApiKeys(input: unknown, profile: AiProfileMode = 
         : detectApiProviderFromValue(key);
       const provider = explicitProvider || 'unknown';
       const baseUrl = readText(item.baseUrl) || getProviderBaseUrl(provider);
-      if (!key && !(provider === 'custom' && baseUrl)) return null;
+      if (!key && !((provider === 'custom' || provider === 'ollama') && baseUrl)) return null;
       const createdAt = readText(item.createdAt) || new Date().toISOString();
       return {
         id: readText(item.id) || `api-${createdAt}-${index}`,

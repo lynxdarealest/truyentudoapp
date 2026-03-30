@@ -350,6 +350,7 @@ export function ApiSectionPanel({
                 <option value="deepseek">DeepSeek</option>
                 <option value="openrouter">OpenRouter</option>
                 <option value="mistral">Mistral AI</option>
+                <option value="ollama">Ollama Local</option>
                 <option value="openai">OpenAI</option>
                 <option value="anthropic">Anthropic</option>
                 <option value="custom">Custom</option>
@@ -383,12 +384,16 @@ export function ApiSectionPanel({
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {effectiveDraftProvider === 'custom' ? (
+              {effectiveDraftProvider === 'custom' || effectiveDraftProvider === 'ollama' ? (
                 <input
                   value={apiEntryModel}
                   onChange={(e) => onApiEntryModelChange(e.target.value)}
                   className="tf-input"
-                  placeholder="Model custom (vd: llama-3.1-70b)"
+                  placeholder={
+                    effectiveDraftProvider === 'ollama'
+                      ? 'Model Ollama (vd: qwen2.5:7b)'
+                      : 'Model custom (vd: llama-3.1-70b)'
+                  }
                 />
               ) : (
                 <select
@@ -438,7 +443,11 @@ export function ApiSectionPanel({
               value={apiEntryText}
               onChange={(e) => onApiEntryTextChange(e.target.value)}
               className="tf-textarea"
-              placeholder="Dán API key hoặc mã đăng nhập Google (ya29...)"
+              placeholder={
+                effectiveDraftProvider === 'ollama'
+                  ? 'Ollama local không bắt buộc API key. Có thể để trống.'
+                  : 'Dán API key hoặc mã đăng nhập Google (ya29...)'
+              }
             />
 
             <div className="flex flex-col sm:flex-row flex-wrap gap-3 justify-end tf-actions-mobile">

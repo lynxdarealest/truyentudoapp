@@ -1655,6 +1655,7 @@ function getApiRuntimeConfig(): ApiRuntimeConfig {
         parsed.selectedProvider === 'deepseek' ||
         parsed.selectedProvider === 'openrouter' ||
         parsed.selectedProvider === 'mistral' ||
+        parsed.selectedProvider === 'ollama' ||
         parsed.selectedProvider === 'custom' ||
         parsed.selectedProvider === 'unknown'
           ? parsed.selectedProvider
@@ -3802,6 +3803,7 @@ async function generateGeminiText(
         } else if (
           auth.provider === 'openai' ||
           auth.provider === 'custom' ||
+          auth.provider === 'ollama' ||
           auth.provider === 'xai' ||
           auth.provider === 'groq' ||
           auth.provider === 'deepseek' ||
@@ -4027,6 +4029,7 @@ function resolveAiModel(
   if (modelFromEntry) return modelFromEntry;
   if (runtime.selectedModel && runtime.selectedProvider === provider) return runtime.selectedModel;
   if (provider === 'custom') return runtime.selectedModel || 'custom-model';
+  if (provider === 'ollama') return runtime.selectedModel || 'qwen2.5:7b';
   return getDefaultModelForProvider(provider, runtime.aiProfile);
 }
 
@@ -4063,7 +4066,9 @@ function createGeminiClient(intent: AiTaskIntent = 'primary'): AiAuth {
     : (runtime.selectedProvider === 'unknown' ? 'gemini' : runtime.selectedProvider);
 
   const apiKey = activeEntry?.key?.trim() || ((provider === 'gemini' || provider === 'gcli') ? getConfiguredGeminiApiKey() : '');
-  if (!apiKey && !(provider === 'custom' && (activeEntry?.baseUrl || runtime.selectedModel))) {
+  const allowNoKeyProvider =
+    (provider === 'custom' || provider === 'ollama') && Boolean(activeEntry?.baseUrl || runtime.selectedModel);
+  if (!apiKey && !allowNoKeyProvider) {
     const mode = getApiRuntimeConfig().mode;
     if (mode === 'relay') {
       return {
@@ -5618,17 +5623,19 @@ const ToolsManager = ({
 
   const handleSaveApiEntry = () => {
     const raw = apiEntryText.trim();
-    if (!raw) return;
+    const draftProvider = apiEntryProvider;
+    const canSaveWithoutKey = draftProvider === 'custom' || draftProvider === 'ollama';
+    if (!raw && !canSaveWithoutKey) return;
     const detected = detectApiProviderFromValue(raw);
     const provider = detected === 'gemini' || detected === 'gcli' || detected === 'anthropic' || detected === 'groq' || detected === 'openrouter'
       ? detected
-      : apiEntryProvider;
+      : draftProvider;
     const key = provider === 'gcli' ? (extractGcliTokenFromText(raw) || raw.replace(/^Bearer\s+/i, '').trim()) : raw;
-    const model = (provider === 'custom' ? apiEntryModel.trim() : apiEntryModel) || getDefaultModelForProvider(provider, aiProfile);
+    const model = (provider === 'custom' || provider === 'ollama' ? apiEntryModel.trim() : apiEntryModel) || getDefaultModelForProvider(provider, aiProfile);
     const baseUrl = apiEntryBaseUrl.trim() || getProviderBaseUrl(provider);
     const existingMatch = apiVault.find((item) => (
-      provider === 'custom'
-        ? item.provider === 'custom' && item.baseUrl.trim() === baseUrl
+      provider === 'custom' || provider === 'ollama'
+        ? item.provider === provider && item.baseUrl.trim() === baseUrl
         : item.key.trim() === key
     ));
     const nextEntry: StoredApiKeyRecord = {
