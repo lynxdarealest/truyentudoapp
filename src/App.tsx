@@ -7631,7 +7631,6 @@ const StoryDetail = ({
   const [isEditingChapter, setIsEditingChapter] = useState(false);
   const [editTitle, setEditTitle] = useState('');
   const [editContent, setEditContent] = useState('');
-  const [showDictionaryPopup, setShowDictionaryPopup] = useState(false);
   const [chapterRenderLimit, setChapterRenderLimit] = useState(CHAPTER_RENDER_BATCH_SIZE);
   const displayGenre = parseStoryGenreAndPrompt(story.genre || '', story.storyPromptNotes || '').genreLabel || 'Chưa phân loại';
 
@@ -7739,38 +7738,6 @@ const StoryDetail = ({
   useEffect(() => {
     setChapterRenderLimit(CHAPTER_RENDER_BATCH_SIZE);
   }, [story.id]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const syncHashState = () => setShowDictionaryPopup(window.location.hash === '#dictionary');
-    syncHashState();
-    window.addEventListener('hashchange', syncHashState);
-    window.addEventListener('popstate', syncHashState);
-    return () => {
-      window.removeEventListener('hashchange', syncHashState);
-      window.removeEventListener('popstate', syncHashState);
-    };
-  }, []);
-
-  const openDictionaryPopup = () => {
-    if (typeof window === 'undefined') return;
-    if (window.location.hash === '#dictionary') {
-      setShowDictionaryPopup(true);
-      return;
-    }
-    const url = `${window.location.pathname}${window.location.search}#dictionary`;
-    window.history.pushState({ ...(window.history.state || {}), tfPopup: 'dictionary' }, '', url);
-    setShowDictionaryPopup(true);
-  };
-
-  const closeDictionaryPopup = () => {
-    if (typeof window === 'undefined') return;
-    if (window.location.hash === '#dictionary') {
-      window.history.back();
-      return;
-    }
-    setShowDictionaryPopup(false);
-  };
 
   const persistUpdatedStory = (updatedStory: Story): void => {
     const stories = storage.getStories();
@@ -7896,12 +7863,6 @@ const StoryDetail = ({
             >
               <Settings className="w-4 h-4" /> Giao diện đọc
             </button>
-            <button
-              onClick={openDictionaryPopup}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 transition-colors text-sm font-bold"
-            >
-              <BookOpen className="w-4 h-4" /> Tra nhanh
-            </button>
             {!isReadOnly ? (
               <>
                 <button 
@@ -7981,25 +7942,6 @@ const StoryDetail = ({
             Chương sau <ChevronRight className="w-5 h-5" />
           </button>
         </div>
-
-        {showDictionaryPopup ? (
-          <div className="fixed inset-0 z-[215] bg-slate-950/45 backdrop-blur-sm p-4">
-            <div className="mx-auto mt-20 max-w-xl rounded-3xl border border-slate-200 bg-white p-5 shadow-2xl">
-              <div className="mb-3 flex items-center justify-between">
-                <h4 className="text-base font-bold text-slate-900">Tra từ điển nhanh</h4>
-                <button
-                  onClick={closeDictionaryPopup}
-                  className="rounded-lg border border-slate-200 px-3 py-1 text-sm font-semibold text-slate-600 hover:bg-slate-50"
-                >
-                  Đóng
-                </button>
-              </div>
-              <p className="text-sm text-slate-600">
-                Đây là popup mẫu dùng URL hash <code>#dictionary</code>. Bấm nút Back vật lý sẽ đóng popup trước, không thoát trang đọc.
-              </p>
-            </div>
-          </div>
-        ) : null}
 
         <AnimatePresence>
           {isEditingChapter && (
