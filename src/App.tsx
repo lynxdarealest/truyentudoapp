@@ -4435,13 +4435,18 @@ async function generateGeminiText(
         ollamaInstalledModels.find((item) => item.toLowerCase() === 'qwen2.5:7b') ||
         ollamaInstalledModels[0];
       const baseExists = Boolean(initialModel) && installedSet.has(initialModel.toLowerCase());
-      if (!baseExists && preferredInstalled) {
-        initialModel = preferredInstalled;
+      const primaryModel = baseExists ? initialModel : (preferredInstalled || initialModel);
+      if (primaryModel) {
+        initialModel = primaryModel;
       }
-      const merged = baseExists
-        ? [...modelCandidates, ...ollamaInstalledModels]
-        : [initialModel, ...ollamaInstalledModels, ...modelCandidates];
-      modelCandidates = Array.from(new Set(merged.map((item) => String(item || '').trim()).filter(Boolean)));
+      const orderedInstalled = [
+        initialModel,
+        ...ollamaInstalledModels.filter((item) => item.toLowerCase() !== initialModel.toLowerCase()),
+      ]
+        .map((item) => String(item || '').trim())
+        .filter(Boolean);
+      // For Ollama, only rotate between models that are actually installed to avoid fake fallbacks.
+      modelCandidates = Array.from(new Set(orderedInstalled));
     }
   }
   const traceTask = splitConfig.taskType || (kind === 'quality' ? 'story_generate' : 'story_translate');
@@ -4838,7 +4843,15 @@ async function generateGeminiText(
         }
         if (isQuotaError || isTransientError) {
           const retryDelayMs = extractRetryDelayMs(err);
-          if (currentModelIndex < modelCandidates.length - 1) {
+          if (auth.provider === 'ollama') {
+            if (attempt < maxAttempts) {
+              const waitMs = retryDelayMs || (isQuotaError
+                ? Math.min(65000, 2500 * (attempt + 1))
+                : Math.min(45000, 1800 * (attempt + 1)));
+              await sleepMs(waitMs);
+              continue;
+            }
+          } else if (currentModelIndex < modelCandidates.length - 1) {
             currentModelIndex += 1;
             currentModel = modelCandidates[currentModelIndex];
             continue;
