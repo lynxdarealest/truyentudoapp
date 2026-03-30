@@ -3995,6 +3995,7 @@ const OLLAMA_LOCAL_SAFE_TOKENS = {
   retryFast: 1100,
   retryQuality: 1600,
 };
+const OLLAMA_LOCAL_SAFE_NUM_CTX = 2048;
 
 const buildDefaultGenConfig = (kind: 'fast' | 'quality', config?: Record<string, unknown>) => {
   const base = kind === 'fast'
@@ -4414,6 +4415,117 @@ async function fetchOllamaInstalledModels(
   }
 }
 
+async function callOllamaLocalWithFallback(
+  input: {
+    model: string;
+    prompt: string;
+    baseUrl: string;
+    apiKey: string;
+    timeoutMs: number;
+    signal?: AbortSignal;
+    attemptConfig: Record<string, unknown>;
+  },
+): Promise<string> {
+  const apiBase = normalizeOllamaApiBaseUrl(input.baseUrl || getProviderBaseUrl('ollama'));
+  const openAiBase = normalizeOllamaOpenAiBaseUrl(input.baseUrl || getProviderBaseUrl('ollama'));
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (String(input.apiKey || '').trim()) {
+    headers.Authorization = `Bearer ${String(input.apiKey || '').trim()}`;
+  }
+
+  const temperature = typeof input.attemptConfig.temperature === 'number' ? input.attemptConfig.temperature : 0.55;
+  const maxOutputTokens = typeof input.attemptConfig.maxOutputTokens === 'number' ? input.attemptConfig.maxOutputTokens : undefined;
+
+  const chatResp = await fetchWithTimeout(
+    `${apiBase}/api/chat`,
+    {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        model: input.model,
+        messages: [{ role: 'user', content: input.prompt }],
+        stream: false,
+        options: {
+          temperature,
+          num_predict: maxOutputTokens,
+          num_ctx: OLLAMA_LOCAL_SAFE_NUM_CTX,
+        },
+      }),
+    },
+    input.timeoutMs,
+    input.signal,
+  );
+  const chatBody = chatResp.ok ? '' : await chatResp.text();
+  if (chatResp.ok) {
+    const chatData = await chatResp.json();
+    const chatText = String(chatData?.message?.content || '').trim() || extractTextFromModelPayload(chatData) || '';
+    if (chatText) return chatText;
+  }
+
+  const generateResp = await fetchWithTimeout(
+    `${apiBase}/api/generate`,
+    {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        model: input.model,
+        prompt: input.prompt,
+        stream: false,
+        options: {
+          temperature,
+          num_predict: maxOutputTokens,
+          num_ctx: OLLAMA_LOCAL_SAFE_NUM_CTX,
+        },
+      }),
+    },
+    input.timeoutMs,
+    input.signal,
+  );
+  const generateBody = generateResp.ok ? '' : await generateResp.text();
+  if (generateResp.ok) {
+    const generateData = await generateResp.json();
+    const generateText = String(generateData?.response || '').trim() || extractTextFromModelPayload(generateData) || '';
+    if (generateText) return generateText;
+  }
+
+  const completionEndpoint = /\/chat\/completions$/i.test(openAiBase)
+    ? openAiBase
+    : `${openAiBase.replace(/\/+$/, '')}/chat/completions`;
+  const v1Resp = await fetchWithTimeout(
+    completionEndpoint,
+    {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        model: input.model,
+        messages: [{ role: 'user', content: input.prompt }],
+        temperature,
+        max_tokens: maxOutputTokens,
+      }),
+    },
+    input.timeoutMs,
+    input.signal,
+  );
+  const v1Body = v1Resp.ok ? '' : await v1Resp.text();
+  if (v1Resp.ok) {
+    const v1Data = await v1Resp.json();
+    const v1Text = String(v1Data?.choices?.[0]?.message?.content || '').trim() || extractTextFromModelPayload(v1Data) || '';
+    if (v1Text) return v1Text;
+  }
+
+  const combined = [chatBody, generateBody, v1Body].filter(Boolean).join(' | ');
+  if (isModelNotFoundError(combined)) {
+    throw new Error(`Model "${input.model}" chưa có trong Ollama local. ${combined.slice(0, 260)}`);
+  }
+  throw new Error(
+    `Ollama Local error: ` +
+      `/api/chat=${chatResp.status}, /api/generate=${generateResp.status}, /v1/chat/completions=${v1Resp.status}. ` +
+      `${combined.slice(0, 260)}`,
+  );
+}
+
 type AiAuth = {
   provider: ApiProvider;
   apiKey: string;
@@ -4643,19 +4755,26 @@ async function generateGeminiText(
           }
           const data = await resp.json();
           text = extractTextFromModelPayload(data) || '';
+        } else if (auth.provider === 'ollama') {
+          text = await callOllamaLocalWithFallback({
+            model: currentModel,
+            prompt: promptForAttempt,
+            baseUrl: auth.baseUrl || getProviderBaseUrl('ollama'),
+            apiKey: auth.apiKey,
+            timeoutMs,
+            signal: splitConfig.signal,
+            attemptConfig,
+          });
         } else if (
           auth.provider === 'openai' ||
           auth.provider === 'custom' ||
-          auth.provider === 'ollama' ||
           auth.provider === 'xai' ||
           auth.provider === 'groq' ||
           auth.provider === 'deepseek' ||
           auth.provider === 'openrouter' ||
           auth.provider === 'mistral'
         ) {
-          const openAiBase = auth.provider === 'ollama'
-            ? normalizeOllamaOpenAiBaseUrl(auth.baseUrl || getProviderBaseUrl('ollama'))
-            : (auth.baseUrl || getProviderBaseUrl(auth.provider));
+          const openAiBase = auth.baseUrl || getProviderBaseUrl(auth.provider);
           const completionEndpoint = /\/chat\/completions$/i.test(openAiBase)
             ? openAiBase
             : `${openAiBase.replace(/\/+$/, '')}/chat/completions`;
@@ -4686,94 +4805,10 @@ async function generateGeminiText(
           }, timeoutMs, splitConfig.signal);
           if (!resp.ok) {
             const body = await resp.text();
-            if (auth.provider === 'ollama' && resp.status === 404) {
-              const ollamaErrorBodies = [body];
-              const ollamaLegacyEndpoint = `${normalizeOllamaApiBaseUrl(openAiBase)}/api/chat`;
-              const legacyResp = await fetchWithTimeout(ollamaLegacyEndpoint, {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  ...(auth.apiKey.trim() ? { Authorization: `Bearer ${auth.apiKey}` } : {}),
-                },
-                body: JSON.stringify({
-                  model: currentModel,
-                  messages: [{ role: 'user', content: promptForAttempt }],
-                  stream: false,
-                  options: {
-                    temperature: typeof attemptConfig.temperature === 'number' ? attemptConfig.temperature : 0.7,
-                    num_predict: typeof attemptConfig.maxOutputTokens === 'number' ? attemptConfig.maxOutputTokens : undefined,
-                  },
-                }),
-              }, timeoutMs, splitConfig.signal);
-              if (legacyResp.ok) {
-                const legacyData = await legacyResp.json();
-                text = legacyData?.message?.content || extractTextFromModelPayload(legacyData) || '';
-                if (text) {
-                  // Recovered via legacy Ollama endpoint.
-                } else {
-                  throw new Error('Ollama legacy endpoint trả về rỗng.');
-                }
-              } else {
-                const legacyBody = await legacyResp.text();
-                ollamaErrorBodies.push(legacyBody);
-                if (legacyResp.status === 404) {
-                  const ollamaGenerateEndpoint = `${normalizeOllamaApiBaseUrl(openAiBase)}/api/generate`;
-                  const generateResp = await fetchWithTimeout(ollamaGenerateEndpoint, {
-                    method: 'POST',
-                    headers: {
-                      'Content-Type': 'application/json',
-                      ...(auth.apiKey.trim() ? { Authorization: `Bearer ${auth.apiKey}` } : {}),
-                    },
-                    body: JSON.stringify({
-                      model: currentModel,
-                      prompt: promptForAttempt,
-                      stream: false,
-                      options: {
-                        temperature: typeof attemptConfig.temperature === 'number' ? attemptConfig.temperature : 0.7,
-                        num_predict: typeof attemptConfig.maxOutputTokens === 'number' ? attemptConfig.maxOutputTokens : undefined,
-                      },
-                    }),
-                  }, timeoutMs, splitConfig.signal);
-                  if (generateResp.ok) {
-                    const generateData = await generateResp.json();
-                    text = String(generateData?.response || '').trim() || extractTextFromModelPayload(generateData) || '';
-                    if (!text) {
-                      throw new Error('Ollama /api/generate trả về rỗng.');
-                    }
-                  } else {
-                    const generateBody = await generateResp.text();
-                    ollamaErrorBodies.push(generateBody);
-                    const allOllamaErrorText = ollamaErrorBodies.join(' | ');
-                    if (generateResp.status === 404 && !isModelNotFoundError(allOllamaErrorText)) {
-                      throw new Error(
-                        `Không gọi được Ollama local ở ${normalizeOllamaApiBaseUrl(openAiBase)} ` +
-                        `(404 trên /v1/chat/completions, /api/chat, /api/generate). ` +
-                        `Hãy kiểm tra lại Base URL hoặc tiến trình ollama serve.`,
-                      );
-                    }
-                    throw new Error(
-                      `Ollama Local error ${generateResp.status}: ${generateBody.slice(0, 260)} ` +
-                      `(đã thử /v1/chat/completions, /api/chat, /api/generate).`,
-                    );
-                  }
-                } else {
-                  throw new Error(`Ollama Local error ${legacyResp.status}: ${legacyBody.slice(0, 260)}`);
-                }
-              }
-              if (text) {
-                // Skip provider error throw below because we already recovered.
-              } else {
-                throw new Error(`Ollama Local error ${resp.status}: ${body.slice(0, 260)}`);
-              }
-            }
-            if (text) {
-              // recovered path, do not throw
-            } else {
             const providerLabel = auth.provider === 'custom'
               ? 'Custom endpoint'
               : (PROVIDER_LABELS[auth.provider] || 'OpenAI-compatible provider');
             throw new Error(`${providerLabel} error ${resp.status}: ${body.slice(0, 220)}`);
-            }
           }
           const data = await resp.json();
           text = data?.choices?.[0]?.message?.content || extractTextFromModelPayload(data) || '';
@@ -14103,7 +14138,7 @@ const AppContent = () => {
         1,
         Math.min(2, overloadSafeMode ? 1 : (hugeFileMode ? 1 : (turboMode ? 2 : 1))),
       );
-      const requestSpacingMs = ai.provider === 'ollama' ? 1400 : (ai.provider === 'openrouter' ? 280 : 0);
+      const requestSpacingMs = ai.provider === 'ollama' ? 1800 : (ai.provider === 'openrouter' ? 280 : 0);
       const overloadFallbackRetries = ai.provider === 'ollama' ? 3 : 2;
       const hasClearChapterStructure = detectedSections.length >= 2;
       const useManualChapterSplit = !hasClearChapterStructure && options.chapteringMode === 'chars';
@@ -14128,7 +14163,7 @@ const AppContent = () => {
           ? (extremeFileMode ? 5200 : hugeFileMode ? 6800 : (turboMode ? 12000 : 9000))
           : (extremeFileMode ? 4200 : hugeFileMode ? 5600 : (turboMode ? 9000 : 7200));
       if (overloadSafeMode) {
-        batchCharLimit = Math.min(batchCharLimit, ai.provider === 'ollama' ? 2200 : 4800);
+        batchCharLimit = Math.min(batchCharLimit, ai.provider === 'ollama' ? 1800 : 4800);
       }
       const batchItemLimit = overloadSafeMode ? 1 : (extremeFileMode ? 1 : lowQuotaMode ? 1 : hugeFileMode ? 2 : (turboMode ? 3 : 2));
       const translationRequestRetries = overloadSafeMode ? 0 : (lowQuotaMode && !hugeFileMode ? 0 : 1);
