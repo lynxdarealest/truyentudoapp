@@ -25,6 +25,53 @@ const GUEST_USER: LocalUser = {
   email: 'local@example.com',
   photoURL: 'https://picsum.photos/seed/author/100/100',
 };
+const SUPABASE_USER_CACHE_KEY = 'truyenforge:supabase-user-cache:v1';
+
+function toLocalUser(input: {
+  id?: string;
+  email?: string | null;
+  avatarUrl?: string | null;
+}): LocalUser | null {
+  const uid = String(input.id || '').trim();
+  if (!uid) return null;
+  const email = String(input.email || '').trim() || 'unknown';
+  return {
+    uid,
+    displayName: email || 'Supabase user',
+    email,
+    photoURL: String(input.avatarUrl || '').trim() || GUEST_USER.photoURL,
+  };
+}
+
+function loadCachedSupabaseUser(): LocalUser | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(SUPABASE_USER_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<LocalUser>;
+    const normalized = toLocalUser({
+      id: parsed.uid,
+      email: parsed.email,
+      avatarUrl: parsed.photoURL,
+    });
+    return normalized;
+  } catch {
+    return null;
+  }
+}
+
+function saveCachedSupabaseUser(next: LocalUser | null): void {
+  if (typeof window === 'undefined') return;
+  try {
+    if (!next) {
+      window.localStorage.removeItem(SUPABASE_USER_CACHE_KEY);
+      return;
+    }
+    window.localStorage.setItem(SUPABASE_USER_CACHE_KEY, JSON.stringify(next));
+  } catch {
+    // ignore storage write errors
+  }
+}
 
 const AuthContext = createContext<AuthContextType>({ 
   user: null, 
@@ -55,6 +102,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     let disposed = false;
     let unsubscribe: (() => void) | undefined;
+    const cachedUser = loadCachedSupabaseUser();
+    if (cachedUser) {
+      setUser(cachedUser);
+      setLoading(false);
+    }
 
     void (async () => {
       try {
@@ -67,39 +119,46 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return;
         }
 
-        const { data } = await supabase.auth.getSession();
-        if (!disposed) {
-          const sess = data.session;
-          if (sess?.user) {
-            setUser({
-              uid: sess.user.id,
-              displayName: sess.user.email || 'Supabase user',
-              email: sess.user.email || 'unknown',
-              photoURL: sess.user.user_metadata?.avatar_url || GUEST_USER.photoURL,
-            });
+        const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+          if (disposed) return;
+          const mapped = session?.user
+            ? toLocalUser({
+                id: session.user.id,
+                email: session.user.email,
+                avatarUrl: session.user.user_metadata?.avatar_url,
+              })
+            : null;
+          if (mapped) {
+            setUser(mapped);
+            saveCachedSupabaseUser(mapped);
           } else {
             setUser(null);
+            saveCachedSupabaseUser(null);
+          }
+          setLoading(false);
+        });
+        unsubscribe = () => listener?.subscription?.unsubscribe();
+
+        const { data } = await supabase.auth.getSession();
+        if (!disposed) {
+          const mapped = data.session?.user
+            ? toLocalUser({
+                id: data.session.user.id,
+                email: data.session.user.email,
+                avatarUrl: data.session.user.user_metadata?.avatar_url,
+              })
+            : null;
+          if (mapped) {
+            setUser(mapped);
+            saveCachedSupabaseUser(mapped);
+          } else {
+            setUser((prev) => prev ?? null);
           }
           setLoading(false);
         }
-
-        const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-          if (disposed) return;
-          if (session?.user) {
-            setUser({
-              uid: session.user.id,
-              displayName: session.user.email || 'Supabase user',
-              email: session.user.email || 'unknown',
-              photoURL: session.user.user_metadata?.avatar_url || GUEST_USER.photoURL,
-            });
-          } else {
-            setUser(null);
-          }
-        });
-        unsubscribe = () => listener?.subscription?.unsubscribe();
       } catch {
         if (!disposed) {
-          setUser(null);
+          setUser((prev) => prev ?? null);
           setLoading(false);
         }
       }
@@ -122,12 +181,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const { error, data } = await supabase.auth.signInWithPassword({ email, password });
     if (error) return { ok: false, message: error.message };
     if (data.user) {
-      setUser({
-        uid: data.user.id,
-        displayName: data.user.email || 'Supabase user',
-        email: data.user.email || 'unknown',
-        photoURL: data.user.user_metadata?.avatar_url || GUEST_USER.photoURL,
+      const mapped = toLocalUser({
+        id: data.user.id,
+        email: data.user.email,
+        avatarUrl: data.user.user_metadata?.avatar_url,
       });
+      if (mapped) {
+        setUser(mapped);
+        saveCachedSupabaseUser(mapped);
+      }
     }
     return { ok: true };
   };
@@ -157,12 +219,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const { error, data } = await supabase.auth.signUp({ email, password });
     if (error) return { ok: false, message: error.message };
     if (data.user) {
-      setUser({
-        uid: data.user.id,
-        displayName: data.user.email || 'Supabase user',
-        email: data.user.email || 'unknown',
-        photoURL: data.user.user_metadata?.avatar_url || GUEST_USER.photoURL,
+      const mapped = toLocalUser({
+        id: data.user.id,
+        email: data.user.email,
+        avatarUrl: data.user.user_metadata?.avatar_url,
       });
+      if (mapped) {
+        setUser(mapped);
+        saveCachedSupabaseUser(mapped);
+      }
     }
     return { ok: true };
   };
@@ -174,6 +239,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
     setUser(null);
     localStorage.removeItem('story_app_user');
+    saveCachedSupabaseUser(null);
   };
 
   return (

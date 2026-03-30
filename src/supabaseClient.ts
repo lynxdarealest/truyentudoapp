@@ -15,10 +15,18 @@ async function createSupabaseClient(): Promise<SupabaseClient | null> {
   if (!hasSupabase) return null;
   const module = await import('@supabase/supabase-js');
   const createClient = module.createClient;
+  const storage =
+    typeof window !== 'undefined' && typeof window.localStorage !== 'undefined'
+      ? window.localStorage
+      : undefined;
   return createClient(normalizedUrl, normalizedAnonKey, {
     auth: {
       persistSession: true,
       autoRefreshToken: true,
+      detectSessionInUrl: true,
+      flowType: 'pkce',
+      storageKey: 'truyenforge-supabase-auth',
+      ...(storage ? { storage } : {}),
     },
   });
 }
