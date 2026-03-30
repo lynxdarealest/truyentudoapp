@@ -4665,7 +4665,40 @@ async function generateGeminiText(
                 }
               } else {
                 const legacyBody = await legacyResp.text();
-                throw new Error(`Ollama Local error ${legacyResp.status}: ${legacyBody.slice(0, 260)}`);
+                if (legacyResp.status === 404) {
+                  const ollamaGenerateEndpoint = `${normalizeOllamaApiBaseUrl(openAiBase)}/api/generate`;
+                  const generateResp = await fetchWithTimeout(ollamaGenerateEndpoint, {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      ...(auth.apiKey.trim() ? { Authorization: `Bearer ${auth.apiKey}` } : {}),
+                    },
+                    body: JSON.stringify({
+                      model: currentModel,
+                      prompt: promptForAttempt,
+                      stream: false,
+                      options: {
+                        temperature: typeof attemptConfig.temperature === 'number' ? attemptConfig.temperature : 0.7,
+                        num_predict: typeof attemptConfig.maxOutputTokens === 'number' ? attemptConfig.maxOutputTokens : undefined,
+                      },
+                    }),
+                  }, timeoutMs, splitConfig.signal);
+                  if (generateResp.ok) {
+                    const generateData = await generateResp.json();
+                    text = String(generateData?.response || '').trim() || extractTextFromModelPayload(generateData) || '';
+                    if (!text) {
+                      throw new Error('Ollama /api/generate trả về rỗng.');
+                    }
+                  } else {
+                    const generateBody = await generateResp.text();
+                    throw new Error(
+                      `Ollama Local error ${generateResp.status}: ${generateBody.slice(0, 260)} ` +
+                      `(đã thử /v1/chat/completions, /api/chat, /api/generate).`,
+                    );
+                  }
+                } else {
+                  throw new Error(`Ollama Local error ${legacyResp.status}: ${legacyBody.slice(0, 260)}`);
+                }
               }
               if (text) {
                 // Skip provider error throw below because we already recovered.
