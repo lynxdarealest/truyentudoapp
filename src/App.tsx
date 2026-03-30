@@ -15097,6 +15097,9 @@ ${JSON.stringify(violatingPayload)}
 
     const storyPath = `/${resolveStorySlug(routeStory)}`;
     const canEdit = Boolean(user?.uid && routeStory.authorId && String(user.uid) === String(routeStory.authorId));
+    if (maintenanceReaderActive && !canEdit) {
+      return renderMaintenanceWorkspace('reader');
+    }
 
     return (
       <StoryDetail
@@ -15195,6 +15198,9 @@ ${JSON.stringify(violatingPayload)}
 
     const storyPath = `/${resolveStorySlug(routeStory)}`;
     const canEdit = Boolean(user?.uid && routeStory.authorId && String(user.uid) === String(routeStory.authorId));
+    if (maintenanceReaderActive && !canEdit) {
+      return renderMaintenanceWorkspace('reader');
+    }
 
     return (
       <StoryDetail
@@ -15753,14 +15759,10 @@ ${JSON.stringify(violatingPayload)}
               path="/reader/:chapterId"
               element={maintenanceReaderActive ? renderMaintenanceWorkspace('reader') : <LegacyReaderRouteRedirect />}
             />
-            {maintenanceReaderActive ? (
-              <Route path="/:storySlug/*" element={renderMaintenanceWorkspace('reader')} />
-            ) : (
-              <Route path="/:storySlug" element={<StoryRouteLayout />}>
-                <Route index element={<StoryRouteView />} />
-                <Route path=":chapterSlug" element={<ReaderRouteView />} />
-              </Route>
-            )}
+            <Route path="/:storySlug" element={<StoryRouteLayout />}>
+              <Route index element={<StoryRouteView />} />
+              <Route path=":chapterSlug" element={<ReaderRouteView />} />
+            </Route>
             <Route path="*" element={<NotFoundRouteView />} />
           </Route>
         )}
