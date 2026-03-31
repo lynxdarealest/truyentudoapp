@@ -1715,7 +1715,7 @@ function getApiRuntimeConfig(): ApiRuntimeConfig {
       selectedModel: parsed.selectedModel || '',
       activeApiKeyId: parsed.activeApiKeyId || '',
       enableCache: parsed.enableCache !== false,
-      generation: sanitizeGenerationConfig(parsed.generation as Record<string, unknown>),
+      generation: sanitizeGenerationConfig(parsed.generation),
     };
   } catch {
     return {
