@@ -5007,11 +5007,17 @@ async function generateGeminiText(
 ): Promise<string> {
   const taskStartedAt = Date.now();
   const runtime = getApiRuntimeConfig();
+  const authRotationPool = buildAiAuthRotationPool(runtime, auth);
+  let currentAuthIndex = 0;
+  let currentAuth = authRotationPool[currentAuthIndex] || auth;
+  let lastAuthUsed = currentAuth;
   const runtimeGeneration = sanitizeGenerationConfig(runtime.generation);
-  let initialModel = String(auth.model || getProfileModel(kind, auth.provider) || '').trim();
-  let modelCandidates = auth.provider === 'gemini' || auth.provider === 'gcli'
-    ? getGeminiFallbackModels(initialModel, kind)
-    : getProviderFallbackModels(auth.provider, initialModel, kind);
+  const buildModelCandidates = (provider: ApiProvider, model: string): string[] =>
+    provider === 'gemini' || provider === 'gcli'
+      ? getGeminiFallbackModels(model, kind)
+      : getProviderFallbackModels(provider, model, kind);
+  let initialModel = String(currentAuth.model || getProfileModel(kind, currentAuth.provider) || '').trim();
+  let modelCandidates = buildModelCandidates(currentAuth.provider, initialModel);
   const splitConfig = splitGenConfig(config);
   const wantsJsonResponse = String(splitConfig.providerConfig.responseMimeType || '').toLowerCase().includes('json');
   const promptWithThinking =
@@ -5022,10 +5028,10 @@ async function generateGeminiText(
   if (!wantsJsonResponse && runtimeGeneration.showThinking) {
     runtimeHints.push('Nếu model hỗ trợ thinking, hãy hiển thị phần suy luận ngắn gọn trước khi trả lời chính.');
   }
-  if (!wantsJsonResponse && runtimeGeneration.enableGeminiWebSearch && (auth.provider === 'gemini' || auth.provider === 'gcli')) {
+  if (!wantsJsonResponse && runtimeGeneration.enableGeminiWebSearch && (currentAuth.provider === 'gemini' || currentAuth.provider === 'gcli')) {
     runtimeHints.push('Nếu model hỗ trợ Search Grounding, hãy tra cứu web để tăng độ chính xác ở các thông tin thực tế.');
   }
-  if (!wantsJsonResponse && runtimeGeneration.inlineImages && auth.provider === 'gemini') {
+  if (!wantsJsonResponse && runtimeGeneration.inlineImages && currentAuth.provider === 'gemini') {
     runtimeHints.push('Nếu model hỗ trợ phản hồi kèm ảnh minh hoạ, hãy ưu tiên trả cả ảnh minh hoạ phù hợp.');
   }
   const promptBase = applyContextWindowToPrompt(
@@ -5033,10 +5039,10 @@ async function generateGeminiText(
     runtimeGeneration.contextWindowTokens,
   );
   let ollamaInstalledModels: string[] = [];
-  if (auth.provider === 'ollama') {
+  if (currentAuth.provider === 'ollama') {
     ollamaInstalledModels = await fetchOllamaInstalledModels(
-      auth.baseUrl || getProviderBaseUrl('ollama'),
-      auth.apiKey || '',
+      currentAuth.baseUrl || getProviderBaseUrl('ollama'),
+      currentAuth.apiKey || '',
       12000,
       splitConfig.signal,
     );
@@ -5096,7 +5102,7 @@ async function generateGeminiText(
     let attemptConfig: Record<string, unknown> = { ...initialConfig };
     let promptForAttempt = promptBase;
     let expectedMinChars = calculateAdaptiveMinOutputChars(promptBase, kind, splitConfig.minOutputChars);
-    if (auth.provider === 'ollama') {
+    if (currentAuth.provider === 'ollama') {
       expectedMinChars = Math.min(expectedMinChars, kind === 'fast' ? 320 : 560);
     }
     let currentModelIndex = 0;
@@ -5113,8 +5119,9 @@ async function generateGeminiText(
 
     for (let attempt = 0; attempt <= maxAttempts; attempt += 1) {
       throwIfAborted(splitConfig.signal);
+      lastAuthUsed = currentAuth;
       lastModelUsed = currentModel;
-      if (auth.provider === 'ollama') {
+      if (currentAuth.provider === 'ollama') {
         triedOllamaModels.add(String(currentModel || '').trim().toLowerCase());
         attemptConfig = applyOllamaLocalGenTuning(kind, attemptConfig);
       }
@@ -5122,10 +5129,10 @@ async function generateGeminiText(
         kind,
         Number(attemptConfig.maxOutputTokens || 0) || (kind === 'fast' ? 1800 : 4200),
       );
-      if (runtimeGeneration.rateLimitDelay && auth.provider === 'custom' && attempt > 0) {
+      if (runtimeGeneration.rateLimitDelay && currentAuth.provider === 'custom' && attempt > 0) {
         await sleepMs(15000);
       }
-      await acquireRequestToken(auth.provider, currentModel);
+      await acquireRequestToken(currentAuth.provider, currentModel);
       try {
         if (runtime.mode === 'relay') {
           const body = {
@@ -5211,16 +5218,16 @@ async function generateGeminiText(
               }
             }
           }
-        } else if (auth.provider === 'gemini' && auth.isApiKey && auth.client) {
-          const response = await auth.client.models.generateContent({
+        } else if (currentAuth.provider === 'gemini' && currentAuth.isApiKey && currentAuth.client) {
+          const response = await currentAuth.client.models.generateContent({
             model: currentModel,
             contents: promptForAttempt,
             config: attemptConfig,
           });
           throwIfAborted(splitConfig.signal);
           text = response.text || extractTextFromModelPayload(response) || '';
-        } else if (auth.provider === 'gemini' || auth.provider === 'gcli') {
-          const geminiBase = auth.baseUrl || getProviderBaseUrl('gcli');
+        } else if (currentAuth.provider === 'gemini' || currentAuth.provider === 'gcli') {
+          const geminiBase = currentAuth.baseUrl || getProviderBaseUrl('gcli');
           const geminiEndpoint = geminiBase.includes('/models/')
             ? geminiBase
             : `${geminiBase.replace(/\/+$/, '')}/models/${currentModel}:generateContent`;
@@ -5228,7 +5235,7 @@ async function generateGeminiText(
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              Authorization: `Bearer ${auth.apiKey}`,
+              Authorization: `Bearer ${currentAuth.apiKey}`,
             },
               body: JSON.stringify({
               contents: [
@@ -5241,41 +5248,41 @@ async function generateGeminiText(
           }, timeoutMs, splitConfig.signal);
           if (!resp.ok) {
             const body = await resp.text();
-            throw new Error(`${auth.provider === 'gcli' ? 'GCLI' : 'Gemini'} (Bearer) error ${resp.status}: ${body.slice(0, 200)}`);
+            throw new Error(`${currentAuth.provider === 'gcli' ? 'GCLI' : 'Gemini'} (Bearer) error ${resp.status}: ${body.slice(0, 200)}`);
           }
           const data = await resp.json();
           text = extractTextFromModelPayload(data) || '';
-        } else if (auth.provider === 'ollama') {
+        } else if (currentAuth.provider === 'ollama') {
           const compactPrompt = compactPromptForOllama(promptForAttempt, kind);
           text = await callOllamaLocalWithFallback({
             model: currentModel,
             prompt: compactPrompt,
-            baseUrl: auth.baseUrl || getProviderBaseUrl('ollama'),
-            apiKey: auth.apiKey,
+            baseUrl: currentAuth.baseUrl || getProviderBaseUrl('ollama'),
+            apiKey: currentAuth.apiKey,
             timeoutMs,
             signal: splitConfig.signal,
             attemptConfig,
           });
         } else if (
-          auth.provider === 'openai' ||
-          auth.provider === 'custom' ||
-          auth.provider === 'xai' ||
-          auth.provider === 'groq' ||
-          auth.provider === 'deepseek' ||
-          auth.provider === 'openrouter' ||
-          auth.provider === 'mistral'
+          currentAuth.provider === 'openai' ||
+          currentAuth.provider === 'custom' ||
+          currentAuth.provider === 'xai' ||
+          currentAuth.provider === 'groq' ||
+          currentAuth.provider === 'deepseek' ||
+          currentAuth.provider === 'openrouter' ||
+          currentAuth.provider === 'mistral'
         ) {
-          const openAiBase = auth.baseUrl || getProviderBaseUrl(auth.provider);
+          const openAiBase = currentAuth.baseUrl || getProviderBaseUrl(currentAuth.provider);
           const completionEndpoint = /\/chat\/completions$/i.test(openAiBase)
             ? openAiBase
             : `${openAiBase.replace(/\/+$/, '')}/chat/completions`;
           const headers: Record<string, string> = {
             'Content-Type': 'application/json',
           };
-          if (auth.apiKey.trim()) {
-            headers.Authorization = `Bearer ${auth.apiKey}`;
+          if (currentAuth.apiKey.trim()) {
+            headers.Authorization = `Bearer ${currentAuth.apiKey}`;
           }
-          if (auth.provider === 'openrouter') {
+          if (currentAuth.provider === 'openrouter') {
             headers['HTTP-Referer'] = typeof window !== 'undefined' ? window.location.origin : 'https://truyenforge.local';
             headers['X-Title'] = 'TruyenForge';
           }
@@ -5289,7 +5296,7 @@ async function generateGeminiText(
             seed: typeof attemptConfig.seed === 'number' ? Math.round(attemptConfig.seed) : undefined,
             stream: runtimeGeneration.enableStreaming ? false : false,
           };
-          if (auth.provider === 'openai' && wantsJson) {
+          if (currentAuth.provider === 'openai' && wantsJson) {
             bodyPayload.response_format = { type: 'json_object' };
           }
           const resp = await fetchWithTimeout(completionEndpoint, {
@@ -5299,19 +5306,19 @@ async function generateGeminiText(
           }, timeoutMs, splitConfig.signal);
           if (!resp.ok) {
             const body = await resp.text();
-            const providerLabel = auth.provider === 'custom'
+            const providerLabel = currentAuth.provider === 'custom'
               ? 'Custom endpoint'
-              : (PROVIDER_LABELS[auth.provider] || 'OpenAI-compatible provider');
+              : (PROVIDER_LABELS[currentAuth.provider] || 'OpenAI-compatible provider');
             throw new Error(`${providerLabel} error ${resp.status}: ${body.slice(0, 220)}`);
           }
           const data = await resp.json();
           text = data?.choices?.[0]?.message?.content || extractTextFromModelPayload(data) || '';
-        } else if (auth.provider === 'anthropic') {
-          const resp = await fetchWithTimeout(`${auth.baseUrl || getProviderBaseUrl('anthropic')}/messages`, {
+        } else if (currentAuth.provider === 'anthropic') {
+          const resp = await fetchWithTimeout(`${currentAuth.baseUrl || getProviderBaseUrl('anthropic')}/messages`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'x-api-key': auth.apiKey,
+              'x-api-key': currentAuth.apiKey,
               'anthropic-version': '2023-06-01',
             },
             body: JSON.stringify({
@@ -5344,7 +5351,7 @@ async function generateGeminiText(
         }
         const isQuotaError = isQuotaOrRateLimitError(err);
         const isTransientError = isTransientAiServiceError(err);
-        const isMissingModelError = auth.provider === 'ollama' && isModelNotFoundError(err);
+        const isMissingModelError = currentAuth.provider === 'ollama' && isModelNotFoundError(err);
         if (isMissingModelError) {
           if (ollamaInstalledModels.length) {
             const nextInstalled = ollamaInstalledModels.find((model) => {
@@ -5390,7 +5397,19 @@ async function generateGeminiText(
         }
         if (isQuotaError || isTransientError) {
           const retryDelayMs = extractRetryDelayMs(err);
-          if (auth.provider === 'ollama') {
+          if (isQuotaError && currentAuthIndex < authRotationPool.length - 1) {
+            currentAuthIndex += 1;
+            currentAuth = authRotationPool[currentAuthIndex];
+            const rotatedModel = String(currentAuth.model || getProfileModel(kind, currentAuth.provider) || currentModel).trim();
+            modelCandidates = buildModelCandidates(currentAuth.provider, rotatedModel);
+            currentModelIndex = 0;
+            currentModel = modelCandidates[currentModelIndex] || rotatedModel || currentModel;
+            if (retryDelayMs > 0) {
+              await sleepMs(Math.min(12000, retryDelayMs));
+            }
+            continue;
+          }
+          if (currentAuth.provider === 'ollama') {
             if (attempt < maxAttempts) {
               const waitMs = retryDelayMs || (isQuotaError
                 ? Math.min(65000, 2500 * (attempt + 1))
@@ -5415,7 +5434,7 @@ async function generateGeminiText(
           }
           if (isTransientError) {
             const attemptedModels = modelCandidates.slice(0, currentModelIndex + 1).join(' -> ');
-            if (auth.provider === 'ollama') {
+            if (currentAuth.provider === 'ollama') {
               throw new Error(
                 `Model ${currentModel} đang quá tải hoặc lỗi runtime (5xx). Đã thử: ${attemptedModels}. Kiểm tra Ollama local (ollama ps), giảm kích thước lô/tokens hoặc đổi model nhẹ hơn.`,
               );
@@ -5471,23 +5490,32 @@ async function generateGeminiText(
   inFlightAiRequests.set(cacheKey, task);
   try {
     const output = await task;
-    if (auth.provider === 'ollama' && String(lastModelUsed || '').trim()) {
+    if (String(lastModelUsed || '').trim()) {
       const normalizedModel = String(lastModelUsed || '').trim();
       const runtimeNext = getApiRuntimeConfig();
       let runtimeChanged = false;
-      if (runtimeNext.selectedProvider === 'ollama' && runtimeNext.selectedModel !== normalizedModel) {
+      if (lastAuthUsed?.provider && runtimeNext.selectedProvider === lastAuthUsed.provider && runtimeNext.selectedModel !== normalizedModel) {
         runtimeNext.selectedModel = normalizedModel;
         runtimeChanged = true;
       }
-      if (auth.keyId) {
+      if (lastAuthUsed?.keyId) {
         const vault = loadApiVault(runtimeNext.aiProfile);
-        const targetIndex = vault.findIndex((entry) => entry.id === auth.keyId);
-        if (targetIndex >= 0 && vault[targetIndex].provider === 'ollama' && vault[targetIndex].model !== normalizedModel) {
-          vault[targetIndex] = {
-            ...vault[targetIndex],
-            model: normalizedModel,
+        const targetIndex = vault.findIndex((entry) => entry.id === lastAuthUsed.keyId);
+        if (targetIndex >= 0) {
+          const patch: Partial<StoredApiKeyRecord> = {
+            lastTested: new Date().toISOString(),
+            status: 'valid',
           };
-          saveApiVault(vault);
+          if (vault[targetIndex].provider === 'ollama' && vault[targetIndex].model !== normalizedModel) {
+            patch.model = normalizedModel;
+          }
+          const nextVault = activateApiKeyRecord(vault, lastAuthUsed.keyId, patch);
+          saveApiVault(nextVault);
+          if (runtimeNext.activeApiKeyId !== lastAuthUsed.keyId) {
+            runtimeNext.activeApiKeyId = lastAuthUsed.keyId;
+            runtimeNext.selectedProvider = vault[targetIndex].provider;
+            runtimeChanged = true;
+          }
         }
       }
       if (runtimeChanged) {
@@ -5495,10 +5523,10 @@ async function generateGeminiText(
       }
     }
     trackApiRequestTelemetry({
-      provider: auth.provider,
+      provider: lastAuthUsed.provider,
       model: lastModelUsed,
-      apiKey: auth.apiKey,
-      keyId: auth.keyId,
+      apiKey: lastAuthUsed.apiKey,
+      keyId: lastAuthUsed.keyId,
       task: traceTask,
       success: true,
       latencyMs: Date.now() - taskStartedAt,
@@ -5515,10 +5543,10 @@ async function generateGeminiText(
     return output;
   } catch (error) {
     trackApiRequestTelemetry({
-      provider: auth.provider,
+      provider: lastAuthUsed.provider,
       model: lastModelUsed,
-      apiKey: auth.apiKey,
-      keyId: auth.keyId,
+      apiKey: lastAuthUsed.apiKey,
+      keyId: lastAuthUsed.keyId,
       task: traceTask,
       success: false,
       latencyMs: Date.now() - taskStartedAt,
@@ -5586,6 +5614,74 @@ function resolveAiModel(
   if (provider === 'custom') return runtime.selectedModel || 'custom-model';
   if (provider === 'ollama') return runtime.selectedModel || 'qwen2.5:7b';
   return getDefaultModelForProvider(provider, runtime.aiProfile);
+}
+
+const KEY_ROTATION_PROVIDERS = new Set<ApiProvider>([
+  'gemini',
+  'gcli',
+  'openai',
+  'anthropic',
+  'xai',
+  'groq',
+  'deepseek',
+  'openrouter',
+  'mistral',
+]);
+
+function buildAiAuthFromVaultEntry(runtime: ApiRuntimeConfig, entry: StoredApiKeyRecord): AiAuth {
+  const provider = entry.provider;
+  const apiKey = String(entry.key || '').trim();
+  const model = resolveAiModel(runtime, provider, entry);
+  const isApiKey = provider === 'gemini' && /^AIza[0-9A-Za-z\-_]{20,}$/.test(apiKey);
+  return {
+    provider,
+    apiKey,
+    isApiKey,
+    client: provider === 'gemini' && isApiKey ? new GoogleGenAI({ apiKey }) : undefined,
+    model,
+    baseUrl: entry.baseUrl || getProviderBaseUrl(provider),
+    keyId: entry.id,
+  };
+}
+
+function buildAiAuthRotationPool(runtime: ApiRuntimeConfig, auth: AiAuth): AiAuth[] {
+  if (runtime.mode === 'relay') return [auth];
+  if (!KEY_ROTATION_PROVIDERS.has(auth.provider)) return [auth];
+
+  const vault = loadApiVault(runtime.aiProfile)
+    .filter((entry) => entry.provider === auth.provider && hasUsableApiKeyRecord(entry));
+  if (!vault.length) return [auth];
+
+  const ordered: StoredApiKeyRecord[] = [];
+  const pushUnique = (entry: StoredApiKeyRecord) => {
+    if (ordered.some((item) => item.id === entry.id)) return;
+    ordered.push(entry);
+  };
+
+  if (auth.keyId) {
+    const explicit = vault.find((entry) => entry.id === auth.keyId);
+    if (explicit) pushUnique(explicit);
+  }
+  vault.filter((entry) => entry.isActive).forEach(pushUnique);
+  vault.forEach(pushUnique);
+
+  const mapped = ordered.map((entry) => buildAiAuthFromVaultEntry(runtime, entry));
+  const authFromVault = auth.keyId
+    ? mapped.some((item) => item.keyId === auth.keyId)
+    : mapped.some((item) => item.apiKey === auth.apiKey && item.baseUrl === auth.baseUrl);
+  if (!authFromVault) {
+    mapped.unshift(auth);
+  }
+
+  const deduped: AiAuth[] = [];
+  mapped.forEach((item) => {
+    const key = `${item.keyId || ''}::${item.apiKey}::${item.baseUrl}::${item.model}`;
+    if (deduped.some((existing) => `${existing.keyId || ''}::${existing.apiKey}::${existing.baseUrl}::${existing.model}` === key)) {
+      return;
+    }
+    deduped.push(item);
+  });
+  return deduped.length ? deduped : [auth];
 }
 
 function createGeminiClient(intent: AiTaskIntent = 'primary'): AiAuth {
