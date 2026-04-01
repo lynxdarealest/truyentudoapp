@@ -2188,25 +2188,25 @@ interface ChapterHeadingCandidate {
 
 const CHAPTER_HEADING_PATTERNS: ChapterHeadingPattern[] = [
   {
-    regex: /^(?:#{1,6}\s*)?第\s*([0-9０-９一二三四五六七八九十百千万億亿萬萬兩两零〇IVXLCDMivxlcdm]+)\s*([章节回卷部集篇])(?:\s*(?:[:：\-—.．、]\s*|\s+)(.*))?$/,
+    regex: /^(?:#{1,6}\s*)?第\s*([0-9０-９一二三四五六七八九十百千万億亿萬萬兩两零〇IVXLCDMivxlcdm]+)\s*([章节回卷部集篇])(?:\s*(?:[:：\-—.．、]\s*|\s+)?(.*))?$/,
     kind: 'chapter',
     requiresOrder: true,
     minScore: 4,
   },
   {
-    regex: /^(?:#{1,6}\s*)?(?:chương|chuong|chapter)\s*([0-9ivxlcdm]+)(?:\s*(?:[:：\-—.．、]\s*|\s+)(.*))?$/i,
+    regex: /^(?:#{1,6}\s*)?(?:chương|chuong|chapter)\s*([0-9ivxlcdm]+)(?:\s*(?:[:：\-—.．、]\s*|\s+)?(.*))?$/i,
     kind: 'chapter',
     requiresOrder: true,
     minScore: 4,
   },
   {
-    regex: /^(?:#{1,6}\s*)?(?:hồi|hoi)\s*([0-9ivxlcdm]+)(?:\s*(?:[:：\-—.．、]\s*|\s+)(.*))?$/i,
+    regex: /^(?:#{1,6}\s*)?(?:hồi|hoi)\s*([0-9ivxlcdm]+)(?:\s*(?:[:：\-—.．、]\s*|\s+)?(.*))?$/i,
     kind: 'chapter',
     requiresOrder: true,
     minScore: 4,
   },
   {
-    regex: /^(?:#{1,6}\s*)?(?:quyển|quyen|volume|vol\.?)\s*([0-9ivxlcdm]+)(?:\s*(?:[:：\-—.．、]\s*|\s+)(.*))?$/i,
+    regex: /^(?:#{1,6}\s*)?(?:quyển|quyen|volume|vol\.?)\s*([0-9ivxlcdm]+)(?:\s*(?:[:：\-—.．、]\s*|\s+)?(.*))?$/i,
     kind: 'volume',
     requiresOrder: true,
     minScore: 3,
