@@ -2170,12 +2170,80 @@ interface TranslationSegmentBatch {
   sourceText: string;
 }
 
-const CHAPTER_HEADING_PATTERNS: RegExp[] = [
-  /^(?:#{1,6}\s*)?第\s*[0-9０-９一二三四五六七八九十百千万兩两零〇IVXLCDMivxlcdm]+\s*[章节回卷部集篇](?:\s*(?:[:：\-—.．、]\s*|\s+).*)?$/,
-  /^(?:#{1,6}\s*)?(?:chương|chuong)\s*[0-9ivxlcdm]+(?:\s*[:：\-—.．、]\s*.*)?$/i,
-  /^(?:#{1,6}\s*)?chapter\s*[0-9ivxlcdm]+(?:\s*[:：\-—.．、]\s*.*)?$/i,
-  /^(?:#{1,6}\s*)?(?:quyển|quyen|volume|vol\.)\s*[0-9ivxlcdm]+(?:\s*[:：\-—.．、]\s*.*)?$/i,
+type ChapterHeadingKind = 'chapter' | 'volume' | 'special';
+
+interface ChapterHeadingPattern {
+  regex: RegExp;
+  kind: ChapterHeadingKind;
+  requiresOrder: boolean;
+  minScore: number;
+}
+
+interface ChapterHeadingCandidate {
+  title: string;
+  order: number | null;
+  kind: ChapterHeadingKind;
+  score: number;
+}
+
+const CHAPTER_HEADING_PATTERNS: ChapterHeadingPattern[] = [
+  {
+    regex: /^(?:#{1,6}\s*)?第\s*([0-9０-９一二三四五六七八九十百千万億亿萬萬兩两零〇IVXLCDMivxlcdm]+)\s*([章节回卷部集篇])(?:\s*(?:[:：\-—.．、]\s*|\s+)(.*))?$/,
+    kind: 'chapter',
+    requiresOrder: true,
+    minScore: 4,
+  },
+  {
+    regex: /^(?:#{1,6}\s*)?(?:chương|chuong|chapter)\s*([0-9ivxlcdm]+)(?:\s*(?:[:：\-—.．、]\s*|\s+)(.*))?$/i,
+    kind: 'chapter',
+    requiresOrder: true,
+    minScore: 4,
+  },
+  {
+    regex: /^(?:#{1,6}\s*)?(?:hồi|hoi)\s*([0-9ivxlcdm]+)(?:\s*(?:[:：\-—.．、]\s*|\s+)(.*))?$/i,
+    kind: 'chapter',
+    requiresOrder: true,
+    minScore: 4,
+  },
+  {
+    regex: /^(?:#{1,6}\s*)?(?:quyển|quyen|volume|vol\.?)\s*([0-9ivxlcdm]+)(?:\s*(?:[:：\-—.．、]\s*|\s+)(.*))?$/i,
+    kind: 'volume',
+    requiresOrder: true,
+    minScore: 3,
+  },
+  {
+    regex: /^(?:#{1,6}\s*)?(?:番外|ngoại truyện|phụ chương|special|extra|interlude)(?:\s*(?:[:：\-—.．、]\s*|\s+)(.*))?$/i,
+    kind: 'special',
+    requiresOrder: false,
+    minScore: 4,
+  },
 ];
+
+const CHINESE_NUMERAL_DIGITS: Record<string, number> = {
+  '零': 0,
+  '〇': 0,
+  '一': 1,
+  '二': 2,
+  '两': 2,
+  '兩': 2,
+  '三': 3,
+  '四': 4,
+  '五': 5,
+  '六': 6,
+  '七': 7,
+  '八': 8,
+  '九': 9,
+};
+
+const CHINESE_NUMERAL_UNITS: Record<string, number> = {
+  '十': 10,
+  '百': 100,
+  '千': 1000,
+  '万': 10000,
+  '萬': 10000,
+  '亿': 100000000,
+  '億': 100000000,
+};
 
 function cleanChapterHeading(rawLine: string): string {
   return String(rawLine || '')
@@ -2186,10 +2254,115 @@ function cleanChapterHeading(rawLine: string): string {
     .trim();
 }
 
-function isChapterHeadingLine(line: string): boolean {
+function normalizeFullWidthDigits(value: string): string {
+  return String(value || '').replace(/[０-９]/g, (digit) => String.fromCharCode(digit.charCodeAt(0) - 0xfee0));
+}
+
+function parseRomanNumeral(token: string): number | null {
+  const normalized = String(token || '').trim().toUpperCase();
+  if (!normalized || !/^[IVXLCDM]+$/.test(normalized)) return null;
+  const values: Record<string, number> = {
+    I: 1,
+    V: 5,
+    X: 10,
+    L: 50,
+    C: 100,
+    D: 500,
+    M: 1000,
+  };
+  let total = 0;
+  let prev = 0;
+  for (let i = normalized.length - 1; i >= 0; i--) {
+    const value = values[normalized[i]] || 0;
+    if (!value) return null;
+    if (value < prev) total -= value;
+    else total += value;
+    prev = value;
+  }
+  return total > 0 ? total : null;
+}
+
+function parseChineseNumeral(token: string): number | null {
+  const normalized = String(token || '').trim();
+  if (!normalized || !/^[零〇一二两兩三四五六七八九十百千万萬亿億]+$/.test(normalized)) {
+    return null;
+  }
+  let total = 0;
+  let section = 0;
+  let number = 0;
+  for (const char of normalized) {
+    if (char in CHINESE_NUMERAL_DIGITS) {
+      number = CHINESE_NUMERAL_DIGITS[char];
+      continue;
+    }
+    const unit = CHINESE_NUMERAL_UNITS[char];
+    if (!unit) return null;
+    if (unit >= 10000) {
+      section += number;
+      if (section === 0) section = 1;
+      total += section * unit;
+      section = 0;
+      number = 0;
+      continue;
+    }
+    if (number === 0) number = 1;
+    section += number * unit;
+    number = 0;
+  }
+  const parsed = total + section + number;
+  return parsed > 0 ? parsed : null;
+}
+
+function parseChapterOrderToken(rawToken: string): number | null {
+  const normalized = normalizeFullWidthDigits(String(rawToken || '').trim());
+  if (!normalized) return null;
+  if (/^\d+$/.test(normalized)) {
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }
+  const roman = parseRomanNumeral(normalized);
+  if (roman) return roman;
+  return parseChineseNumeral(normalized);
+}
+
+function extractChapterHeadingCandidate(lines: string[], index: number): ChapterHeadingCandidate | null {
+  const line = String(lines[index] || '');
   const cleaned = cleanChapterHeading(line);
-  if (!cleaned || cleaned.length > 140) return false;
-  return CHAPTER_HEADING_PATTERNS.some((pattern) => pattern.test(cleaned));
+  if (!cleaned || cleaned.length > 150) return null;
+  const prevLine = String(lines[index - 1] || '').trim();
+  const nextLine = String(lines[index + 1] || '').trim();
+
+  for (const descriptor of CHAPTER_HEADING_PATTERNS) {
+    const match = cleaned.match(descriptor.regex);
+    if (!match) continue;
+
+    const orderToken = String(match[1] || '').trim();
+    const order = descriptor.requiresOrder ? parseChapterOrderToken(orderToken) : null;
+    if (descriptor.requiresOrder && !order) continue;
+
+    let score = descriptor.kind === 'chapter' ? 4 : 3;
+    const punctuationTailHits = (cleaned.match(/[。！？!?;；]/g) || []).length;
+    const commaHits = (cleaned.match(/[,:，、]/g) || []).length;
+    const headingWordCount = countWords(cleaned);
+    if (!prevLine) score += 1;
+    if (!nextLine) score += 1;
+    if (cleaned.length <= 64) score += 1;
+    if (punctuationTailHits >= 2) score -= 2;
+    if (commaHits >= 4) score -= 1;
+    if (headingWordCount >= 24) score -= 2;
+    if (/["“”'‘’]/.test(cleaned)) score -= 1;
+    if (/^[\d０-９]+(?:[.．、)]\s+).{24,}$/u.test(cleaned)) score -= 2;
+
+    if (score < descriptor.minScore) continue;
+    return {
+      title: cleaned,
+      order,
+      kind: descriptor.kind,
+      score,
+    };
+  }
+
+  return null;
 }
 
 function splitTextIntoNaturalSentences(text: string): string[] {
@@ -2282,23 +2455,41 @@ function detectChapterSections(text: string): DetectedChapterSection[] {
   if (!normalized) return [];
 
   const lines = normalized.split('\n');
-  const markers: Array<{ index: number; title: string }> = [];
+  const markers: Array<{ index: number; title: string; order: number | null; score: number }> = [];
 
-  lines.forEach((line, index) => {
-    if (!isChapterHeadingLine(line)) return;
-    const title = cleanChapterHeading(line);
-    if (!title) return;
+  lines.forEach((_, index) => {
+    const candidate = extractChapterHeadingCandidate(lines, index);
+    if (!candidate) return;
     const prev = markers[markers.length - 1];
-    if (prev && index - prev.index <= 1 && prev.title.toLowerCase() === title.toLowerCase()) return;
-    markers.push({ index, title });
+    if (prev && index - prev.index <= 1 && prev.title.toLowerCase() === candidate.title.toLowerCase()) return;
+    if (prev && prev.order != null && candidate.order != null && index - prev.index <= 3 && prev.order === candidate.order) {
+      return;
+    }
+    markers.push({ index, title: candidate.title, order: candidate.order, score: candidate.score });
   });
 
   if (!markers.length) return [];
 
+  if (markers.length >= 4) {
+    const orders = markers
+      .map((marker) => marker.order)
+      .filter((order): order is number => Number.isFinite(order));
+    if (orders.length >= 4) {
+      let nonDecreasing = 0;
+      for (let i = 1; i < orders.length; i++) {
+        if (orders[i] >= orders[i - 1]) nonDecreasing += 1;
+      }
+      const progressionRatio = nonDecreasing / Math.max(1, orders.length - 1);
+      if (progressionRatio < 0.35) {
+        return [];
+      }
+    }
+  }
+
   const sections: DetectedChapterSection[] = [];
   if (markers[0].index > 0) {
     const intro = lines.slice(0, markers[0].index).join('\n').trim();
-    if (intro.length >= 180) {
+    if (intro.length >= 180 || countWords(intro) >= 45) {
       sections.push({ title: 'Mở đầu', content: intro });
     }
   }
@@ -2323,8 +2514,20 @@ function detectChapterSections(text: string): DetectedChapterSection[] {
     return content ? [{ title: single.title || 'Chương 1', content }] : [];
   }
 
-  const meaningfulSections = sections.filter((section) => section.content.length >= 80).length;
-  if (markers.length >= 2 && meaningfulSections < Math.max(1, Math.floor(markers.length * 0.5))) {
+  const sectionWordCounts = sections.map((section) => countWords(section.content));
+  const meaningfulSections = sections.filter((section, index) => {
+    const words = sectionWordCounts[index] || 0;
+    return words >= 14 || section.content.length >= 80;
+  }).length;
+  const averageSectionWords = sectionWordCounts.length
+    ? sectionWordCounts.reduce((sum, current) => sum + current, 0) / sectionWordCounts.length
+    : 0;
+  const strongHeadingRatio = markers.filter((marker) => marker.score >= 5).length / markers.length;
+
+  if (markers.length >= 4 && meaningfulSections < Math.max(2, Math.floor(markers.length * 0.3))) {
+    return [];
+  }
+  if (markers.length >= 8 && averageSectionWords < 18 && strongHeadingRatio < 0.4) {
     return [];
   }
 
