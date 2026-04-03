@@ -194,7 +194,7 @@ export function Navbar({
   return (
     <>
       {isMobile && (
-      <div className={cn('app-shell__quick-rail fixed left-4 z-[60] flex items-start gap-3', isMobile ? 'top-4 bottom-4' : 'top-24 bottom-4')}>
+      <div className={cn('app-shell__quick-rail fixed left-3 right-3 z-[60] flex items-start gap-3', isMobile ? 'top-3 bottom-auto' : 'top-24 bottom-4')}>
         <div className="fixed right-4 top-4 z-[65]">
           <div className="relative">
             <button
@@ -253,13 +253,13 @@ export function Navbar({
         </div>
         <div
           className={cn(
-            'origin-left h-full transition-all duration-300 ease-out overflow-hidden',
+            'origin-left h-auto max-h-[72dvh] transition-all duration-300 ease-out overflow-hidden',
             showQuickActions ? 'w-64 opacity-100 translate-x-0' : 'w-0 opacity-0 -translate-x-4',
           )}
         >
           <div
             className={cn(
-              'h-full rounded-[28px] border backdrop-blur-xl p-3 flex flex-col',
+              'h-auto max-h-[72dvh] rounded-[28px] border backdrop-blur-xl p-3 flex flex-col',
               isDark
                 ? 'border-cyan-400/15 bg-slate-950/72 shadow-[0_16px_48px_rgba(6,182,212,0.18)]'
                 : 'border-white/70 bg-white/78 shadow-[0_20px_60px_rgba(99,102,241,0.18)]',
