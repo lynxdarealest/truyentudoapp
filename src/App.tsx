@@ -10277,7 +10277,7 @@ const AppToastStack = ({
 }) => {
   if (!toasts.length) return null;
   return (
-    <div className="fixed right-4 top-24 z-[260] flex w-[min(92vw,380px)] flex-col gap-3">
+    <div className="app-toast-stack fixed right-4 top-24 z-[260] flex w-[min(92vw,380px)] flex-col gap-3">
       {toasts.map((toast) => (
         <div
           key={toast.id}
@@ -17381,31 +17381,31 @@ ${JSON.stringify(violatingPayload)}
         exit={{ opacity: 0 }}
         className="pt-32"
       >
-        <div className="max-w-7xl mx-auto px-6 mb-12">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 mb-8 sm:mb-12">
           <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
             <div>
-              <h2 className="text-5xl font-serif font-bold text-slate-900 mb-4 tracking-tight">Thư viện</h2>
+              <h2 className="text-3xl sm:text-5xl font-serif font-bold text-slate-900 mb-4 tracking-tight">Thư viện</h2>
             </div>
-            <div className="flex flex-wrap gap-4">
+            <div className="flex flex-wrap gap-3 sm:gap-4">
               <button
                 onClick={() => setIsCreating(true)}
-                className="hero-action hero-action-primary glow-dot flex items-center justify-center gap-3 px-8 py-4 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white transition-all shadow-xl shadow-indigo-900/20 font-bold text-lg group"
+                className="hero-action hero-action-primary glow-dot flex items-center justify-center gap-2 sm:gap-3 px-5 sm:px-8 py-3 sm:py-4 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white transition-all shadow-xl shadow-indigo-900/20 font-bold text-sm sm:text-lg group"
               >
-                <Plus className="w-6 h-6 transition-transform duration-300 group-hover:rotate-90 group-hover:scale-110" />
+                <Plus className="w-5 h-5 sm:w-6 sm:h-6 transition-transform duration-300 group-hover:rotate-90 group-hover:scale-110" />
                 Viết truyện mới
               </button>
               <button
                 onClick={() => fileInputRef.current?.click()}
-                className="hero-action hero-action-outline glow-dot flex items-center justify-center gap-3 px-8 py-4 rounded-2xl text-white transition-all shadow-xl font-bold text-lg group"
+                className="hero-action hero-action-outline glow-dot flex items-center justify-center gap-2 sm:gap-3 px-5 sm:px-8 py-3 sm:py-4 rounded-2xl text-white transition-all shadow-xl font-bold text-sm sm:text-lg group"
               >
-                <Sparkles className="w-6 h-6 transition-transform duration-300 group-hover:-translate-y-0.5 group-hover:scale-110 group-hover:rotate-12" />
+                <Sparkles className="w-5 h-5 sm:w-6 sm:h-6 transition-transform duration-300 group-hover:-translate-y-0.5 group-hover:scale-110 group-hover:rotate-12" />
                 Tạo từ dàn ý (AI)
               </button>
               <button
                 onClick={handleUnifiedAiFileFlow}
-                className="hero-action hero-action-warm glow-dot flex items-center justify-center gap-3 px-8 py-4 rounded-2xl bg-amber-600 hover:bg-amber-700 text-white transition-all shadow-xl shadow-amber-900/20 font-bold text-lg group"
+                className="hero-action hero-action-warm glow-dot flex items-center justify-center gap-2 sm:gap-3 px-5 sm:px-8 py-3 sm:py-4 rounded-2xl bg-amber-600 hover:bg-amber-700 text-white transition-all shadow-xl shadow-amber-900/20 font-bold text-sm sm:text-lg group"
               >
-                <Languages className="w-6 h-6 transition-transform duration-300 group-hover:scale-110 group-hover:-translate-y-0.5" />
+                <Languages className="w-5 h-5 sm:w-6 sm:h-6 transition-transform duration-300 group-hover:scale-110 group-hover:-translate-y-0.5" />
                 AI từ file (Dịch / Viết tiếp)
               </button>
               <input

@@ -1494,6 +1494,12 @@ body {
     width: 100% !important;
   }
 
+  .tf-modal-actions button {
+    padding-top: 0.7rem !important;
+    padding-bottom: 0.7rem !important;
+    font-size: 0.9rem !important;
+  }
+
   .tf-stack-mobile,
   .tf-stack-mobile > .grid,
   .tf-stack-mobile .grid-cols-2,
@@ -1518,6 +1524,13 @@ body {
   .tf-break-mobile {
     overflow-wrap: anywhere !important;
     word-break: break-word !important;
+  }
+
+  .app-toast-stack {
+    left: 0.75rem !important;
+    right: 0.75rem !important;
+    width: auto !important;
+    top: calc(env(safe-area-inset-top, 0px) + 4.5rem) !important;
   }
 
 }
