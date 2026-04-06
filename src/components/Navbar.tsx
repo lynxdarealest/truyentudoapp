@@ -157,6 +157,7 @@ export function Navbar({
   const isAdminAccount = normalizedAuthEmail === 'ductruong.lynx@gmail.com';
   const profileDisplayLabel = isAdminAccount ? 'ADMIN' : profile.displayName;
   const activeIndex = navItems.findIndex((item) => item.key === currentView);
+  const hasSingleNavItem = navItems.length <= 1;
   const indicatorStyle = {
     width: `${100 / navItems.length}%`,
   };
@@ -349,20 +350,30 @@ export function Navbar({
             </div>
           </div>
 
-          <div ref={segmentsRef} className={cn('app-navbar__segments relative grid grid-cols-4 gap-1 p-1 rounded-2xl overflow-hidden flex-shrink-0', segmentedClass)}>
-            <motion.div
-              layout
-              layoutId="navbar-indicator"
-              className={cn(
-                'absolute top-1 bottom-1 rounded-xl pointer-events-none',
-                isDark ? 'bg-gradient-to-r from-cyan-500 to-blue-500 shadow-lg shadow-cyan-500/30' : 'bg-gradient-to-r from-emerald-500 to-green-500 shadow-lg shadow-emerald-400/30',
-              )}
-              style={indicatorStyle}
-              animate={{
-                left: `${Math.max(0, activeIndex) * (100 / navItems.length)}%`,
-              }}
-              transition={{ type: 'spring', stiffness: 320, damping: 32, mass: 0.6 }}
-            />
+          <div
+            ref={segmentsRef}
+            className={cn(
+              'app-navbar__segments relative gap-1 p-1 rounded-2xl overflow-hidden flex-shrink-0',
+              hasSingleNavItem ? 'inline-flex items-center' : 'grid',
+              segmentedClass,
+            )}
+            style={hasSingleNavItem ? undefined : { gridTemplateColumns: `repeat(${navItems.length}, minmax(0, 1fr))` }}
+          >
+            {!hasSingleNavItem ? (
+              <motion.div
+                layout
+                layoutId="navbar-indicator"
+                className={cn(
+                  'absolute top-1 bottom-1 rounded-xl pointer-events-none',
+                  isDark ? 'bg-gradient-to-r from-cyan-500 to-blue-500 shadow-lg shadow-cyan-500/30' : 'bg-gradient-to-r from-emerald-500 to-green-500 shadow-lg shadow-emerald-400/30',
+                )}
+                style={indicatorStyle}
+                animate={{
+                  left: `${Math.max(0, activeIndex) * (100 / navItems.length)}%`,
+                }}
+                transition={{ type: 'spring', stiffness: 320, damping: 32, mass: 0.6 }}
+              />
+            ) : null}
             {navItems.map(({ key, label, icon: Icon, action }) => (
               <button
                 key={key}
