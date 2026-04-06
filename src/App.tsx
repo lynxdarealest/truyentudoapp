@@ -14372,6 +14372,7 @@ const AppContent = () => {
   const [storiesVersion, setStoriesVersion] = useState(0);
   const [view, setView] = useState<'stories' | 'characters' | 'tools' | 'api'>('stories');
   const [readerFeedTab, setReaderFeedTab] = useState<'mine' | 'public'>('mine');
+  const [readerNavMode, setReaderNavMode] = useState<'mine' | 'public' | 'search'>('mine');
   const [publicStoryFeed, setPublicStoryFeed] = useState<PublicStoryFeedItem[]>([]);
   const [publicFeedLoading, setPublicFeedLoading] = useState(false);
   const [publicFeedError, setPublicFeedError] = useState('');
@@ -14536,6 +14537,15 @@ const AppContent = () => {
     sort: publicFeedSort,
   }), [publicFeedGenreFilter, publicFeedSort, readerAdultFilter, readerLengthFilter, readerQuery, readerStatusFilter, readerTypeFilter]);
 
+  const appliedReaderFilters = React.useMemo<ReaderDiscoveryFilters>(() => (
+    readerNavMode === 'search'
+      ? readerFilters
+      : {
+          ...DEFAULT_READER_DISCOVERY_FILTERS,
+          sort: 'updated',
+        }
+  ), [readerFilters, readerNavMode]);
+
   const sortReaderItems = useCallback(<T extends { title: string; chapterCount: number; updatedAt?: string; id?: string }>(rows: T[]) => {
     const sorted = [...rows];
     const getUpdatedMs = (item: { updatedAt?: string }) => {
@@ -14578,8 +14588,8 @@ const AppContent = () => {
   }, [readerActivityMap, readerFilters.sort]);
 
   const mineFeedFilteredStories = React.useMemo(() => {
-    const metadataFilters: ReaderDiscoveryFilters = { ...readerFilters, query: '' };
-    const hasQuery = Boolean(String(readerFilters.query || '').trim());
+    const metadataFilters: ReaderDiscoveryFilters = { ...appliedReaderFilters, query: '' };
+    const hasQuery = Boolean(String(appliedReaderFilters.query || '').trim());
     const filtered = mineStoryListItems.filter((item) => {
       const readerInput = {
         title: item.title,
@@ -14593,16 +14603,16 @@ const AppContent = () => {
       };
       if (!matchesReaderDiscoveryFilters(readerInput, metadataFilters)) return false;
       if (!hasQuery) return true;
-      if (matchesReaderDiscoveryFilters(readerInput, readerFilters)) return true;
+      if (matchesReaderDiscoveryFilters(readerInput, appliedReaderFilters)) return true;
       const fullStory = storage.getStoryById(item.id);
       if (!fullStory) return false;
-      return matchesReaderQuery(readerFilters.query, [
+      return matchesReaderQuery(appliedReaderFilters.query, [
         fullStory.content,
         ...(Array.isArray(fullStory.chapters) ? fullStory.chapters.slice(0, 80).map((chapter: Chapter) => `${chapter.title || ''}\n${chapter.content || ''}`) : []),
       ]);
     });
     return sortReaderItems(filtered);
-  }, [mineStoryListItems, readerFilters, sortReaderItems]);
+  }, [appliedReaderFilters, mineStoryListItems, sortReaderItems]);
 
   const publicFeedFilteredStories = React.useMemo(() => {
     const filtered = publicStoryFeed.filter((item) => matchesReaderDiscoveryFilters({
@@ -14614,9 +14624,9 @@ const AppContent = () => {
       expectedChapters: item.expectedChapters,
       expectedWordCount: item.expectedWordCount,
       isAdult: item.isAdult,
-    }, readerFilters));
+    }, appliedReaderFilters));
     return sortReaderItems(filtered);
-  }, [publicStoryFeed, readerFilters, sortReaderItems]);
+  }, [appliedReaderFilters, publicStoryFeed, sortReaderItems]);
 
   const publicFeedSections = React.useMemo(() => {
     const getUpdatedMs = (item: PublicStoryFeedItem) => {
@@ -15653,6 +15663,10 @@ const AppContent = () => {
     }
     setAppMode(nextMode);
     setView('stories');
+    if (nextMode === 'reader') {
+      setReaderFeedTab('mine');
+      setReaderNavMode('mine');
+    }
     setSelectedStory(null);
     setEditingStory(null);
     setIsCreating(false);
@@ -15664,6 +15678,7 @@ const AppContent = () => {
       setAppMode('reader');
     }
     setReaderFeedTab(tab);
+    setReaderNavMode(tab);
     setSelectedStory(null);
     setEditingStory(null);
     setIsCreating(false);
@@ -15674,6 +15689,7 @@ const AppContent = () => {
     if (appMode !== 'reader') {
       setAppMode('reader');
     }
+    setReaderNavMode('search');
     setSelectedStory(null);
     setEditingStory(null);
     setIsCreating(false);
@@ -18460,13 +18476,19 @@ ${JSON.stringify(violatingPayload)}
             <span
               className={cn(
                 'inline-flex items-center gap-2 rounded-full border px-4 py-2 text-xs sm:text-sm font-bold',
-                readerFeedTab === 'public'
+                readerNavMode === 'search'
+                  ? 'border-violet-200 bg-violet-50 text-violet-700'
+                  : readerFeedTab === 'public'
                   ? 'border-indigo-600 bg-indigo-600 text-white'
                   : 'border-emerald-200 bg-emerald-50 text-emerald-700',
               )}
             >
-              {readerFeedTab === 'public' ? <Users className="h-4 w-4" /> : <Library className="h-4 w-4" />}
-              {readerFeedTab === 'public' ? 'Đang xem: Khám phá' : 'Đang xem: Tủ truyện'}
+              {readerNavMode === 'search'
+                ? <Search className="h-4 w-4" />
+                : (readerFeedTab === 'public' ? <Users className="h-4 w-4" /> : <Library className="h-4 w-4" />)}
+              {readerNavMode === 'search'
+                ? 'Đang xem: Tìm kiếm'
+                : (readerFeedTab === 'public' ? 'Đang xem: Khám phá' : 'Đang xem: Tủ truyện')}
             </span>
             {readerFeedTab === 'public' ? (
               <button
@@ -18479,6 +18501,7 @@ ${JSON.stringify(violatingPayload)}
               </button>
             ) : null}
           </div>
+          {readerNavMode === 'search' ? (
           <div ref={readerDiscoveryControlsRef} className="mt-4 rounded-3xl border border-slate-200 bg-white p-4 sm:p-5">
             <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
               <label className="lg:col-span-3 inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600">
@@ -18679,6 +18702,7 @@ ${JSON.stringify(violatingPayload)}
               </div>
             ) : null}
           </div>
+          ) : null}
         </div>
 
         {readerFeedTab === 'mine' ? (
@@ -19612,7 +19636,7 @@ ${JSON.stringify(violatingPayload)}
         onSwitchAppMode={handleSwitchAppMode}
         readerNavKey={
           appMode === 'reader'
-            ? (readerQuery.trim()
+            ? (readerNavMode === 'search'
               ? 'reader-search'
               : (readerFeedTab === 'public' ? 'reader-public' : 'reader-mine'))
             : undefined
