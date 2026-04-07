@@ -9893,7 +9893,33 @@ const StoryDetail = ({
   const formatContent = (content: string) => {
     const normalized = getRenderableChapterContent(content);
     if (!normalized) return '';
-    const canonical = normalized
+    const sanitizeChapterLeadNoise = (raw: string, chapterTitle?: string) => {
+      const lines = String(raw || '').replace(/\r\n?/g, '\n').split('\n');
+      const titleNorm = normalizeSearchText(chapterTitle || '');
+      let removed = 0;
+      while (lines.length > 0 && removed < 8) {
+        const head = String(lines[0] || '').trim();
+        if (!head) {
+          lines.shift();
+          removed += 1;
+          continue;
+        }
+        const headNorm = normalizeSearchText(head);
+        const isCoverNoise = /^(cover|bia|book cover)$/.test(headNorm);
+        const isMetaHeading = /^(muc luc|table of contents|toc|source|nguon)$/.test(headNorm);
+        const isDuplicatedChapterLine = /^((chuong|chapter)\s*\d+)/.test(headNorm) && /(online|dich|full|tap|\(|\)|-)/.test(headNorm);
+        const isDuplicatedTitle = Boolean(titleNorm) && (headNorm === titleNorm || headNorm.endsWith(titleNorm));
+        if (isCoverNoise || isMetaHeading || isDuplicatedChapterLine || isDuplicatedTitle) {
+          lines.shift();
+          removed += 1;
+          continue;
+        }
+        break;
+      }
+      return lines.join('\n').trim();
+    };
+
+    const canonical = sanitizeChapterLeadNoise(normalized, selectedChapter?.title || '')
       .replace(/\r\n?/g, '\n')
       .replace(/]\s+\[/g, ']\n[')
       .replace(/\u00A0/g, ' ')
