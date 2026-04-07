@@ -9853,10 +9853,7 @@ const StoryDetail = ({
   breadcrumbs?: BreadcrumbItem[],
   isReadOnly?: boolean,
 }) => {
-  const [selectedChapter, setSelectedChapter] = useState<Chapter | null>(() => {
-    if (!forcedChapterId) return null;
-    return (story.chapters || []).find((chapter) => chapter.id === forcedChapterId) || null;
-  });
+  const [manualSelectedChapter, setManualSelectedChapter] = useState<Chapter | null>(null);
   const [isEditingChapter, setIsEditingChapter] = useState(false);
   const [editTitle, setEditTitle] = useState('');
   const [editContent, setEditContent] = useState('');
@@ -9865,6 +9862,11 @@ const StoryDetail = ({
   const displayGenre = parseStoryGenreAndPrompt(story.genre || '', story.storyPromptNotes || '').genreLabel || 'Chưa phân loại';
   const readChapterSet = React.useMemo(() => new Set(readerActivity?.readChapterIds || []), [readerActivity?.readChapterIds]);
   const followed = Boolean(readerActivity?.followed);
+  const forcedSelectedChapter = React.useMemo(
+    () => (forcedChapterId ? ((story.chapters || []).find((chapter) => chapter.id === forcedChapterId) || null) : null),
+    [forcedChapterId, story.chapters],
+  );
+  const selectedChapter = forcedSelectedChapter || manualSelectedChapter;
 
   const getRenderableChapterContent = (content: string) => {
     if (!content) return '';
@@ -10019,7 +10021,7 @@ const StoryDetail = ({
     const currentIndex = sorted.findIndex(c => c.id === selectedChapter.id);
     if (currentIndex < sorted.length - 1) {
       const nextChapter = sorted[currentIndex + 1];
-      setSelectedChapter(nextChapter);
+      if (!forcedChapterId) setManualSelectedChapter(nextChapter);
       onReaderNavigateChapter?.(nextChapter.id, 'replace');
       window.scrollTo(0, 0);
     }
@@ -10031,7 +10033,7 @@ const StoryDetail = ({
     const currentIndex = sorted.findIndex(c => c.id === selectedChapter.id);
     if (currentIndex > 0) {
       const prevChapter = sorted[currentIndex - 1];
-      setSelectedChapter(prevChapter);
+      if (!forcedChapterId) setManualSelectedChapter(prevChapter);
       onReaderNavigateChapter?.(prevChapter.id, 'replace');
       window.scrollTo(0, 0);
     }
@@ -10042,22 +10044,12 @@ const StoryDetail = ({
       onOpenChapter(chapter);
       return;
     }
-    setSelectedChapter(chapter);
+    if (!forcedChapterId) setManualSelectedChapter(chapter);
   };
-
-  useLayoutEffect(() => {
-    if (!forcedChapterId) return;
-    const nextChapter = (story.chapters || []).find((chapter) => chapter.id === forcedChapterId) || null;
-    setSelectedChapter((prev) => {
-      if (!nextChapter) return null;
-      if (prev?.id === nextChapter.id) return prev;
-      return nextChapter;
-    });
-  }, [forcedChapterId, story.chapters]);
 
   useEffect(() => {
     if (forcedChapterId) return;
-    setSelectedChapter(null);
+    setManualSelectedChapter(null);
   }, [forcedChapterId, story.id]);
 
   useEffect(() => {
@@ -10114,7 +10106,7 @@ const StoryDetail = ({
     
     try {
       persistUpdatedStory(updatedStory);
-      setSelectedChapter({ ...selectedChapter, title: editTitle, content: editContent });
+      setManualSelectedChapter({ ...selectedChapter, title: editTitle, content: editContent });
       setIsEditingChapter(false);
     } catch (error) {
       console.error("Lỗi khi cập nhật chương:", error);
@@ -10155,11 +10147,11 @@ const StoryDetail = ({
 
       const wasReadingDeletedChapter = selectedChapter?.id === chapterId;
       if (wasReadingDeletedChapter) {
-        setSelectedChapter(null);
+        setManualSelectedChapter(null);
         onReaderBack?.();
       } else if (selectedChapter) {
         const refreshed = updatedStory.chapters?.find((item) => item.id === selectedChapter.id) || null;
-        setSelectedChapter(refreshed);
+        setManualSelectedChapter(refreshed);
       }
 
       notifyApp({
@@ -10207,7 +10199,7 @@ const StoryDetail = ({
                 onReaderBack();
                 return;
               }
-              setSelectedChapter(null);
+              setManualSelectedChapter(null);
             }}
             className="flex items-center gap-2 text-slate-500 hover:text-slate-900 transition-colors font-bold"
           >
