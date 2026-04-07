@@ -5958,6 +5958,22 @@ function splitGenreTags(rawGenre: string | undefined): string[] {
     .slice(0, 12);
 }
 
+function extractAuthorFromIntroduction(introduction?: string): string {
+  const source = String(introduction || '').trim();
+  if (!source) return '';
+  const lineMatch = source.match(/(?:^|\n)\s*t[aá]c\s*gi[aả]\s*:\s*([^\n]+)/i);
+  if (lineMatch?.[1]) return lineMatch[1].trim();
+  const inlineMatch = source.match(/(?:^|\s)t[aá]c\s*gi[aả]\s*:\s*([^•|,\n]+)/i);
+  if (inlineMatch?.[1]) return inlineMatch[1].trim();
+  return '';
+}
+
+function buildStoryCardMetaLine(input: { introduction?: string; genre?: string }): string {
+  const author = extractAuthorFromIntroduction(input.introduction) || 'Chưa rõ';
+  const genre = String(input.genre || '').trim() || 'Chưa phân loại';
+  return `Tác giả: ${author} • Thể loại: ${genre}`;
+}
+
 function matchesReaderQuery(query: string, chunks: Array<string | undefined>): boolean {
   const normalizedQuery = normalizeSearchText(query);
   if (!normalizedQuery) return true;
@@ -6352,20 +6368,173 @@ function buildImportedCharactersFromJson(input: {
   });
 }
 
+type ImportedStoryMetadataSource = 'google-books' | 'filename' | 'fallback';
+
+interface ImportedStoryMetadata {
+  title: string;
+  author: string;
+  genre: string;
+  source: ImportedStoryMetadataSource;
+  confidence: number;
+}
+
+const importedStoryMetadataCache = new Map<string, ImportedStoryMetadata>();
+const importedStoryTitleOverrides: Array<{ pattern: RegExp; title: string; genre?: string; author?: string }> = [
+  {
+    pattern: /^ta tro thanh phu nhi dai phan ph/i,
+    title: 'Ta Trở Thành Phú Nhị Đại Phản Phái',
+    genre: 'Đô thị, Hệ thống',
+  },
+];
+
+function normalizeImportedTitleFromFileName(fileName: string, extensionPattern: RegExp): string {
+  return String(fileName || '')
+    .replace(extensionPattern, '')
+    .replace(/^[\s\-_]*(?:file|truyen|novel)[\s\-_]+/i, '')
+    .replace(/[_\-]+/g, ' ')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/([A-Z])([A-Z][a-z])/g, '$1 $2')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+    .slice(0, 480);
+}
+
+function inferImportedGenre(title: string): string {
+  const source = normalizeSearchText(title);
+  const match = (pattern: RegExp) => pattern.test(source);
+  if (match(/tien hiep|tu chan|kiem tien|dao ton|than ma/)) return 'Tiên hiệp';
+  if (match(/huyen huyen|vo hon|than|ma|de ton|tu la|dau pha/)) return 'Huyền huyễn';
+  if (match(/do thi|hao mon|tong tai|phu nhi dai/)) return 'Đô thị';
+  if (match(/ngon tinh|co vo|cuoi truoc/)) return 'Ngôn tình';
+  if (match(/trinh tham|hinh su|an mang/)) return 'Trinh thám';
+  if (match(/xuyen khong|trong sinh|he thong|vo han luan hoi/)) return 'Xuyên không';
+  if (match(/kinh di|linh di|quy|ac ma/)) return 'Kinh dị';
+  return 'Dịch tổng hợp';
+}
+
+function mapGoogleCategoryToGenre(categories: string[]): string {
+  const source = normalizeSearchText((categories || []).join(' '));
+  if (!source) return '';
+  if (/fantasy|huyen|xianxia|cultivation|supernatural/.test(source)) return 'Huyền huyễn';
+  if (/romance|ngon tinh|love/.test(source)) return 'Ngôn tình';
+  if (/mystery|detective|crime|thriller/.test(source)) return 'Trinh thám';
+  if (/horror|ghost|paranormal/.test(source)) return 'Kinh dị';
+  if (/science fiction|sci fi|cyberpunk/.test(source)) return 'Khoa học viễn tưởng';
+  if (/urban|city|business/.test(source)) return 'Đô thị';
+  return '';
+}
+
+function scoreImportedTitleCandidate(queryTitle: string, candidateTitle: string): number {
+  const queryNorm = normalizeSearchText(queryTitle);
+  const candidateNorm = normalizeSearchText(candidateTitle);
+  if (!queryNorm || !candidateNorm) return 0;
+  if (queryNorm === candidateNorm) return 1;
+  const queryTokens = queryNorm.split(' ').filter(Boolean);
+  const candidateTokenSet = new Set(candidateNorm.split(' ').filter(Boolean));
+  const overlap = queryTokens.filter((token) => candidateTokenSet.has(token)).length;
+  const overlapScore = overlap / Math.max(1, queryTokens.length);
+  const includeBonus = candidateNorm.includes(queryNorm) || queryNorm.includes(candidateNorm) ? 0.25 : 0;
+  const lengthPenalty = Math.min(0.2, Math.abs(candidateNorm.length - queryNorm.length) / 120);
+  return Math.max(0, overlapScore + includeBonus - lengthPenalty);
+}
+
+async function resolveImportedStoryMetadata(fileName: string, extensionPattern: RegExp): Promise<ImportedStoryMetadata> {
+  const normalizedTitle = normalizeImportedTitleFromFileName(fileName, extensionPattern);
+  const cacheKey = normalizeSearchText(normalizedTitle);
+  const cached = importedStoryMetadataCache.get(cacheKey);
+  if (cached) return cached;
+
+  const override = importedStoryTitleOverrides.find((item) => item.pattern.test(normalizeSearchText(normalizedTitle)));
+  if (override) {
+    const overridden: ImportedStoryMetadata = {
+      title: override.title.slice(0, 480),
+      author: String(override.author || '').slice(0, 160),
+      genre: String(override.genre || inferImportedGenre(override.title)).slice(0, 190),
+      source: 'filename',
+      confidence: 0.95,
+    };
+    importedStoryMetadataCache.set(cacheKey, overridden);
+    return overridden;
+  }
+
+  const fallback: ImportedStoryMetadata = {
+    title: normalizedTitle || 'Truyện chưa đặt tên',
+    author: '',
+    genre: inferImportedGenre(normalizedTitle),
+    source: normalizedTitle ? 'filename' : 'fallback',
+    confidence: normalizedTitle ? 0.5 : 0.2,
+  };
+  if (!normalizedTitle) return fallback;
+
+  try {
+    const query = encodeURIComponent(`intitle:${normalizedTitle}`);
+    const url = `https://www.googleapis.com/books/v1/volumes?q=${query}&maxResults=6&langRestrict=vi&printType=books`;
+    const response = await fetch(url);
+    if (!response.ok) {
+      importedStoryMetadataCache.set(cacheKey, fallback);
+      return fallback;
+    }
+    const data = await response.json() as { items?: Array<{ volumeInfo?: any }> };
+    const items = Array.isArray(data?.items) ? data.items : [];
+    if (!items.length) {
+      importedStoryMetadataCache.set(cacheKey, fallback);
+      return fallback;
+    }
+
+    const ranked = items
+      .map((item) => {
+        const volume = item?.volumeInfo || {};
+        const title = String(volume.title || '').trim();
+        const authors = Array.isArray(volume.authors) ? volume.authors.map((a: unknown) => String(a || '').trim()).filter(Boolean) : [];
+        const categories = Array.isArray(volume.categories) ? volume.categories.map((c: unknown) => String(c || '').trim()).filter(Boolean) : [];
+        const score = scoreImportedTitleCandidate(normalizedTitle, title);
+        return { title, authors, categories, score };
+      })
+      .filter((item) => item.title)
+      .sort((a, b) => b.score - a.score);
+
+    const best = ranked[0];
+    if (!best || best.score < 0.56) {
+      importedStoryMetadataCache.set(cacheKey, fallback);
+      return fallback;
+    }
+
+    const metadata: ImportedStoryMetadata = {
+      title: best.title.slice(0, 480),
+      author: (best.authors[0] || '').slice(0, 160),
+      genre: mapGoogleCategoryToGenre(best.categories) || fallback.genre,
+      source: 'google-books',
+      confidence: best.score,
+    };
+    importedStoryMetadataCache.set(cacheKey, metadata);
+    return metadata;
+  } catch {
+    importedStoryMetadataCache.set(cacheKey, fallback);
+    return fallback;
+  }
+}
+
 function buildImportedTextStory(input: {
   fileName: string;
   extensionPattern: RegExp;
   text: string;
   authorId: string;
   existingStories: Story[];
+  metadata?: ImportedStoryMetadata;
 }): Story {
   const now = new Date().toISOString();
+  const normalizedTitle = (input.metadata?.title || normalizeImportedTitleFromFileName(input.fileName, input.extensionPattern) || 'Truyện chưa đặt tên').slice(0, 480);
+  const normalizedGenre = (input.metadata?.genre || inferImportedGenre(normalizedTitle) || 'Dịch tổng hợp').slice(0, 190);
+  const authorLabel = (input.metadata?.author || '').trim() || 'Chưa rõ';
   return {
     id: createClientId('story'),
     slug: createStorySlugFromStories(input.existingStories),
     authorId: input.authorId,
-    title: String(input.fileName).replace(input.extensionPattern, '').substring(0, 480),
+    title: normalizedTitle,
     content: String(input.text).substring(0, 1_999_900),
+    introduction: `Tác giả: ${authorLabel}\nThể loại: ${normalizedGenre}`,
+    genre: normalizedGenre,
+    type: 'translated',
     isPublic: false,
     createdAt: now,
     updatedAt: now,
@@ -8367,15 +8536,23 @@ const ToolsManager = ({
         }
 
         const stories = storage.getStories();
+        const metadata = await resolveImportedStoryMetadata(file.name, /\.docx$/i);
         const importedStory = buildImportedTextStory({
           fileName: file.name,
           extensionPattern: /\.docx$/i,
           text,
           authorId: user.uid,
           existingStories: stories,
+          metadata,
         });
         saveStoriesAndRefresh([importedStory, ...stories]);
-        notifyApp({ tone: 'success', message: "Nhập file .docx thành công!" });
+        notifyApp({
+          tone: 'success',
+          message: "Nhập file .docx thành công!",
+          detail: metadata.source === 'google-books'
+            ? `Đã chuẩn hóa: ${metadata.title} • ${metadata.author || 'Tác giả chưa rõ'}`
+            : undefined,
+        });
       } else if (fileName.endsWith('.txt')) {
         console.log("Xử lý file TXT...");
         const text = await file.text();
@@ -8383,15 +8560,23 @@ const ToolsManager = ({
           throw new Error("File .txt không có nội dung.");
         }
         const stories = storage.getStories();
+        const metadata = await resolveImportedStoryMetadata(file.name, /\.txt$/i);
         const importedStory = buildImportedTextStory({
           fileName: file.name,
           extensionPattern: /\.txt$/i,
           text,
           authorId: user.uid,
           existingStories: stories,
+          metadata,
         });
         saveStoriesAndRefresh([importedStory, ...stories]);
-        notifyApp({ tone: 'success', message: "Nhập file .txt thành công!" });
+        notifyApp({
+          tone: 'success',
+          message: "Nhập file .txt thành công!",
+          detail: metadata.source === 'google-books'
+            ? `Đã chuẩn hóa: ${metadata.title} • ${metadata.author || 'Tác giả chưa rõ'}`
+            : undefined,
+        });
       } else {
         console.warn("Định dạng file không được hỗ trợ:", fileName);
         notifyApp({ tone: 'warn', message: "Định dạng file không được hỗ trợ." });
@@ -10639,10 +10824,10 @@ const StoryList = ({
                         {story.title}
                       </h3>
                       <p
-                        className="text-slate-500 text-sm whitespace-pre-line"
+                        className="text-slate-500 text-sm"
                         style={{ display: '-webkit-box', WebkitLineClamp: story.coverImageUrl ? 4 : 5, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
                       >
-                        {story.introduction || 'Chưa có giới thiệu ngắn.'}
+                        {buildStoryCardMetaLine({ introduction: story.introduction, genre: story.genre })}
                       </p>
                     </div>
                   </div>
@@ -13094,6 +13279,7 @@ const AppContent = () => {
   const backupImportInputRef = useRef<HTMLInputElement>(null);
   const readerSearchInputRef = useRef<HTMLInputElement>(null);
   const readerDiscoveryControlsRef = useRef<HTMLDivElement>(null);
+  const publicMetaLookupInFlightRef = useRef<Set<string>>(new Set());
   const activeAiRunRef = useRef<ActiveAiRun | null>(null);
   const toastTimeoutsRef = useRef<Map<string, number>>(new Map());
   const workspaceSyncRef = useRef({
@@ -14435,6 +14621,7 @@ const AppContent = () => {
   const [readerFeedTab, setReaderFeedTab] = useState<'mine' | 'public'>('mine');
   const [readerNavMode, setReaderNavMode] = useState<'mine' | 'public' | 'search'>('mine');
   const [publicStoryFeed, setPublicStoryFeed] = useState<PublicStoryFeedItem[]>([]);
+  const [resolvedPublicStoryMeta, setResolvedPublicStoryMeta] = useState<Record<string, ImportedStoryMetadata>>({});
   const [publicFeedLoading, setPublicFeedLoading] = useState(false);
   const [publicFeedError, setPublicFeedError] = useState('');
   const [loadingPublicStoryId, setLoadingPublicStoryId] = useState<string | null>(null);
@@ -14688,6 +14875,30 @@ const AppContent = () => {
     }, appliedReaderFilters));
     return sortReaderItems(filtered);
   }, [appliedReaderFilters, publicStoryFeed, sortReaderItems]);
+
+  useEffect(() => {
+    const targets = publicFeedFilteredStories
+      .slice(0, 30)
+      .filter((item) => !extractAuthorFromIntroduction(item.introduction));
+    targets.forEach((item) => {
+      const storyId = String(item.id || '').trim();
+      if (!storyId) return;
+      if (resolvedPublicStoryMeta[storyId]) return;
+      if (publicMetaLookupInFlightRef.current.has(storyId)) return;
+      publicMetaLookupInFlightRef.current.add(storyId);
+      void resolveImportedStoryMetadata(`${item.title || storyId}.txt`, /\.txt$/i)
+        .then((metadata) => {
+          if (metadata.source === 'fallback') return;
+          setResolvedPublicStoryMeta((prev) => {
+            if (prev[storyId]) return prev;
+            return { ...prev, [storyId]: metadata };
+          });
+        })
+        .finally(() => {
+          publicMetaLookupInFlightRef.current.delete(storyId);
+        });
+    });
+  }, [publicFeedFilteredStories, resolvedPublicStoryMeta]);
 
   const publicFeedSections = React.useMemo(() => {
     const getUpdatedMs = (item: PublicStoryFeedItem) => {
@@ -18384,6 +18595,12 @@ ${JSON.stringify(violatingPayload)}
       const readerMeta = readerActivityMap[item.id] || null;
       const readCount = readerMeta?.readChapterIds?.length || 0;
       const chapterTotal = Math.max(item.chapterCount || 0, readerMeta?.totalChapters || 0);
+      const resolvedMeta = resolvedPublicStoryMeta[item.id];
+      const displayTitle = resolvedMeta?.title || item.title;
+      const displayGenre = resolvedMeta?.genre || item.genre;
+      const displayIntro = resolvedMeta
+        ? `Tác giả: ${resolvedMeta.author || 'Chưa rõ'}\nThể loại: ${displayGenre || 'Chưa phân loại'}`
+        : item.introduction;
       return (
         <article
           key={item.id}
@@ -18391,9 +18608,9 @@ ${JSON.stringify(violatingPayload)}
         >
           <div className="mb-4 flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <h3 className="line-clamp-2 text-lg sm:text-xl font-serif font-bold text-slate-900">{item.title}</h3>
+              <h3 className="line-clamp-2 text-lg sm:text-xl font-serif font-bold text-slate-900">{displayTitle}</h3>
               <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
-                {item.genre || 'Chưa phân loại'}
+                {displayGenre || 'Chưa phân loại'}
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
@@ -18408,12 +18625,12 @@ ${JSON.stringify(violatingPayload)}
                     id: item.id,
                     slug: item.slug,
                     authorId: item.authorId,
-                    title: item.title,
+                    title: displayTitle,
                     content: '',
                     coverImageUrl: item.coverImageUrl,
                     type: item.type || 'original',
-                    genre: item.genre || '',
-                    introduction: item.introduction || '',
+                    genre: displayGenre || '',
+                    introduction: displayIntro || '',
                     chapters: [],
                     isPublic: true,
                     isAdult: Boolean(item.isAdult),
@@ -18446,8 +18663,8 @@ ${JSON.stringify(violatingPayload)}
             </div>
           ) : null}
 
-          <p className="line-clamp-3 text-sm leading-relaxed text-slate-600">
-            {item.introduction || 'Chưa có giới thiệu ngắn.'}
+          <p className="line-clamp-2 text-sm leading-relaxed text-slate-600">
+            {buildStoryCardMetaLine({ introduction: displayIntro, genre: displayGenre })}
           </p>
 
           <div className="mt-5 flex items-center justify-between border-t border-slate-100 pt-4 text-[11px] font-semibold text-slate-500">
