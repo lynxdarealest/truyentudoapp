@@ -13475,10 +13475,6 @@ const AppContent = () => {
         .order('updated_at', { ascending: false })
         .limit(PUBLIC_STORY_FEED_LIMIT);
 
-      if (user?.uid) {
-        query = query.neq('user_id', user.uid);
-      }
-
       const { data: rows, error } = await query;
       if (error) throw error;
 
