@@ -5958,13 +5958,92 @@ function splitGenreTags(rawGenre: string | undefined): string[] {
     .slice(0, 12);
 }
 
+function sanitizeAuthorLabel(rawAuthor?: string): string {
+  let value = String(rawAuthor || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!value) return '';
+  value = value
+    .replace(/\s*(?:•|\||;|,)\s*(?:th[eê]\s*lo[aạ]i|genre)\s*:.*$/i, '')
+    .replace(/\s*(?:th[eê]\s*lo[aạ]i|genre)\s*:.*$/i, '')
+    .replace(/\s*(?:•|\||;).*/, '')
+    .trim();
+  value = value.replace(/^[\s\-:•|,.;]+|[\s\-:•|,.;]+$/g, '').trim();
+  if (!value) return '';
+  const normalized = normalizeSearchText(value);
+  if (!normalized) return '';
+  if (/^(?:chua ro|unknown|none|n a|na|null)$/i.test(normalized)) return '';
+  if (/(?:https?:\/\/|www\.)/i.test(value)) return '';
+  if (/^([a-z0-9-]+\.)+[a-z]{2,}$/i.test(value)) return '';
+  if (/\.(?:com|net|org|info|io|co|vn|xyz)(?:\b|$)/i.test(value) && !/\s/.test(value) && !/[À-ỹ]/.test(value)) return '';
+  if (/^[\W_]+$/i.test(value)) return '';
+  return value.slice(0, 160);
+}
+
+function normalizeStoryTitleForDisplay(rawTitle: string): string {
+  let title = String(rawTitle || '').trim();
+  if (!title) return '';
+  title = title
+    .replace(/\.(?:txt|docx|doc|pdf|epub|md|rtf)$/i, '')
+    .replace(/^[\s\-_]*(?:file|truyen|novel)[\s\-_]+/i, '')
+    .replace(/[_]+/g, ' ')
+    .replace(/[–—-]+/g, ' ')
+    .replace(/([A-Za-zÀ-ỹ])(\d)/g, '$1 $2')
+    .replace(/(\d)([A-Za-zÀ-ỹ])/g, '$1 $2')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/([A-Z])([A-Z][a-z])/g, '$1 $2')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  for (let step = 0; step < 3; step += 1) {
+    const nextTitle = title
+      .replace(/\b(?:end|full|complete|completed|convert|raw|ban dich|ban convert)\b\s*$/i, '')
+      .replace(/\b(?:chap(?:ter)?|chuong)\s*\d+\s*$/i, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+    if (nextTitle === title) break;
+    title = nextTitle;
+  }
+  if (!/[À-ỹ]/.test(title) && /^[A-Za-z0-9 ]+$/.test(title)) {
+    title = title
+      .split(' ')
+      .map((token) => {
+        if (!token) return '';
+        if (/^[IVXLCDM]+$/i.test(token)) return token.toUpperCase();
+        if (token.length <= 3 && token === token.toUpperCase()) return token;
+        return `${token.charAt(0).toUpperCase()}${token.slice(1).toLowerCase()}`;
+      })
+      .join(' ')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+  }
+  return title.slice(0, 480);
+}
+
+function isSuspiciousStoryTitle(rawTitle?: string): boolean {
+  const title = String(rawTitle || '').trim();
+  if (!title) return true;
+  if (/[a-z][A-Z]/.test(title)) return true;
+  if (/[A-Za-z]\d|\d[A-Za-z]/.test(title)) return true;
+  if (/_/.test(title)) return true;
+  if (/\b(?:end|raw|convert|ban dich|ban convert)\b/i.test(title)) return true;
+  if (/^[A-Za-z0-9-]{18,}$/.test(title)) return true;
+  if (!/\s/.test(title) && title.length >= 16 && !/[À-ỹ]/.test(title) && /^[A-Za-z0-9-]+$/.test(title)) return true;
+  return false;
+}
+
+function shouldLookupStoryCardMetadata(input: { title?: string; introduction?: string; genre?: string }): boolean {
+  const author = extractAuthorFromIntroduction(input.introduction);
+  const hasGenre = Boolean(String(input.genre || '').trim());
+  return !author || !hasGenre || isSuspiciousStoryTitle(input.title);
+}
+
 function extractAuthorFromIntroduction(introduction?: string): string {
   const source = String(introduction || '').trim();
   if (!source) return '';
   const lineMatch = source.match(/(?:^|\n)\s*t[aá]c\s*gi[aả]\s*:\s*([^\n]+)/i);
-  if (lineMatch?.[1]) return lineMatch[1].trim();
+  if (lineMatch?.[1]) return sanitizeAuthorLabel(lineMatch[1]);
   const inlineMatch = source.match(/(?:^|\s)t[aá]c\s*gi[aả]\s*:\s*([^•|,\n]+)/i);
-  if (inlineMatch?.[1]) return inlineMatch[1].trim();
+  if (inlineMatch?.[1]) return sanitizeAuthorLabel(inlineMatch[1]);
   return '';
 }
 
@@ -6383,20 +6462,58 @@ const importedStoryTitleOverrides: Array<{ pattern: RegExp; title: string; genre
   {
     pattern: /^ta tro thanh phu nhi dai phan ph/i,
     title: 'Ta Trở Thành Phú Nhị Đại Phản Phái',
-    genre: 'Đô thị, Hệ thống',
+    author: 'Tam Tam Đắc Cửu',
+    genre: 'Đô thị, Hệ thống, Xuyên không',
+  },
+  {
+    pattern: /^chu gioi tan the(?: online)?(?: ngay tan cua the gioi)?(?: \d+)?(?: end)?$/i,
+    title: 'Chư Giới Tận Thế Online',
+    author: 'Yên Hỏa Thành Thành',
+    genre: 'Mạt thế, Khoa huyễn, Huyền huyễn, Dị giới',
   },
 ];
 
+function resolveImportedStoryTitleOverride(rawTitle: string): { pattern: RegExp; title: string; genre?: string; author?: string } | undefined {
+  const normalizedTitle = normalizeSearchText(normalizeStoryTitleForDisplay(rawTitle));
+  if (!normalizedTitle) return undefined;
+  return importedStoryTitleOverrides.find((item) => item.pattern.test(normalizedTitle));
+}
+
 function normalizeImportedTitleFromFileName(fileName: string, extensionPattern: RegExp): string {
-  return String(fileName || '')
-    .replace(extensionPattern, '')
-    .replace(/^[\s\-_]*(?:file|truyen|novel)[\s\-_]+/i, '')
-    .replace(/[_\-]+/g, ' ')
-    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-    .replace(/([A-Z])([A-Z][a-z])/g, '$1 $2')
-    .replace(/\s{2,}/g, ' ')
-    .trim()
-    .slice(0, 480);
+  const sanitized = normalizeStoryTitleForDisplay(
+    String(fileName || '')
+      .replace(extensionPattern, '')
+      .trim(),
+  );
+  const override = resolveImportedStoryTitleOverride(sanitized);
+  return String(override?.title || sanitized).trim().slice(0, 480);
+}
+
+function resolveStoryCardDisplayTitle(rawTitle: string, metadata?: ImportedStoryMetadata): string {
+  const candidate = String(metadata?.title || rawTitle || '').trim();
+  if (!candidate) return 'Truyện chưa đặt tên';
+  const override = resolveImportedStoryTitleOverride(candidate);
+  return String(override?.title || normalizeStoryTitleForDisplay(candidate) || 'Truyện chưa đặt tên').slice(0, 480);
+}
+
+function resolveStoryCardDisplayGenre(rawGenre?: string, metadata?: ImportedStoryMetadata, rawTitle?: string): string {
+  const override = resolveImportedStoryTitleOverride(metadata?.title || rawTitle || '');
+  const fromOverride = String(override?.genre || '').trim();
+  if (fromOverride) return fromOverride.slice(0, 190);
+  return String(metadata?.genre || rawGenre || '').trim().slice(0, 190);
+}
+
+function buildStoryCardDisplayIntroduction(input: {
+  introduction?: string;
+  genre?: string;
+  title?: string;
+  metadata?: ImportedStoryMetadata;
+}): string {
+  const explicitAuthor = sanitizeAuthorLabel(input.metadata?.author || '');
+  const introAuthor = extractAuthorFromIntroduction(input.introduction);
+  const author = explicitAuthor || introAuthor || 'Chưa rõ';
+  const genre = resolveStoryCardDisplayGenre(input.genre, input.metadata, input.title) || 'Chưa phân loại';
+  return `Tác giả: ${author}\nThể loại: ${genre}`;
 }
 
 function inferImportedGenre(title: string): string {
@@ -6444,11 +6561,11 @@ async function resolveImportedStoryMetadata(fileName: string, extensionPattern: 
   const cached = importedStoryMetadataCache.get(cacheKey);
   if (cached) return cached;
 
-  const override = importedStoryTitleOverrides.find((item) => item.pattern.test(normalizeSearchText(normalizedTitle)));
+  const override = resolveImportedStoryTitleOverride(normalizedTitle);
   if (override) {
     const overridden: ImportedStoryMetadata = {
       title: override.title.slice(0, 480),
-      author: String(override.author || '').slice(0, 160),
+      author: sanitizeAuthorLabel(String(override.author || '')).slice(0, 160),
       genre: String(override.genre || inferImportedGenre(override.title)).slice(0, 190),
       source: 'filename',
       confidence: 0.95,
@@ -10657,6 +10774,8 @@ const StoryList = ({
   const [stories, setStories] = useState<StoryListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [resolvedStoryMeta, setResolvedStoryMeta] = useState<Record<string, ImportedStoryMetadata>>({});
+  const storyMetaLookupInFlightRef = useRef<Set<string>>(new Set());
 
   // Pagination limits
   const [originalLimit, setOriginalLimit] = useState(PAGE_SIZE);
@@ -10673,6 +10792,34 @@ const StoryList = ({
     setStories(list);
     setLoading(false);
   }, [refreshKey, storiesOverride]);
+
+  useEffect(() => {
+    const targets = stories
+      .slice(0, 60)
+      .filter((item) => shouldLookupStoryCardMetadata({
+        title: item.title,
+        introduction: item.introduction,
+        genre: item.genre,
+      }));
+    targets.forEach((item) => {
+      const storyId = String(item.id || '').trim();
+      if (!storyId) return;
+      if (resolvedStoryMeta[storyId]) return;
+      if (storyMetaLookupInFlightRef.current.has(storyId)) return;
+      storyMetaLookupInFlightRef.current.add(storyId);
+      void resolveImportedStoryMetadata(`${item.title || storyId}.txt`, /\.txt$/i)
+        .then((metadata) => {
+          if (metadata.source === 'fallback') return;
+          setResolvedStoryMeta((prev) => {
+            if (prev[storyId]) return prev;
+            return { ...prev, [storyId]: metadata };
+          });
+        })
+        .finally(() => {
+          storyMetaLookupInFlightRef.current.delete(storyId);
+        });
+    });
+  }, [resolvedStoryMeta, stories]);
 
   const handleDelete = async () => {
     if (!deleteId) return;
@@ -10750,25 +10897,35 @@ const StoryList = ({
             </div>
           ) : (
             <>
-              {visibleStories.map((story) => (
-                <motion.div 
-                  key={story.id}
-                  layout
-                  initial={{ opacity: 0, scale: 0.95 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  onClick={() => {
-                    const fullStory = storage.getStoryById(story.id);
-                    if (!fullStory) {
-                      notifyApp({
-                        tone: 'warn',
-                        message: 'Không thể mở truyện này, dữ liệu có thể đã bị thay đổi.',
-                      });
-                      return;
-                    }
-                    onView(fullStory);
-                  }}
-                  className="group relative bg-white p-6 rounded-2xl border border-slate-200 hover:border-indigo-200 hover:shadow-xl hover:shadow-indigo-900/5 transition-all cursor-pointer flex flex-col min-h-[20rem]"
-                >
+              {visibleStories.map((story) => {
+                const cardMetadata = resolvedStoryMeta[story.id];
+                const displayTitle = resolveStoryCardDisplayTitle(story.title, cardMetadata);
+                const displayGenre = resolveStoryCardDisplayGenre(story.genre, cardMetadata, story.title);
+                const displayIntro = buildStoryCardDisplayIntroduction({
+                  introduction: story.introduction,
+                  genre: displayGenre,
+                  title: story.title,
+                  metadata: cardMetadata,
+                });
+                return (
+                  <motion.div
+                    key={story.id}
+                    layout
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    onClick={() => {
+                      const fullStory = storage.getStoryById(story.id);
+                      if (!fullStory) {
+                        notifyApp({
+                          tone: 'warn',
+                          message: 'Không thể mở truyện này, dữ liệu có thể đã bị thay đổi.',
+                        });
+                        return;
+                      }
+                      onView(fullStory);
+                    }}
+                    className="group relative bg-white p-6 rounded-2xl border border-slate-200 hover:border-indigo-200 hover:shadow-xl hover:shadow-indigo-900/5 transition-all cursor-pointer flex flex-col min-h-[20rem]"
+                  >
                   {(() => {
                     const readerActivity = readerActivityMap[story.id];
                     const readCount = readerActivity?.readChapterIds?.length || 0;
@@ -10837,7 +10994,7 @@ const StoryList = ({
                       <div className="rounded-xl overflow-hidden border border-slate-100 bg-slate-100 aspect-[2/3] w-24 sm:w-24">
                         <img
                           src={story.coverImageUrl}
-                          alt={`Bìa truyện ${story.title}`}
+                          alt={`Bìa truyện ${displayTitle}`}
                           className="w-full h-full object-contain object-center"
                           loading="lazy"
                         />
@@ -10848,13 +11005,13 @@ const StoryList = ({
                         className="text-xl font-serif font-bold text-slate-900 mb-3"
                         style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
                       >
-                        {story.title}
+                        {displayTitle}
                       </h3>
                       <p
                         className="text-slate-500 text-sm"
                         style={{ display: '-webkit-box', WebkitLineClamp: story.coverImageUrl ? 4 : 5, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
                       >
-                        {buildStoryCardMetaLine({ introduction: story.introduction, genre: story.genre })}
+                        {buildStoryCardMetaLine({ introduction: displayIntro, genre: displayGenre })}
                       </p>
                     </div>
                   </div>
@@ -10866,7 +11023,8 @@ const StoryList = ({
                     </span>
                   </div>
                 </motion.div>
-              ))}
+                );
+              })}
               
               {hasMore && (
                 <button 
@@ -14902,7 +15060,11 @@ const AppContent = () => {
   useEffect(() => {
     const targets = publicFeedFilteredStories
       .slice(0, 30)
-      .filter((item) => !extractAuthorFromIntroduction(item.introduction));
+      .filter((item) => shouldLookupStoryCardMetadata({
+        title: item.title,
+        introduction: item.introduction,
+        genre: item.genre,
+      }));
     targets.forEach((item) => {
       const storyId = String(item.id || '').trim();
       if (!storyId) return;
@@ -18619,11 +18781,14 @@ ${JSON.stringify(violatingPayload)}
       const readCount = readerMeta?.readChapterIds?.length || 0;
       const chapterTotal = Math.max(item.chapterCount || 0, readerMeta?.totalChapters || 0);
       const resolvedMeta = resolvedPublicStoryMeta[item.id];
-      const displayTitle = resolvedMeta?.title || item.title;
-      const displayGenre = resolvedMeta?.genre || item.genre;
-      const displayIntro = resolvedMeta
-        ? `Tác giả: ${resolvedMeta.author || 'Chưa rõ'}\nThể loại: ${displayGenre || 'Chưa phân loại'}`
-        : item.introduction;
+      const displayTitle = resolveStoryCardDisplayTitle(item.title, resolvedMeta);
+      const displayGenre = resolveStoryCardDisplayGenre(item.genre, resolvedMeta, item.title);
+      const displayIntro = buildStoryCardDisplayIntroduction({
+        introduction: item.introduction,
+        genre: displayGenre,
+        title: item.title,
+        metadata: resolvedMeta,
+      });
       return (
         <article
           key={item.id}
@@ -18679,7 +18844,7 @@ ${JSON.stringify(violatingPayload)}
             <div className="mb-4 overflow-hidden rounded-2xl border border-slate-100 bg-slate-100">
               <img
                 src={item.coverImageUrl}
-                alt={`Bìa truyện ${item.title}`}
+                alt={`Bìa truyện ${displayTitle}`}
                 className="h-40 sm:h-44 w-full object-contain object-center"
                 loading="lazy"
               />
