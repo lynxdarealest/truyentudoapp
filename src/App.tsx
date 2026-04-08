@@ -13553,6 +13553,8 @@ const AppContent = () => {
     lastSyncedSectionHash: {} as Partial<Record<LocalWorkspaceSection, string>>,
   });
   const localBackupRestoreAttemptedRef = useRef<Set<string>>(new Set());
+  const normalizedStudioHydrationAttemptedRef = useRef<Set<string>>(new Set());
+  const normalizedStudioHydrationInFlightRef = useRef<Set<string>>(new Set());
   const backupAutomationRef = useRef({
     isRestoring: false,
     lastFingerprint: '',
@@ -13713,6 +13715,103 @@ const AppContent = () => {
     if (error || !row?.story_id) return null;
     return loadPublicStoryById(String(row.story_id));
   }, [hasSupabase, loadPublicStoryById]);
+
+  const hydrateOwnedStoriesFromNormalized = useCallback(async (userId: string): Promise<number> => {
+    if (!hasSupabase) return 0;
+    const normalizedUserId = String(userId || '').trim();
+    if (!normalizedUserId) return 0;
+    const supabase = await getSupabaseClient();
+    if (!supabase) return 0;
+
+    const { data: storyRows, error: storyError } = await supabase
+      .from(SUPABASE_NORMALIZED_TABLES.stories)
+      .select('story_id,slug,user_id,title,content,introduction,genre,type,is_public,is_adult,is_ai,expected_chapters,expected_word_count,story_prompt_notes,cover_image_url,character_roster,translation_memory,created_at,updated_at')
+      .eq('user_id', normalizedUserId)
+      .order('updated_at', { ascending: false })
+      .limit(800);
+    if (storyError || !Array.isArray(storyRows) || storyRows.length === 0) return 0;
+
+    const storyIds = storyRows
+      .map((row: any) => String(row.story_id || '').trim())
+      .filter(Boolean);
+    let chapterRows: any[] = [];
+    if (storyIds.length > 0) {
+      const { data, error: chapterError } = await supabase
+        .from(SUPABASE_NORMALIZED_TABLES.chapters)
+        .select('story_id,chapter_id,title,content,sort_order,ai_instructions,script,created_at,updated_at')
+        .in('story_id', storyIds)
+        .order('sort_order', { ascending: true });
+      if (chapterError) return 0;
+      chapterRows = Array.isArray(data) ? data : [];
+    }
+
+    const chapterMap = new Map<string, any[]>();
+    chapterRows.forEach((row) => {
+      const storyId = String(row.story_id || '').trim();
+      if (!storyId) return;
+      const list = chapterMap.get(storyId) || [];
+      list.push(row);
+      chapterMap.set(storyId, list);
+    });
+
+    const remoteStories: Story[] = storyRows
+      .map((row: any) => {
+        const hydrated = hydratePublicStoryFromRows(row, chapterMap.get(String(row.story_id || '').trim()) || []);
+        if (!hydrated) return null;
+        return {
+          ...hydrated,
+          authorId: normalizedUserId,
+        } as Story;
+      })
+      .filter((item): item is Story => Boolean(item?.id));
+    if (remoteStories.length === 0) return 0;
+
+    const localStories = storage.getStories();
+    const mergedMap = new Map<string, Story>();
+    localStories.forEach((story) => {
+      const id = String(story?.id || '').trim();
+      if (!id) return;
+      mergedMap.set(id, story);
+    });
+
+    let changed = false;
+    let hydratedCount = 0;
+    remoteStories.forEach((remoteStory) => {
+      const storyId = String(remoteStory.id || '').trim();
+      if (!storyId) return;
+      const localStory = mergedMap.get(storyId);
+      if (!localStory) {
+        mergedMap.set(storyId, remoteStory);
+        hydratedCount += 1;
+        changed = true;
+        return;
+      }
+      const localUpdatedMs = toTimestampMs(localStory.updatedAt || localStory.createdAt);
+      const remoteUpdatedMs = toTimestampMs(remoteStory.updatedAt || remoteStory.createdAt);
+      const localChapterCount = Array.isArray(localStory.chapters) ? localStory.chapters.length : 0;
+      const remoteChapterCount = Array.isArray(remoteStory.chapters) ? remoteStory.chapters.length : 0;
+      const shouldReplace = remoteUpdatedMs > localUpdatedMs || (remoteChapterCount > localChapterCount && remoteUpdatedMs >= localUpdatedMs);
+      if (shouldReplace) {
+        mergedMap.set(storyId, remoteStory);
+        hydratedCount += 1;
+        changed = true;
+        return;
+      }
+      if (String(localStory.authorId || '').trim() !== normalizedUserId) {
+        mergedMap.set(storyId, {
+          ...localStory,
+          authorId: normalizedUserId,
+        });
+        changed = true;
+      }
+    });
+
+    if (!changed) return 0;
+    const nextStories = Array.from(mergedMap.values())
+      .sort((a, b) => toTimestampMs(b.updatedAt || b.createdAt) - toTimestampMs(a.updatedAt || a.createdAt));
+    saveStoriesAndRefresh(nextStories);
+    return hydratedCount;
+  }, [hasSupabase, hydratePublicStoryFromRows]);
 
   const refreshPublicStoryFeed = useCallback(async () => {
     if (!hasSupabase) {
@@ -14744,6 +14843,35 @@ const AppContent = () => {
     setAccountLastSyncedAt('');
     refreshWorkspaceUiFromStorage();
   }, [refreshBackupHistory, refreshWorkspaceUiFromStorage, user?.uid]);
+
+  useEffect(() => {
+    if (!user?.uid || !hasSupabase) return;
+    const userId = String(user.uid || '').trim();
+    if (!userId) return;
+    if (normalizedStudioHydrationAttemptedRef.current.has(userId)) return;
+    if (normalizedStudioHydrationInFlightRef.current.has(userId)) return;
+
+    normalizedStudioHydrationInFlightRef.current.add(userId);
+    void hydrateOwnedStoriesFromNormalized(userId)
+      .then((hydratedCount) => {
+        normalizedStudioHydrationAttemptedRef.current.add(userId);
+        if (hydratedCount > 0) {
+          notifyApp({
+            tone: 'success',
+            message: `Đã nạp lại ${hydratedCount} truyện từ tài khoản vào Studio.`,
+            groupKey: 'studio-normalized-hydrate',
+            timeoutMs: 4200,
+          });
+        }
+      })
+      .catch((error) => {
+        normalizedStudioHydrationAttemptedRef.current.delete(userId);
+        console.warn('Không thể nạp truyện sở hữu từ bảng normalized.', error);
+      })
+      .finally(() => {
+        normalizedStudioHydrationInFlightRef.current.delete(userId);
+      });
+  }, [hasSupabase, hydrateOwnedStoriesFromNormalized, user?.uid]);
 
   useEffect(() => {
     const configured = hasGoogleDriveBackupConfig();
