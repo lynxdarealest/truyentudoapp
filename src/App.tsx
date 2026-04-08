@@ -5895,13 +5895,14 @@ function saveReaderActivityMap(userId: string | null | undefined, map: Record<st
 function upsertReaderActivityEntry(
   userId: string | null | undefined,
   story: Pick<Story, 'id' | 'slug' | 'title' | 'coverImageUrl' | 'type' | 'genre' | 'chapters'>,
-  updater: (current: ReaderStoryActivity | null) => ReaderStoryActivity,
+  updater: (current: ReaderStoryActivity | null) => ReaderStoryActivity | null,
 ): Record<string, ReaderStoryActivity> {
   const currentMap = loadReaderActivityMap(userId);
   const storyId = String(story.id || '').trim();
   if (!storyId) return currentMap;
   const current = currentMap[storyId] || null;
   const nextEntry = updater(current);
+  if (!nextEntry) return currentMap;
   const normalized: ReaderStoryActivity = {
     ...nextEntry,
     storyId,
@@ -5929,6 +5930,46 @@ function upsertReaderActivityEntry(
   };
   saveReaderActivityMap(userId, nextMap);
   return nextMap;
+}
+
+function areReaderActivityEntriesEqual(a: ReaderStoryActivity | null | undefined, b: ReaderStoryActivity | null | undefined): boolean {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  if (
+    a.storyId !== b.storyId
+    || a.storySlug !== b.storySlug
+    || a.storyTitle !== b.storyTitle
+    || a.coverImageUrl !== b.coverImageUrl
+    || a.type !== b.type
+    || a.genre !== b.genre
+    || a.lastChapterId !== b.lastChapterId
+    || a.lastChapterTitle !== b.lastChapterTitle
+    || a.lastChapterOrder !== b.lastChapterOrder
+    || a.totalChapters !== b.totalChapters
+    || a.followed !== b.followed
+    || a.lastReadAt !== b.lastReadAt
+  ) {
+    return false;
+  }
+  if (a.readChapterIds.length !== b.readChapterIds.length) return false;
+  for (let i = 0; i < a.readChapterIds.length; i += 1) {
+    if (a.readChapterIds[i] !== b.readChapterIds[i]) return false;
+  }
+  return true;
+}
+
+function areReaderActivityMapsEqual(
+  a: Record<string, ReaderStoryActivity>,
+  b: Record<string, ReaderStoryActivity>,
+): boolean {
+  const aKeys = Object.keys(a || {});
+  const bKeys = Object.keys(b || {});
+  if (aKeys.length !== bKeys.length) return false;
+  for (const key of aKeys) {
+    if (!Object.prototype.hasOwnProperty.call(b, key)) return false;
+    if (!areReaderActivityEntriesEqual(a[key], b[key])) return false;
+  }
+  return true;
 }
 
 function listReaderActivityHistory(map: Record<string, ReaderStoryActivity>, limit = 8): ReaderStoryActivity[] {
@@ -10288,11 +10329,14 @@ const StoryDetail = ({
   };
 
   const totalWords = story.chapters?.reduce((acc, chap) => acc + getWordCount(chap.content), 0) || 0;
+  const selectedChapterId = String(selectedChapter?.id || '').trim();
 
   useEffect(() => {
-    if (!currentUserId || !selectedChapter || !onReaderMarkChapterRead) return;
-    onReaderMarkChapterRead(story, selectedChapter);
-  }, [currentUserId, onReaderMarkChapterRead, selectedChapter, story]);
+    if (!currentUserId || !selectedChapterId || !onReaderMarkChapterRead) return;
+    const chapter = (story.chapters || []).find((item) => item.id === selectedChapterId);
+    if (!chapter) return;
+    onReaderMarkChapterRead(story, chapter);
+  }, [currentUserId, onReaderMarkChapterRead, selectedChapterId, story]);
 
   if (selectedChapter) {
     const sortedChapters = [...(story.chapters || [])].sort((a, b) => a.order - b.order);
@@ -13710,14 +13754,25 @@ const AppContent = () => {
 
   const updateReaderActivityMap = useCallback((
     story: Story,
-    updater: (current: ReaderStoryActivity | null) => ReaderStoryActivity,
+    updater: (current: ReaderStoryActivity | null) => ReaderStoryActivity | null,
   ) => {
     const next = upsertReaderActivityEntry(user?.uid, story, updater);
-    setReaderActivityMap(next);
+    setReaderActivityMap((prev) => (areReaderActivityMapsEqual(prev, next) ? prev : next));
   }, [user?.uid]);
 
   const handleReaderMarkChapterRead = useCallback((story: Story, chapter: Chapter) => {
     updateReaderActivityMap(story, (current) => {
+      const alreadyRead = Boolean(current?.readChapterIds?.includes(chapter.id));
+      const currentTotal = Math.max(0, Number(current?.totalChapters || 0));
+      const nextTotal = Math.max(0, Number(story.chapters?.length || 0));
+      if (
+        alreadyRead
+        && current?.lastChapterId === chapter.id
+        && current?.lastChapterOrder === (chapter.order || current?.lastChapterOrder || 0)
+        && currentTotal === nextTotal
+      ) {
+        return null;
+      }
       const readChapterIds = Array.from(new Set([
         ...(current?.readChapterIds || []),
         chapter.id,
