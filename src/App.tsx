@@ -10025,6 +10025,7 @@ const StoryDetail = ({
     [forcedChapterId, story.chapters],
   );
   const selectedChapter = forcedSelectedChapter || manualSelectedChapter;
+  const selectedChapterId = String(selectedChapter?.id || '').trim();
 
   const getRenderableChapterContent = (content: string) => {
     if (!content) return '';
@@ -10183,11 +10184,10 @@ const StoryDetail = ({
   };
 
   const handleNextChapter = () => {
-    if (!selectedChapter || !story.chapters) return;
-    const sorted = [...story.chapters].sort((a, b) => a.order - b.order);
-    const currentIndex = sorted.findIndex(c => c.id === selectedChapter.id);
-    if (currentIndex < sorted.length - 1) {
-      const nextChapter = sorted[currentIndex + 1];
+    if (!selectedChapter || !sortedChapterList.length) return;
+    const currentIndex = sortedChapterList.findIndex((c) => c.id === selectedChapter.id);
+    if (currentIndex < sortedChapterList.length - 1) {
+      const nextChapter = sortedChapterList[currentIndex + 1];
       if (!forcedChapterId) setManualSelectedChapter(nextChapter);
       onReaderNavigateChapter?.(nextChapter.id, 'replace');
       window.scrollTo(0, 0);
@@ -10195,11 +10195,10 @@ const StoryDetail = ({
   };
 
   const handlePrevChapter = () => {
-    if (!selectedChapter || !story.chapters) return;
-    const sorted = [...story.chapters].sort((a, b) => a.order - b.order);
-    const currentIndex = sorted.findIndex(c => c.id === selectedChapter.id);
+    if (!selectedChapter || !sortedChapterList.length) return;
+    const currentIndex = sortedChapterList.findIndex((c) => c.id === selectedChapter.id);
     if (currentIndex > 0) {
-      const prevChapter = sorted[currentIndex - 1];
+      const prevChapter = sortedChapterList[currentIndex - 1];
       if (!forcedChapterId) setManualSelectedChapter(prevChapter);
       onReaderNavigateChapter?.(prevChapter.id, 'replace');
       window.scrollTo(0, 0);
@@ -10235,12 +10234,16 @@ const StoryDetail = ({
   }, [readerActivity?.lastChapterId, sortedChapterList]);
 
   const readChapterCount = React.useMemo(
-    () => sortedChapterList.filter((chapter) => readChapterSet.has(chapter.id)).length,
-    [readChapterSet, sortedChapterList],
+    () => {
+      if (selectedChapterId) return 0;
+      return sortedChapterList.filter((chapter) => readChapterSet.has(chapter.id)).length;
+    },
+    [readChapterSet, selectedChapterId, sortedChapterList],
   );
 
   const chapterSearchNormalized = chapterSearchTerm.trim().toLowerCase();
   const filteredChapterList = React.useMemo(() => {
+    if (selectedChapterId) return sortedChapterList;
     if (!chapterSearchNormalized) return sortedChapterList;
     return sortedChapterList.filter((chapter) => {
       const displayTitle = getDisplayChapterTitle(chapter).toLowerCase();
@@ -10250,7 +10253,7 @@ const StoryDetail = ({
         || chapterAlias.includes(chapterSearchNormalized)
         || chapterAliasVi.includes(chapterSearchNormalized);
     });
-  }, [chapterSearchNormalized, sortedChapterList]);
+  }, [chapterSearchNormalized, selectedChapterId, sortedChapterList]);
 
   const persistUpdatedStory = (updatedStory: Story): void => {
     const stories = storage.getStories();
@@ -10337,8 +10340,26 @@ const StoryDetail = ({
     }
   };
 
-  const totalWords = story.chapters?.reduce((acc, chap) => acc + getWordCount(chap.content), 0) || 0;
-  const selectedChapterId = String(selectedChapter?.id || '').trim();
+  const totalWords = React.useMemo(
+    () => (story.chapters || []).reduce((acc, chap) => acc + getWordCount(chap.content || ''), 0),
+    [story.chapters],
+  );
+  const selectedChapterDisplayTitle = React.useMemo(
+    () => (selectedChapter ? getDisplayChapterTitle(selectedChapter) : ''),
+    [selectedChapter],
+  );
+  const formattedSelectedChapterContent = React.useMemo(
+    () => (selectedChapter ? formatContent(selectedChapter.content || '') : ''),
+    [selectedChapter?.content, selectedChapter?.title, selectedChapterId],
+  );
+  const selectedChapterWordCount = React.useMemo(
+    () => getWordCount(formattedSelectedChapterContent),
+    [formattedSelectedChapterContent],
+  );
+  const formattedStoryIntroduction = React.useMemo(
+    () => formatContent(story.introduction || '*Chưa có giới thiệu*'),
+    [story.introduction],
+  );
 
   useEffect(() => {
     if (!currentUserId || !selectedChapterId || !onReaderMarkChapterRead) return;
@@ -10348,9 +10369,8 @@ const StoryDetail = ({
   }, [currentUserId, onReaderMarkChapterRead, selectedChapterId, story]);
 
   if (selectedChapter) {
-    const sortedChapters = [...(story.chapters || [])].sort((a, b) => a.order - b.order);
-    const currentIndex = sortedChapters.findIndex(c => c.id === selectedChapter.id);
-    const hasNext = currentIndex < sortedChapters.length - 1;
+    const currentIndex = sortedChapterList.findIndex((c) => c.id === selectedChapter.id);
+    const hasNext = currentIndex < sortedChapterList.length - 1;
     const hasPrev = currentIndex > 0;
 
     return (
@@ -10410,8 +10430,8 @@ const StoryDetail = ({
               <>
                 <button 
                   onClick={() => {
-                    setEditTitle(getDisplayChapterTitle(selectedChapter));
-                    setEditContent(formatContent(selectedChapter.content));
+                    setEditTitle(selectedChapterDisplayTitle);
+                    setEditContent(formattedSelectedChapterContent);
                     setIsEditingChapter(true);
                   }}
                   className="flex items-center justify-center gap-2 px-4 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 transition-colors text-sm font-bold"
@@ -10440,7 +10460,7 @@ const StoryDetail = ({
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-4">
               <h2 className="text-sm font-bold text-indigo-600 uppercase tracking-widest">Chương {selectedChapter.order}</h2>
               <div className="flex flex-wrap items-center gap-3 sm:gap-4 text-xs text-slate-400 font-mono">
-                <span className="flex items-center gap-1"><FileText className="w-3 h-3" /> {getWordCount(formatContent(selectedChapter.content))} từ</span>
+                <span className="flex items-center gap-1"><FileText className="w-3 h-3" /> {selectedChapterWordCount} từ</span>
                 <span className="flex items-center gap-1"><Loader2 className="w-3 h-3" /> {formatDateTime(selectedChapter.createdAt)}</span>
               </div>
             </div>
@@ -10449,7 +10469,7 @@ const StoryDetail = ({
                 className="chapter-title text-3xl sm:text-4xl font-bold text-slate-900 mb-8 sm:mb-10"
                 style={{ fontFamily: 'var(--tf-reader-font-family)' }}
               >
-                {getDisplayChapterTitle(selectedChapter)}
+                {selectedChapterDisplayTitle}
               </h1>
             
             <div
@@ -10462,7 +10482,7 @@ const StoryDetail = ({
             }}
           >
               <React.Suspense fallback={<p className="text-sm opacity-75">Đang tải nội dung chương...</p>}>
-                <MarkdownRenderer content={formatContent(selectedChapter.content)} />
+                <MarkdownRenderer content={formattedSelectedChapterContent} />
               </React.Suspense>
             </div>
           </div>
@@ -10626,7 +10646,7 @@ const StoryDetail = ({
                     <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-3">Giới thiệu</h3>
                     <div className="markdown-body text-slate-600 leading-relaxed">
                       <React.Suspense fallback={<p className="text-sm text-slate-500">Đang tải giới thiệu...</p>}>
-                        <MarkdownRenderer content={formatContent(story.introduction || '*Chưa có giới thiệu*')} />
+                        <MarkdownRenderer content={formattedStoryIntroduction} />
                       </React.Suspense>
                     </div>
                   </div>
@@ -10697,7 +10717,7 @@ const StoryDetail = ({
                               {chapter.title}
                             </span>
                             <span className="text-[11px] text-slate-400 font-mono">
-                              {getWordCount(formatContent(chapter.content || ''))} chữ
+                              {getWordCount(chapter.content || '')} chữ
                             </span>
                           </div>
                         </div>
