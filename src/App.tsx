@@ -18792,12 +18792,12 @@ ${JSON.stringify(violatingPayload)}
       return (
         <article
           key={item.id}
-          className="rounded-3xl border border-slate-200 bg-white p-4 sm:p-5 shadow-sm transition-all hover:border-indigo-200 hover:shadow-xl hover:shadow-indigo-900/10"
+          className="flex h-full flex-col rounded-3xl border border-slate-200 bg-white p-4 sm:p-5 shadow-sm transition-all hover:border-indigo-200 hover:shadow-xl hover:shadow-indigo-900/10"
         >
           <div className="mb-4 flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <h3 className="line-clamp-2 text-lg sm:text-xl font-serif font-bold text-slate-900">{displayTitle}</h3>
-              <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+              <h3 className="line-clamp-2 min-h-[3.4rem] text-lg sm:text-xl font-serif font-bold text-slate-900">{displayTitle}</h3>
+              <p className="mt-1 line-clamp-2 min-h-[2.1rem] text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
                 {displayGenre || 'Chưa phân loại'}
               </p>
             </div>
@@ -18841,17 +18841,17 @@ ${JSON.stringify(violatingPayload)}
           </div>
 
           {item.coverImageUrl ? (
-            <div className="mb-4 overflow-hidden rounded-2xl border border-slate-100 bg-slate-100">
+            <div className="mb-4 mx-auto w-full max-w-[11.5rem] overflow-hidden rounded-2xl border border-slate-100 bg-slate-100">
               <img
                 src={item.coverImageUrl}
                 alt={`Bìa truyện ${displayTitle}`}
-                className="h-40 sm:h-44 w-full object-contain object-center"
+                className="aspect-[2/3] w-full object-cover object-center"
                 loading="lazy"
               />
             </div>
           ) : null}
 
-          <p className="line-clamp-2 text-sm leading-relaxed text-slate-600">
+          <p className="line-clamp-2 min-h-[3.2rem] text-sm leading-relaxed text-slate-600">
             {buildStoryCardMetaLine({ introduction: displayIntro, genre: displayGenre })}
           </p>
 
@@ -18875,7 +18875,7 @@ ${JSON.stringify(violatingPayload)}
           <button
             onClick={() => void handleOpenPublicStory(item)}
             disabled={isLoading}
-            className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-indigo-600 px-4 py-2.5 text-xs sm:text-sm font-bold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+            className="mt-auto inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-indigo-600 px-4 py-2.5 text-xs sm:text-sm font-bold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <BookOpen className="h-4 w-4" />}
             {readerMeta?.lastChapterId ? 'Đọc tiếp' : 'Đọc truyện'}
@@ -18906,7 +18906,7 @@ ${JSON.stringify(violatingPayload)}
           </span>
         </div>
         {items.length > 0 ? (
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid grid-cols-1 items-stretch gap-5 sm:grid-cols-2 xl:grid-cols-3">
             {items.map((item) => renderPublicStoryCard(item))}
           </div>
         ) : (
