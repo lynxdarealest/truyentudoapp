@@ -69,7 +69,7 @@ export function ProfileSettingsPanel({
           Tải ảnh từ thiết bị
         </button>
         <p className="text-xs text-slate-500">
-          Có thể dán URL hoặc tải ảnh từ máy (khuyến nghị dưới 2MB).
+          Dán URL hoặc tải ảnh từ máy (khuyến nghị dưới 2MB).
         </p>
       </div>
     </div>
