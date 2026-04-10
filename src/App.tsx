@@ -4168,10 +4168,10 @@ function buildFallbackCoverDataUrl(title: string, genre: string, prompt: string)
   <circle cx="130" cy="1140" r="250" fill="rgba(255,255,255,0.08)"/>
   <circle cx="750" cy="1080" r="130" fill="${palette.accentSoft}" opacity="0.18"/>
   <rect x="70" y="70" width="756" height="1204" rx="38" fill="url(#glass)" stroke="rgba(255,255,255,0.35)" stroke-width="2"/>
-  <text x="110" y="220" fill="#ffffff" opacity="0.9" font-family="Georgia, serif" font-size="36" letter-spacing="4">${escapeSvgText(safeGenre.toUpperCase())}</text>
-  ${titleLines.map((line, index) => `<text x="110" y="${470 + index * 100}" fill="#ffffff" font-family="Georgia, serif" font-weight="700" font-size="84">${escapeSvgText(line)}</text>`).join('\n  ')}
-  <text x="110" y="1030" fill="${palette.accentSoft}" opacity="0.95" font-family="Verdana, sans-serif" font-size="22">${escapeSvgText(palette.mood)}</text>
-  ${hintLines.map((line, index) => `<text x="110" y="${1090 + index * 34}" fill="#ffffff" opacity="0.85" font-family="Verdana, sans-serif" font-size="24">${escapeSvgText(line)}</text>`).join('\n  ')}
+  <text x="110" y="220" fill="#ffffff" opacity="0.9" font-family="'Segoe UI', Arial, Tahoma, sans-serif" font-size="34" letter-spacing="1.2">${escapeSvgText(safeGenre)}</text>
+  ${titleLines.map((line, index) => `<text x="110" y="${470 + index * 100}" fill="#ffffff" font-family="'Segoe UI', Arial, Tahoma, sans-serif" font-weight="700" font-size="82">${escapeSvgText(line)}</text>`).join('\n  ')}
+  <text x="110" y="1030" fill="${palette.accentSoft}" opacity="0.95" font-family="'Segoe UI', Arial, Tahoma, sans-serif" font-size="22">${escapeSvgText(palette.mood)}</text>
+  ${hintLines.map((line, index) => `<text x="110" y="${1090 + index * 34}" fill="#ffffff" opacity="0.85" font-family="'Segoe UI', Arial, Tahoma, sans-serif" font-size="24">${escapeSvgText(line)}</text>`).join('\n  ')}
 </svg>`;
   const encodedSvg = window.btoa(unescape(encodeURIComponent(svg)));
   return `data:image/svg+xml;base64,${encodedSvg}`;
@@ -6507,10 +6507,51 @@ const importedStoryTitleOverrides: Array<{ pattern: RegExp; title: string; genre
     genre: 'Đô thị, Hệ thống, Xuyên không',
   },
   {
-    pattern: /^chu gioi tan the(?: online)?(?: ngay tan cua the gioi)?(?: \d+)?(?: end)?$/i,
+    pattern: /^chu gioi tan the(?: online)?(?: ngay tan cua the gioi)?(?: \d+)?(?: end)?(?: [a-z0-9 ._-]+)?$/i,
     title: 'Chư Giới Tận Thế Online',
     author: 'Yên Hỏa Thành Thành',
     genre: 'Mạt thế, Khoa huyễn, Huyền huyễn, Dị giới',
+  },
+  {
+    pattern: /^con th ny phi cht$|^con tho nay phai chet/i,
+    title: 'Con Thỏ Này Phải Chết',
+    author: 'Nhất Mộng Hoàng Lương',
+    genre: 'Huyền huyễn, Hài hước, Tu tiên',
+  },
+  {
+    pattern: /^ta thien menh dai phan phai/i,
+    title: 'Ta Thiên Mệnh Đại Phản Phái',
+    genre: 'Huyền huyễn, Hệ thống, Phản phái',
+  },
+  {
+    pattern: /^tronh sinh chi phong luu thieu$/i,
+    title: 'Trọng Sinh Chi Phong Lưu Thiếu',
+    genre: 'Đô thị, Trọng sinh',
+  },
+  {
+    pattern: /^trung nhien$/i,
+    title: 'Trùng Nhiên',
+    genre: 'Đô thị, Trọng sinh',
+  },
+  {
+    pattern: /^luoc thien ky$/i,
+    title: 'Lược Thiên Ký',
+    genre: 'Tiên hiệp',
+  },
+  {
+    pattern: /^thon thien$/i,
+    title: 'Thôn Thiên',
+    genre: 'Huyền huyễn, Tiên hiệp',
+  },
+  {
+    pattern: /^ta bat dau sang tao thien co lau/i,
+    title: 'Ta Bắt Đầu Sáng Tạo Thiên Cơ Lâu',
+    genre: 'Huyền huyễn, Hệ thống',
+  },
+  {
+    pattern: /^tieu dao(?: \d+ \d+)?$/i,
+    title: 'Tiêu Dao',
+    genre: 'Tiên hiệp',
   },
 ];
 
@@ -10042,6 +10083,7 @@ const StoryDetail = ({
       .replace(/\s+/g, ' ')
       .trim();
     return normalized
+      .replace(/\bch\s+([uư])/gi, 'ch$1')
       .replace(/\bch\s*ương\b/gi, 'chương')
       .replace(/\bch\s*uong\b/gi, 'chuong');
   };
@@ -10053,12 +10095,12 @@ const StoryDetail = ({
     const isGenericTitle = /^chương\s*\d+$/i.test(baseTitle) || /^chapter\s*\d+$/i.test(baseTitle);
     if (parsedTitle && (!baseTitle || isGenericTitle)) {
       const fixed = normalizeChapterTitleForDisplay(parsedTitle);
-      const chapterNumberMatch = normalizeSearchText(fixed).match(/^chuong\s+(\d+)$/i);
+      const chapterNumberMatch = normalizeSearchText(fixed).replace(/\bch\s+uong\b/g, 'chuong').match(/^(?:chuong|chapter)\s+(\d+)$/i);
       if (chapterNumberMatch?.[1]) return `Chương ${chapterNumberMatch[1]}`;
       return fixed;
     }
     const fixed = normalizeChapterTitleForDisplay(baseTitle || parsedTitle || `Chương ${chapter.order || ''}`.trim());
-    const chapterNumberMatch = normalizeSearchText(fixed).match(/^chuong\s+(\d+)$/i);
+    const chapterNumberMatch = normalizeSearchText(fixed).replace(/\bch\s+uong\b/g, 'chuong').match(/^(?:chuong|chapter)\s+(\d+)$/i);
     if (chapterNumberMatch?.[1]) return `Chương ${chapterNumberMatch[1]}`;
     return fixed;
   };
@@ -13639,16 +13681,29 @@ const AppContent = () => {
       .filter((chapter) => chapter.id)
       .sort((a, b) => a.order - b.order);
 
+    const rawTitle = String(storyRow.title || 'Truyện chưa đặt tên');
+    const normalizedTitle = resolveStoryCardDisplayTitle(rawTitle);
+    const normalizedGenre = resolveStoryCardDisplayGenre(
+      storyRow.genre ? String(storyRow.genre) : '',
+      undefined,
+      rawTitle,
+    );
+    const normalizedIntroduction = buildStoryCardDisplayIntroduction({
+      introduction: storyRow.introduction ? String(storyRow.introduction) : '',
+      genre: normalizedGenre,
+      title: rawTitle,
+    });
+
     return {
       id: String(storyRow.story_id),
       slug: storyRow.slug ? String(storyRow.slug) : undefined,
       authorId: String(storyRow.user_id || ''),
-      title: String(storyRow.title || 'Truyện chưa đặt tên'),
+      title: normalizedTitle,
       content: String(storyRow.content || ''),
       coverImageUrl: storyRow.cover_image_url ? String(storyRow.cover_image_url) : undefined,
       type: (storyRow.type === 'translated' || storyRow.type === 'continued') ? storyRow.type : 'original',
-      genre: storyRow.genre ? String(storyRow.genre) : '',
-      introduction: storyRow.introduction ? String(storyRow.introduction) : '',
+      genre: normalizedGenre,
+      introduction: normalizedIntroduction,
       expectedChapters: Number(storyRow.expected_chapters || 0),
       expectedWordCount: Number(storyRow.expected_word_count || 0),
       chapters,
@@ -13866,8 +13921,44 @@ const AppContent = () => {
         createdAt: String(row.created_at || ''),
         updatedAt: String(row.updated_at || new Date().toISOString()),
       })).filter((item) => item.id);
+      const canonicalizedFeed = feed.map((item) => {
+        const displayTitle = resolveStoryCardDisplayTitle(item.title);
+        const displayGenre = resolveStoryCardDisplayGenre(item.genre, undefined, item.title);
+        const displayIntro = buildStoryCardDisplayIntroduction({
+          introduction: item.introduction,
+          genre: displayGenre,
+          title: item.title,
+        });
+        return {
+          ...item,
+          title: displayTitle,
+          genre: displayGenre,
+          introduction: displayIntro,
+        };
+      });
 
-      setPublicStoryFeed(feed);
+      const grouped = new Map<string, PublicStoryFeedItem[]>();
+      canonicalizedFeed.forEach((item) => {
+        const key = normalizeSearchText(item.title).replace(/\b\d+\b/g, '').trim() || item.id;
+        const bucket = grouped.get(key) || [];
+        bucket.push(item);
+        grouped.set(key, bucket);
+      });
+
+      const dedupedFeed = Array.from(grouped.values()).map((bucket) => {
+        if (bucket.length === 1) return bucket[0];
+        return bucket
+          .slice()
+          .sort((a, b) => {
+            const chapterDiff = (b.chapterCount || 0) - (a.chapterCount || 0);
+            if (chapterDiff !== 0) return chapterDiff;
+            return toTimestampMs(b.updatedAt) - toTimestampMs(a.updatedAt);
+          })[0];
+      });
+
+      setPublicStoryFeed(
+        dedupedFeed.sort((a, b) => toTimestampMs(b.updatedAt) - toTimestampMs(a.updatedAt)),
+      );
     } catch (error) {
       setPublicStoryFeed([]);
       setPublicFeedError(error instanceof Error ? error.message : 'Không thể tải truyện công khai.');
@@ -16380,7 +16471,7 @@ const AppContent = () => {
       prefs.fontFamily === 'mono'
         ? `"Fira Code", "JetBrains Mono", Consolas, "SFMono-Regular", Menlo, monospace`
         : prefs.fontFamily === 'serif'
-          ? `"Noto Serif", "Times New Roman", Georgia, serif`
+          ? `"Noto Serif", "Be Vietnam Pro", "Times New Roman", Georgia, serif`
           : `"Inter", "Segoe UI", "Helvetica Neue", Arial, sans-serif`;
     root.style.setProperty('--tf-reader-font-family', fontStack);
   }, []);
