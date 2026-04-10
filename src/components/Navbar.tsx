@@ -165,9 +165,14 @@ export function Navbar({
   const dividerClass = isDark ? 'bg-white/10' : 'bg-slate-200';
   const titleClass = isDark ? 'text-slate-100' : 'text-slate-900';
   const subTextClass = isDark ? 'text-slate-400' : 'text-slate-400';
-  const normalizedAuthEmail = String(authEmail || '').trim().toLowerCase();
+  const rawAuthEmail = String(authEmail || '').trim();
+  const normalizedAuthEmail = rawAuthEmail.toLowerCase();
+  const hasAuthenticatedAccount = Boolean(rawAuthEmail);
   const isAdminAccount = normalizedAuthEmail === 'ductruong.lynx@gmail.com';
-  const profileDisplayLabel = isAdminAccount ? 'ADMIN' : profile.displayName;
+  const profileDisplayLabel = hasAuthenticatedAccount
+    ? (isAdminAccount ? 'ADMIN' : (String(profile.displayName || '').trim() || rawAuthEmail))
+    : 'Khách/Local';
+  const authStatusLabel = hasAuthenticatedAccount ? rawAuthEmail : 'Chưa đăng nhập';
   const activeNavKey = appMode === 'reader' ? (readerNavKey || 'reader-mine') : currentView;
   const activeIndex = navItems.findIndex((item) => item.key === activeNavKey);
   const hasSingleNavItem = navItems.length <= 1;
@@ -221,7 +226,7 @@ export function Navbar({
             {showProfileMenu ? (
               <div className={cn('absolute right-0 mt-2 w-56 rounded-2xl border z-50 p-2 backdrop-blur-xl', dropdownClass)}>
                 <div className="px-3 py-2">
-                  <p className="font-bold text-slate-800 truncate">{authEmail || 'Chưa đăng nhập'}</p>
+                  <p className="font-bold text-slate-800 truncate">{authStatusLabel}</p>
                 </div>
                 <button
                   onClick={() => {
@@ -230,7 +235,7 @@ export function Navbar({
                   }}
                   className={cn('w-full text-left px-3 py-2 rounded-lg text-sm font-semibold transition-colors', isDark ? 'hover:bg-white/10' : 'hover:bg-slate-100')}
                 >
-                  {authEmail ? 'Đổi tài khoản' : 'Đăng nhập / Đăng ký'}
+                  {hasAuthenticatedAccount ? 'Đổi tài khoản' : 'Đăng nhập / Đăng ký'}
                 </button>
                 <button
                   onClick={() => {
@@ -250,7 +255,7 @@ export function Navbar({
                 >
                   Đổi tên / Avatar
                 </button>
-                {authEmail ? (
+                {hasAuthenticatedAccount ? (
                   <button
                     onClick={() => {
                       setShowProfileMenu(false);
@@ -474,7 +479,7 @@ export function Navbar({
           <div className="flex items-center gap-3">
             <div className={cn('text-right hidden sm:block whitespace-nowrap', isCompact && 'hidden')}>
               <p className={cn('text-sm font-bold leading-none', titleClass)}>{profileDisplayLabel}</p>
-              <p className={cn('text-[10px] uppercase tracking-widest mt-1', subTextClass)}>{authEmail || 'Chưa đăng nhập'}</p>
+               <p className={cn('text-[10px] uppercase tracking-widest mt-1', subTextClass)}>{authStatusLabel}</p>
             </div>
             <div className="relative">
               <button
@@ -487,7 +492,7 @@ export function Navbar({
               {showProfileMenu ? (
                 <div className={cn('absolute right-0 mt-2 w-56 rounded-2xl border z-50 p-2 backdrop-blur-xl', dropdownClass)}>
                   <div className="px-3 py-2">
-                    <p className="font-bold text-slate-800 truncate">{authEmail || 'Khách/Local'}</p>
+                    <p className="font-bold text-slate-800 truncate">{authStatusLabel}</p>
                   </div>
                   <button
                     onClick={() => {
@@ -496,7 +501,7 @@ export function Navbar({
                     }}
                     className={cn('w-full text-left px-3 py-2 rounded-lg text-sm font-semibold transition-colors', isDark ? 'hover:bg-white/10' : 'hover:bg-slate-100')}
                   >
-                    {authEmail ? 'Đổi tài khoản' : 'Đăng nhập / Đăng ký'}
+                    {hasAuthenticatedAccount ? 'Đổi tài khoản' : 'Đăng nhập / Đăng ký'}
                   </button>
                   <button
                     onClick={() => {
@@ -516,7 +521,7 @@ export function Navbar({
                   >
                     Đổi tên / Avatar
                   </button>
-                  {authEmail ? (
+                  {hasAuthenticatedAccount ? (
                     <button
                       onClick={() => {
                         setShowProfileMenu(false);
