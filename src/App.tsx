@@ -10655,7 +10655,7 @@ const StoryDetail = ({
           <button 
             onClick={handlePrevChapter}
             disabled={!hasPrev}
-            className="flex items-center gap-2 px-6 py-3 rounded-2xl bg-white border border-slate-200 text-slate-600 font-bold hover:bg-slate-50 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+            className="tf-btn tf-btn-secondary tf-btn-pill disabled:opacity-30 disabled:cursor-not-allowed"
           >
             <ChevronLeft className="w-5 h-5" /> Chương trước
           </button>
@@ -10663,7 +10663,7 @@ const StoryDetail = ({
           <button 
             onClick={handleNextChapter}
             disabled={!hasNext}
-            className="flex items-center gap-2 px-6 py-3 rounded-2xl bg-slate-900 text-white font-bold hover:bg-slate-800 transition-all shadow-lg shadow-slate-900/20 disabled:opacity-30 disabled:cursor-not-allowed"
+            className="tf-btn tf-btn-primary tf-btn-pill shadow-lg shadow-slate-900/20 disabled:opacity-30 disabled:cursor-not-allowed"
           >
             Chương sau <ChevronRight className="w-5 h-5" />
           </button>
@@ -10740,14 +10740,14 @@ const StoryDetail = ({
       <div className="story-detail__header flex items-center justify-between mb-8">
         <button 
           onClick={onBack}
-          className="flex items-center gap-2 text-slate-500 hover:text-slate-900 transition-colors font-bold"
+          className="tf-btn tf-btn-tertiary tf-btn-pill"
         >
           <ChevronLeft className="w-6 h-6" /> Quay lại thư viện
         </button>
         <div className="story-detail__actions flex gap-3">
           <button 
             onClick={() => onExportStory(story)}
-            className="flex items-center gap-2 px-6 py-2 rounded-full border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-700 transition-colors text-sm font-bold"
+            className="tf-btn tf-btn-secondary tf-btn-pill"
           >
             <Download className="w-4 h-4" /> Xuất truyện
           </button>
@@ -10755,13 +10755,13 @@ const StoryDetail = ({
             <>
               <button 
                 onClick={onEdit}
-                className="flex items-center gap-2 px-6 py-2 rounded-full border border-slate-200 hover:bg-slate-50 transition-colors text-sm font-bold"
+                className="tf-btn tf-btn-secondary tf-btn-pill"
               >
                 <Edit3 className="w-4 h-4" /> Chỉnh sửa thông tin
               </button>
               <button 
                 onClick={onAddChapter}
-                className="flex items-center gap-2 px-6 py-2 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white transition-colors text-sm font-bold shadow-md"
+                className="tf-btn tf-btn-primary tf-btn-pill shadow-md"
               >
                 <Plus className="w-4 h-4" /> Viết chương mới
               </button>
@@ -19057,10 +19057,10 @@ ${JSON.stringify(violatingPayload)}
   const syncIsBusy = accountSyncQueueStats.pending > 0 || accountSyncQueueStats.running > 0;
   const backupStatusIcon = syncHasError ? '🔴' : syncIsBusy ? '🟡' : '🟢';
   const backupStatusToneClass = syncHasError
-    ? 'text-rose-200'
+    ? 'tf-status-error'
     : syncIsBusy
-      ? 'text-amber-200'
-      : 'text-slate-300';
+      ? 'tf-status-warn'
+      : 'tf-status-ok';
   const driveStatusSummary = driveBinding
     ? `Đã liên kết với ${driveBinding.email}`
     : 'Chưa liên kết Google Drive';
@@ -19412,7 +19412,7 @@ ${JSON.stringify(violatingPayload)}
             </div>
             <button
               onClick={() => handleSwitchAppMode('creator')}
-              className="inline-flex w-full sm:w-auto items-center justify-center gap-2 rounded-2xl bg-indigo-600 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-indigo-900/20 hover:bg-indigo-700"
+              className="tf-btn tf-btn-primary tf-btn-pill w-full sm:w-auto shadow-lg shadow-indigo-900/20"
             >
               Mở Studio
             </button>
@@ -19439,7 +19439,7 @@ ${JSON.stringify(violatingPayload)}
               <button
                 onClick={() => void refreshPublicStoryFeed()}
                 disabled={publicFeedLoading}
-                className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-xs sm:text-sm font-semibold text-slate-600 transition-colors hover:border-indigo-200 hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                className="tf-btn tf-btn-secondary tf-btn-pill disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {publicFeedLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}
                 Làm mới truyện công khai
@@ -20371,7 +20371,7 @@ ${JSON.stringify(violatingPayload)}
             ) : null}
 
             <div className="rounded-2xl border border-white/10 bg-slate-900/45 p-4 space-y-3">
-              <p className={cn('text-sm', backupStatusToneClass)}>
+              <p className={cn('tf-status-line', backupStatusToneClass)}>
                 {backupStatusIcon} {driveStatusSummary} | {syncStatusSummary}
               </p>
               <p className="text-xs text-slate-400">
@@ -20384,7 +20384,7 @@ ${JSON.stringify(violatingPayload)}
               ) : null}
               <div className="flex flex-wrap items-center gap-2">
                 <button
-                  className="tf-btn tf-btn-primary"
+                  className="tf-btn tf-btn-primary tf-btn-pill"
                   onClick={handleBackupNow}
                   disabled={backupBusyAction === 'backup-now'}
                 >
@@ -20392,7 +20392,7 @@ ${JSON.stringify(violatingPayload)}
                 </button>
                 <div ref={backupMoreActionsRef} className="relative">
                   <button
-                    className="tf-btn tf-btn-ghost inline-flex items-center gap-1.5"
+                    className="tf-btn tf-btn-secondary tf-btn-pill inline-flex items-center gap-1.5"
                     onClick={() => setShowBackupMoreActions((prev) => !prev)}
                   >
                     Tùy chọn khác
@@ -20401,7 +20401,7 @@ ${JSON.stringify(violatingPayload)}
                   {showBackupMoreActions ? (
                     <div className="absolute left-0 top-[calc(100%+0.5rem)] z-30 w-72 rounded-2xl border border-white/12 bg-slate-950/95 p-2 shadow-2xl backdrop-blur-xl">
                       <button
-                        className="w-full rounded-xl px-3 py-2 text-left text-sm text-slate-200 transition-colors hover:bg-white/10"
+                        className="tf-link-action w-full rounded-xl px-3 py-2 text-left text-sm no-underline"
                         onClick={() => {
                           setShowBackupMoreActions(false);
                           void handleDownloadCurrentBackupJson();
@@ -20411,7 +20411,7 @@ ${JSON.stringify(violatingPayload)}
                         {isExporting ? 'Đang chuẩn bị file...' : 'Tải file sao lưu'}
                       </button>
                       <button
-                        className="w-full rounded-xl px-3 py-2 text-left text-sm text-slate-200 transition-colors hover:bg-white/10"
+                        className="tf-link-action w-full rounded-xl px-3 py-2 text-left text-sm no-underline"
                         onClick={() => {
                           setShowBackupMoreActions(false);
                           backupImportInputRef.current?.click();
@@ -20421,7 +20421,7 @@ ${JSON.stringify(violatingPayload)}
                         {isImporting ? 'Đang đọc file...' : 'Khôi phục từ file'}
                       </button>
                       <button
-                        className="w-full rounded-xl px-3 py-2 text-left text-sm text-slate-200 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+                        className="tf-link-action w-full rounded-xl px-3 py-2 text-left text-sm no-underline disabled:cursor-not-allowed disabled:opacity-40"
                         onClick={() => {
                           setShowBackupMoreActions(false);
                           void handleManualAccountSync();
@@ -20431,7 +20431,7 @@ ${JSON.stringify(violatingPayload)}
                         {backupBusyAction === 'manual-sync' ? 'Đang đồng bộ...' : 'Đồng bộ ngay lên tài khoản'}
                       </button>
                       <button
-                        className="w-full rounded-xl px-3 py-2 text-left text-sm text-slate-200 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+                        className="tf-link-action w-full rounded-xl px-3 py-2 text-left text-sm no-underline disabled:cursor-not-allowed disabled:opacity-40"
                         onClick={() => {
                           setShowBackupMoreActions(false);
                           handleConnectDrive();
@@ -20457,7 +20457,7 @@ ${JSON.stringify(violatingPayload)}
                     <p className="text-sm text-slate-400">Chọn một mốc để tải xuống hoặc khôi phục nhanh.</p>
                   </div>
                   <button
-                    className="tf-btn tf-btn-ghost"
+                    className="tf-btn tf-btn-secondary tf-btn-pill"
                     onClick={() => void refreshBackupHistory()}
                   >
                     Làm mới
@@ -20513,14 +20513,14 @@ ${JSON.stringify(violatingPayload)}
                             </div>
                             <div className="flex flex-wrap items-center gap-3 text-xs">
                               <button
-                                className="inline-flex items-center gap-1.5 font-semibold text-cyan-300 underline decoration-transparent underline-offset-4 transition-colors hover:text-cyan-200 hover:decoration-cyan-300"
+                                className="tf-link-action"
                                 onClick={() => void handleDownloadBackupSnapshot(snapshot.id)}
                               >
                                 <Download className="h-3.5 w-3.5" />
                                 Tải
                               </button>
                               <button
-                                className="inline-flex items-center gap-1.5 font-semibold text-indigo-300 underline decoration-transparent underline-offset-4 transition-colors hover:text-indigo-200 hover:decoration-indigo-300 disabled:cursor-not-allowed disabled:opacity-55"
+                                className="tf-link-action disabled:cursor-not-allowed disabled:opacity-55"
                                 onClick={() => void handleRestoreBackupSnapshot(snapshot.id)}
                                 disabled={restoreBusy}
                               >

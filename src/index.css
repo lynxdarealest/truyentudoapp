@@ -65,6 +65,33 @@
 .tf-btn-danger {
   @apply bg-rose-600 text-white hover:bg-rose-700;
 }
+.tf-btn-secondary {
+  @apply border border-slate-200 bg-white text-slate-700 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700;
+}
+.tf-btn-tertiary {
+  @apply border border-transparent bg-transparent text-slate-600 hover:bg-slate-100 hover:text-indigo-700;
+}
+.tf-btn-pill {
+  @apply rounded-full;
+}
+.tf-btn-compact {
+  @apply px-3 py-1.5 text-xs;
+}
+.tf-link-action {
+  @apply inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600 underline decoration-transparent underline-offset-4 transition-colors hover:text-indigo-700 hover:decoration-indigo-400;
+}
+.tf-status-line {
+  @apply flex flex-wrap items-center gap-2 text-sm;
+}
+.tf-status-ok {
+  @apply text-emerald-700;
+}
+.tf-status-warn {
+  @apply text-amber-700;
+}
+.tf-status-error {
+  @apply text-rose-700;
+}
 .tf-input {
   @apply w-full rounded-md border border-white/10 bg-slate-900/50 text-slate-100 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500;
 }
@@ -107,6 +134,33 @@
 }
 .tf-btn-danger {
   @apply bg-rose-600 text-white hover:bg-rose-700;
+}
+.tf-btn-secondary {
+  @apply border border-slate-200 bg-white text-slate-700 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700;
+}
+.tf-btn-tertiary {
+  @apply border border-transparent bg-transparent text-slate-600 hover:bg-slate-100 hover:text-indigo-700;
+}
+.tf-btn-pill {
+  @apply rounded-full;
+}
+.tf-btn-compact {
+  @apply px-3 py-1.5 text-xs;
+}
+.tf-link-action {
+  @apply inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600 underline decoration-transparent underline-offset-4 transition-colors hover:text-indigo-700 hover:decoration-indigo-400;
+}
+.tf-status-line {
+  @apply flex flex-wrap items-center gap-2 text-sm;
+}
+.tf-status-ok {
+  @apply text-emerald-700;
+}
+.tf-status-warn {
+  @apply text-amber-700;
+}
+.tf-status-error {
+  @apply text-rose-700;
 }
 
 .tf-input {
@@ -229,6 +283,47 @@
 :root[data-theme="dark"] .text-red-600,
 :root[data-theme="dark"] .text-rose-600 {
   color: #fda4af !important;
+}
+
+:root[data-theme="dark"] .tf-btn-secondary {
+  border-color: #334155;
+  background-color: #0b1220;
+  color: #cbd5e1;
+}
+
+:root[data-theme="dark"] .tf-btn-secondary:hover {
+  border-color: rgba(96, 165, 250, 0.4);
+  background-color: rgba(59, 130, 246, 0.16);
+  color: #dbeafe;
+}
+
+:root[data-theme="dark"] .tf-btn-tertiary {
+  color: #cbd5e1;
+}
+
+:root[data-theme="dark"] .tf-btn-tertiary:hover {
+  background-color: #172033;
+  color: #dbeafe;
+}
+
+:root[data-theme="dark"] .tf-link-action {
+  color: #cbd5e1;
+}
+
+:root[data-theme="dark"] .tf-link-action:hover {
+  color: #bfdbfe;
+}
+
+:root[data-theme="dark"] .tf-status-ok {
+  color: #6ee7b7;
+}
+
+:root[data-theme="dark"] .tf-status-warn {
+  color: #fbbf24;
+}
+
+:root[data-theme="dark"] .tf-status-error {
+  color: #fda4af;
 }
 
 :root[data-theme="dark"] input,
