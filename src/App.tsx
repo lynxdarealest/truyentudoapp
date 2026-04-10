@@ -348,6 +348,13 @@ function readEnvFlag(key: string, fallback = false): boolean {
   return fallback;
 }
 
+function readEnvInt(key: string, fallback: number): number {
+  const raw = readEnvString(key, String(fallback));
+  const value = Number(raw);
+  if (!Number.isFinite(value)) return fallback;
+  return Math.trunc(value);
+}
+
 const DEFAULT_RELAY_WS_BASE = 'wss://your-relay.workers.dev/';
 const DEFAULT_RELAY_WEB_BASE = 'https://your-relay.workers.dev/';
 const LEGACY_RELAY_HOST_RE = /(relay2026\.up\.railway\.app|relay2026\.vercel\.app|proxymid\.your-subdomain\.workers\.dev)/i;
@@ -407,7 +414,10 @@ const READER_FILTER_PRESETS_KEY = 'reader_filter_presets_v1';
 const STORIES_UPDATED_EVENT = 'stories:updated';
 const WORKSPACE_RECOVERY_KEY = 'truyenforge:workspace-recovery-v1';
 const ACCOUNT_CLOUD_AUTOSYNC_ENABLED = readEnvFlag('VITE_ACCOUNT_AUTOSYNC', true);
-const ACCOUNT_CLOUD_AUTOSYNC_DEBOUNCE_MS = 5 * 60 * 1000;
+const ACCOUNT_CLOUD_AUTOSYNC_DEBOUNCE_MS = Math.min(
+  5 * 60 * 1000,
+  Math.max(10 * 1000, readEnvInt('VITE_ACCOUNT_AUTOSYNC_DEBOUNCE_MS', 30 * 1000)),
+);
 const ACCOUNT_SYNC_QUEUE_STATS_DEBOUNCE_MS = 1200;
 const MAINTENANCE_GLOBAL_ENABLED = readEnvFlag('VITE_MAINTENANCE_MODE_GLOBAL', false) || readEnvFlag('VITE_MAINTENANCE_MODE', false);
 const MAINTENANCE_READER_ENABLED = readEnvFlag('VITE_MAINTENANCE_MODE_READER', false);
@@ -13690,6 +13700,7 @@ const AppContent = () => {
   const [isExportingStory, setIsExportingStory] = useState(false);
   const profileAvatarInputRef = useRef<HTMLInputElement>(null);
   const backupImportInputRef = useRef<HTMLInputElement>(null);
+  const backupMoreActionsRef = useRef<HTMLDivElement>(null);
   const readerSearchInputRef = useRef<HTMLInputElement>(null);
   const readerDiscoveryControlsRef = useRef<HTMLDivElement>(null);
   const publicMetaLookupInFlightRef = useRef<Set<string>>(new Set());
@@ -14436,6 +14447,28 @@ const AppContent = () => {
     setShowBackupCenterModal(false);
     void refreshBackupHistory();
   }, [refreshBackupHistory]);
+
+  useEffect(() => {
+    if (!showBackupMoreActions) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (!backupMoreActionsRef.current?.contains(target)) {
+        setShowBackupMoreActions(false);
+      }
+    };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setShowBackupMoreActions(false);
+      }
+    };
+    window.addEventListener('mousedown', handlePointerDown);
+    window.addEventListener('keydown', handleEscape);
+    return () => {
+      window.removeEventListener('mousedown', handlePointerDown);
+      window.removeEventListener('keydown', handleEscape);
+    };
+  }, [showBackupMoreActions]);
 
   const refreshWorkspaceUiFromStorage = useCallback(() => {
     const nextThemeMode = loadThemeMode();
@@ -20357,7 +20390,7 @@ ${JSON.stringify(violatingPayload)}
                 >
                   {backupBusyAction === 'backup-now' ? 'Đang sao lưu...' : 'Sao lưu ngay'}
                 </button>
-                <div className="relative">
+                <div ref={backupMoreActionsRef} className="relative">
                   <button
                     className="tf-btn tf-btn-ghost inline-flex items-center gap-1.5"
                     onClick={() => setShowBackupMoreActions((prev) => !prev)}
@@ -20569,13 +20602,14 @@ ${JSON.stringify(violatingPayload)}
         profile={profile}
         versionLabel={CURRENT_WRITER_VERSION}
         finopsWarning={finopsWarning}
-        authEmail={user?.email}
+        authEmail={provider === 'supabase' ? user?.email : undefined}
         onShowAuth={() => setShowAuthModal(true)} 
         onLogout={logout}
         onOpenProfile={() => setShowProfileModal(true)} 
         onOpenPromptManager={() => setShowPromptManager(true)}
         onOpenReleaseHistory={() => setShowReleaseHistoryModal(true)}
         onOpenBackupCenter={() => {
+          setShowBackupMoreActions(false);
           setDriveAuth(loadStoredDriveAuth());
           setShowBackupCenterModal(true);
           void refreshBackupHistory();

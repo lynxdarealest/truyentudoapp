@@ -152,13 +152,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setUser(mapped);
             saveCachedSupabaseUser(mapped);
           } else {
-            setUser((prev) => prev ?? null);
+            setUser(null);
+            saveCachedSupabaseUser(null);
           }
           setLoading(false);
         }
       } catch {
         if (!disposed) {
-          setUser((prev) => prev ?? null);
+          setUser(null);
+          saveCachedSupabaseUser(null);
           setLoading(false);
         }
       }
