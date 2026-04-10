@@ -57,6 +57,7 @@ import { Link, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useNav
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { Navbar } from './components/Navbar';
+import { useApiStore, type ApiPanelExternalState } from './components/tools/useApiStore';
 import { loadBudgetState, saveBudgetState } from './finops';
 import { CURRENT_WRITER_VERSION, WRITER_RELEASE_NOTES } from './phase3/releaseHistory';
 import { APP_NOTICE_EVENT, notifyApp, type AppNoticePayload, type AppNoticeTone } from './notifications';
@@ -7883,6 +7884,7 @@ const ToolsManager = ({
   const relayReconnectRef = useRef<number | null>(null);
   const relayShouldReconnectRef = useRef(false);
   const relayRequestReadyRef = useRef(false);
+  const hydrateApiStore = useApiStore((state) => state.actions.hydrateFromExternal);
   const refreshAiUsageStats = useCallback(() => {
     const next = readMainAiUsage();
     setAiUsageStats((prev) => (
@@ -8851,6 +8853,149 @@ const ToolsManager = ({
     }
   };
 
+  const handleSwitchToDirect = () => {
+    setApiMode('manual');
+    persistRuntimeConfig({ mode: 'manual' });
+  };
+
+  const handleSwitchToRelay = () => {
+    setApiMode('relay');
+    persistRuntimeConfig({ mode: 'relay', selectedProvider: 'gemini', selectedModel: selectedModel || getProfileModel('quality', 'gemini') });
+  };
+
+  const handleImageAiProviderChange = (value: ImageAiProvider) => {
+    const nextConfig = getImageApiConfig();
+    setImageAiProvider(value);
+    setImageAiModel(nextConfig.providers[value]?.model || getDefaultImageAiModel(value));
+    setImageAiApiKey(nextConfig.providers[value]?.apiKey || '');
+  };
+
+  const handleRelayUrlChange = (value: string) => {
+    setRelayUrl(value);
+    setRelayIdentityHint(value);
+    persistRuntimeConfig({ relayUrl: value, identityHint: value, selectedProvider: 'gemini', selectedModel: selectedModel || getProfileModel('quality', 'gemini') });
+  };
+
+  const handleAiProfileChange = (next: AiProfileMode) => {
+    setAiProfile(next);
+    persistRuntimeConfig({ aiProfile: next });
+  };
+
+  const imageAiStatusLabel = imageAiEnabled
+    ? (imageAiApiKey.trim()
+      ? `Đang bật và sẽ ưu tiên dùng ${IMAGE_AI_PROVIDER_META[imageAiProvider].label} cho tạo ảnh bìa.`
+      : 'Đang bật nhưng chưa có API key, nên vẫn sẽ rơi xuống nhánh dự phòng.')
+    : 'Đang tắt. TruyenForge sẽ bỏ qua nhánh AI sinh ảnh riêng khi tạo bìa.';
+
+  useEffect(() => {
+    const payload: ApiPanelExternalState = {
+      apiMode,
+      currentProviderLabel: apiMode === 'relay' ? 'Trạm trung chuyển' : PROVIDER_LABELS[currentApiEntry?.provider || selectedProvider || 'gemini'],
+      currentModelLabel: apiMode === 'relay' ? (selectedModel || getProfileModel('quality', 'gemini')) : (currentApiEntry?.model || selectedModel || 'Chưa chọn'),
+      vaultCount: apiVault.length,
+      currentStatusLabel: apiMode === 'relay' ? relayStatusText : (currentApiEntry ? currentApiEntry.name : 'Chưa cấu hình'),
+      apiEntryName,
+      apiEntryText,
+      displayedDraftProvider,
+      effectiveDraftProvider,
+      availableDraftModels,
+      apiEntryModel,
+      apiEntryBaseUrl,
+      aiProfile,
+      apiVault,
+      currentApiEntry,
+      testingApiId,
+      relayStatus,
+      relayStatusText,
+      relayUrl,
+      relayMatchedLong,
+      relayMaskedToken,
+      relayModel: selectedModel || getProfileModel('quality', 'gemini'),
+      relayModelOptions: PROVIDER_MODEL_OPTIONS.gemini,
+      relayWebBase: RELAY_WEB_BASE,
+      relaySocketBase: RELAY_SOCKET_BASE,
+      manualRelayTokenInput,
+      isCheckingAi,
+      aiCheckStatus,
+      aiUsageRequests: aiUsageStats.requests,
+      aiUsageTokens: aiUsageStats.estTokens,
+      quickImportText,
+      quickImportResult,
+      generationConfig,
+      imageAiEnabled,
+      imageAiApiKey,
+      imageAiStatusLabel,
+      imageAiProvider,
+      imageAiModel,
+      onSwitchToDirect: handleSwitchToDirect,
+      onSwitchToRelay: handleSwitchToRelay,
+      onApiEntryNameChange: setApiEntryName,
+      onApiEntryTextChange: setApiEntryText,
+      onApiEntryProviderChange: setApiEntryProvider,
+      onApiEntryModelChange: setApiEntryModel,
+      onApiEntryBaseUrlChange: setApiEntryBaseUrl,
+      onImageAiEnabledChange: setImageAiEnabled,
+      onImageAiApiKeyChange: setImageAiApiKey,
+      onImageAiProviderChange: handleImageAiProviderChange,
+      onImageAiModelChange: setImageAiModel,
+      onSaveImageAiConfig: handleSaveImageAiConfig,
+      onSaveApiEntry: handleSaveApiEntry,
+      onTestApiEntry: handleTestApiEntry,
+      onActivateApiEntry: handleActivateApiEntry,
+      onDeleteApiEntry: handleDeleteApiEntry,
+      onStoredApiModelChange: handleApiModelChange,
+      onStoredApiBaseUrlChange: handleApiBaseUrlChange,
+      onConnectRelay: handleConnectRelay,
+      onDisconnectRelay: handleDisconnectRelay,
+      onRelayUrlChange: handleRelayUrlChange,
+      onRelayModelChange: handleRelayModelChange,
+      onManualRelayTokenInputChange: setManualRelayTokenInput,
+      onSaveManualRelayToken: handleSaveManualRelayToken,
+      onCheckAiHealth: handleCheckAiHealth,
+      onResetAiUsage: handleResetAiUsage,
+      onQuickImportTextChange: setQuickImportText,
+      onQuickImportKeys: handleQuickImportKeys,
+      onAiProfileChange: handleAiProfileChange,
+      onGenerationConfigPatch: handleGenerationConfigPatch,
+      onGenerationConfigReset: handleGenerationConfigReset,
+    };
+    hydrateApiStore(payload);
+  }, [
+    apiMode,
+    currentApiEntry,
+    selectedProvider,
+    selectedModel,
+    apiVault,
+    relayStatusText,
+    apiEntryName,
+    apiEntryText,
+    displayedDraftProvider,
+    effectiveDraftProvider,
+    availableDraftModels,
+    apiEntryModel,
+    apiEntryBaseUrl,
+    aiProfile,
+    testingApiId,
+    relayStatus,
+    relayUrl,
+    relayMatchedLong,
+    relayMaskedToken,
+    manualRelayTokenInput,
+    isCheckingAi,
+    aiCheckStatus,
+    aiUsageStats.requests,
+    aiUsageStats.estTokens,
+    quickImportText,
+    quickImportResult,
+    generationConfig,
+    imageAiEnabled,
+    imageAiApiKey,
+    imageAiStatusLabel,
+    imageAiProvider,
+    imageAiModel,
+    hydrateApiStore,
+  ]);
+
   if (!user && !isApiSection) {
     return (
       <motion.div 
@@ -8889,102 +9034,7 @@ const ToolsManager = ({
     return (
       <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }}>
         <React.Suspense fallback={<div className="tf-card p-6 text-sm text-slate-300">Đang tải khu API...</div>}>
-          <ApiSectionPanel
-            onBack={onBack}
-            apiMode={apiMode}
-            currentProviderLabel={apiMode === 'relay' ? 'Trạm trung chuyển' : PROVIDER_LABELS[currentApiEntry?.provider || selectedProvider || 'gemini']}
-            currentModelLabel={apiMode === 'relay' ? (selectedModel || getProfileModel('quality', 'gemini')) : (currentApiEntry?.model || selectedModel || 'Chưa chọn')}
-            vaultCount={apiVault.length}
-            currentStatusLabel={apiMode === 'relay' ? relayStatusText : (currentApiEntry ? currentApiEntry.name : 'Chưa cấu hình')}
-            onSwitchToDirect={() => {
-              setApiMode('manual');
-              persistRuntimeConfig({ mode: 'manual' });
-            }}
-            onSwitchToRelay={() => {
-              setApiMode('relay');
-              persistRuntimeConfig({ mode: 'relay', selectedProvider: 'gemini', selectedModel: selectedModel || getProfileModel('quality', 'gemini') });
-            }}
-            apiEntryName={apiEntryName}
-            apiEntryText={apiEntryText}
-            displayedDraftProvider={displayedDraftProvider}
-            effectiveDraftProvider={effectiveDraftProvider}
-            availableDraftModels={availableDraftModels}
-            apiEntryModel={apiEntryModel}
-            apiEntryBaseUrl={apiEntryBaseUrl}
-            aiProfile={aiProfile}
-            apiVault={apiVault}
-            currentApiEntry={currentApiEntry}
-            testingApiId={testingApiId}
-            relayStatus={relayStatus}
-            relayStatusText={relayStatusText}
-            relayUrl={relayUrl}
-            relayMatchedLong={relayMatchedLong}
-            relayMaskedToken={relayMaskedToken}
-            relayModel={selectedModel || getProfileModel('quality', 'gemini')}
-            relayModelOptions={PROVIDER_MODEL_OPTIONS.gemini}
-            relayWebBase={RELAY_WEB_BASE}
-            relaySocketBase={RELAY_SOCKET_BASE}
-            manualRelayTokenInput={manualRelayTokenInput}
-            isCheckingAi={isCheckingAi}
-            aiCheckStatus={aiCheckStatus}
-            aiUsageRequests={aiUsageStats.requests}
-            aiUsageTokens={aiUsageStats.estTokens}
-            quickImportText={quickImportText}
-            quickImportResult={quickImportResult}
-            generationConfig={generationConfig}
-            imageAiEnabled={imageAiEnabled}
-            imageAiApiKey={imageAiApiKey}
-            imageAiProvider={imageAiProvider}
-            imageAiModel={imageAiModel}
-            imageAiStatusLabel={
-              imageAiEnabled
-                ? (imageAiApiKey.trim()
-                  ? `Đang bật và sẽ ưu tiên dùng ${IMAGE_AI_PROVIDER_META[imageAiProvider].label} cho tạo ảnh bìa.`
-                  : 'Đang bật nhưng chưa có API key, nên vẫn sẽ rơi xuống nhánh dự phòng.')
-                : 'Đang tắt. TruyenForge sẽ bỏ qua nhánh AI sinh ảnh riêng khi tạo bìa.'
-            }
-            onApiEntryNameChange={setApiEntryName}
-            onApiEntryTextChange={setApiEntryText}
-            onApiEntryProviderChange={setApiEntryProvider}
-            onApiEntryModelChange={setApiEntryModel}
-            onApiEntryBaseUrlChange={setApiEntryBaseUrl}
-            onImageAiEnabledChange={setImageAiEnabled}
-            onImageAiApiKeyChange={setImageAiApiKey}
-            onImageAiProviderChange={(value) => {
-              const nextConfig = getImageApiConfig();
-              setImageAiProvider(value);
-              setImageAiModel(nextConfig.providers[value]?.model || getDefaultImageAiModel(value));
-              setImageAiApiKey(nextConfig.providers[value]?.apiKey || '');
-            }}
-            onImageAiModelChange={setImageAiModel}
-            onSaveImageAiConfig={handleSaveImageAiConfig}
-            onSaveApiEntry={handleSaveApiEntry}
-            onTestApiEntry={handleTestApiEntry}
-            onActivateApiEntry={handleActivateApiEntry}
-            onDeleteApiEntry={handleDeleteApiEntry}
-            onStoredApiModelChange={handleApiModelChange}
-            onStoredApiBaseUrlChange={handleApiBaseUrlChange}
-            onConnectRelay={handleConnectRelay}
-            onDisconnectRelay={handleDisconnectRelay}
-            onRelayUrlChange={(value) => {
-              setRelayUrl(value);
-              setRelayIdentityHint(value);
-              persistRuntimeConfig({ relayUrl: value, identityHint: value, selectedProvider: 'gemini', selectedModel: selectedModel || getProfileModel('quality', 'gemini') });
-            }}
-            onRelayModelChange={handleRelayModelChange}
-            onManualRelayTokenInputChange={setManualRelayTokenInput}
-            onSaveManualRelayToken={handleSaveManualRelayToken}
-            onCheckAiHealth={handleCheckAiHealth}
-            onResetAiUsage={handleResetAiUsage}
-            onQuickImportTextChange={setQuickImportText}
-            onQuickImportKeys={handleQuickImportKeys}
-            onAiProfileChange={(next) => {
-              setAiProfile(next);
-              persistRuntimeConfig({ aiProfile: next });
-            }}
-            onGenerationConfigPatch={handleGenerationConfigPatch}
-            onGenerationConfigReset={handleGenerationConfigReset}
-          />
+          <ApiSectionPanel onBack={onBack} />
         </React.Suspense>
       </motion.div>
     );
