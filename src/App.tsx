@@ -4173,8 +4173,59 @@ function buildFallbackCoverDataUrl(title: string, genre: string, prompt: string)
   <text x="110" y="1030" fill="${palette.accentSoft}" opacity="0.95" font-family="'Segoe UI', Arial, Tahoma, sans-serif" font-size="22">${escapeSvgText(palette.mood)}</text>
   ${hintLines.map((line, index) => `<text x="110" y="${1090 + index * 34}" fill="#ffffff" opacity="0.85" font-family="'Segoe UI', Arial, Tahoma, sans-serif" font-size="24">${escapeSvgText(line)}</text>`).join('\n  ')}
 </svg>`;
-  const encodedSvg = window.btoa(unescape(encodeURIComponent(svg)));
-  return `data:image/svg+xml;base64,${encodedSvg}`;
+  const encodedSvg = encodeURIComponent(svg)
+    .replace(/%0A/g, '')
+    .replace(/%20/g, ' ');
+  return `data:image/svg+xml;charset=utf-8,${encodedSvg}`;
+}
+
+function decodeSvgFromDataUrl(input?: string): string {
+  const source = String(input || '').trim();
+  if (!source.startsWith('data:image/svg+xml')) return '';
+  const commaIndex = source.indexOf(',');
+  if (commaIndex < 0) return '';
+  const header = source.slice(0, commaIndex).toLowerCase();
+  const payload = source.slice(commaIndex + 1);
+  if (!payload) return '';
+  try {
+    if (header.includes(';base64')) {
+      return atob(payload);
+    }
+    return decodeURIComponent(payload);
+  } catch {
+    return '';
+  }
+}
+
+function isLegacyBrokenImportedCover(input?: string): boolean {
+  const source = String(input || '').trim();
+  if (!source.startsWith('data:image/svg+xml')) return false;
+  const normalizedSource = source.toLowerCase();
+  // Signature of old imported placeholder covers (720x1080 TruyenForge template).
+  if (normalizedSource.startsWith('data:image/svg+xml;base64,cjxzdmcgegxsbnm9imh0dha6ly93d3cudzmub3jnlziwmdavc3zniib3awr0ad0inzewiibozwlnahq9ijewodai')) {
+    return true;
+  }
+  const svg = decodeSvgFromDataUrl(input);
+  if (!svg) return false;
+  const normalized = svg.toLowerCase();
+  const hasPlaceholderText =
+    normalized.includes('?nh b?a t?m th?i')
+    || normalized.includes('anh bia tam thoi')
+    || normalized.includes('n?i dung ??y ?? b?n trong truy?n')
+    || normalized.includes('noi dung day du ben trong truyen');
+  if (hasPlaceholderText) return true;
+  const hasTemplateBrand = normalized.includes('truyenforge');
+  const hasLegacyFrame =
+    normalized.includes('viewbox="0 0 720 1080"')
+    || (normalized.includes('width="720"') && normalized.includes('height="1080"'));
+  return hasTemplateBrand && hasLegacyFrame;
+}
+
+function normalizeCoverImageForDisplay(input: string | undefined, title: string, genre: string): string | undefined {
+  const source = String(input || '').trim();
+  if (!source) return undefined;
+  if (!isLegacyBrokenImportedCover(source)) return source;
+  return buildFallbackCoverDataUrl(title, genre, 'TruyenForge cover preview');
 }
 
 async function mapWithConcurrency<T, R>(
@@ -10059,6 +10110,10 @@ const StoryDetail = ({
   const [chapterRenderLimit, setChapterRenderLimit] = useState(CHAPTER_RENDER_BATCH_SIZE);
   const [chapterSearchTerm, setChapterSearchTerm] = useState('');
   const displayGenre = parseStoryGenreAndPrompt(story.genre || '', story.storyPromptNotes || '').genreLabel || 'Chưa phân loại';
+  const normalizedStoryCoverImageUrl = React.useMemo(
+    () => normalizeCoverImageForDisplay(story.coverImageUrl, story.title, displayGenre),
+    [story.coverImageUrl, story.title, displayGenre],
+  );
   const readChapterSet = React.useMemo(() => new Set(readerActivity?.readChapterIds || []), [readerActivity?.readChapterIds]);
   const followed = Boolean(readerActivity?.followed);
   const forcedSelectedChapter = React.useMemo(
@@ -10657,10 +10712,10 @@ const StoryDetail = ({
         <div className="lg:col-span-2 space-y-8">
           <div className="bg-white p-5 sm:p-8 rounded-[32px] border border-slate-100 shadow-sm">
             <div className="flex flex-col md:flex-row gap-6">
-              {story.coverImageUrl && (
+              {normalizedStoryCoverImageUrl && (
                 <div className="w-full md:w-52 flex-shrink-0">
                   <img
-                    src={story.coverImageUrl}
+                    src={normalizedStoryCoverImageUrl}
                     alt={`Bìa truyện ${story.title}`}
                     className="w-full aspect-[2/3] object-contain bg-slate-100 rounded-2xl border border-slate-200 shadow-sm"
                     loading="lazy"
@@ -11016,6 +11071,7 @@ const StoryList = ({
                 const cardMetadata = resolvedStoryMeta[story.id];
                 const displayTitle = resolveStoryCardDisplayTitle(story.title, cardMetadata);
                 const displayGenre = resolveStoryCardDisplayGenre(story.genre, cardMetadata, story.title);
+                const displayCoverImageUrl = normalizeCoverImageForDisplay(story.coverImageUrl, displayTitle, displayGenre);
                 const displayIntro = buildStoryCardDisplayIntroduction({
                   introduction: story.introduction,
                   genre: displayGenre,
@@ -11104,11 +11160,11 @@ const StoryList = ({
                       <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
-                  <div className={cn("mb-4 flex-grow", story.coverImageUrl ? "grid grid-cols-[6rem_1fr] gap-4 items-start" : "")}>
-                    {story.coverImageUrl && (
+                  <div className={cn("mb-4 flex-grow", displayCoverImageUrl ? "grid grid-cols-[6rem_1fr] gap-4 items-start" : "")}>
+                    {displayCoverImageUrl && (
                       <div className="rounded-xl overflow-hidden border border-slate-100 bg-slate-100 aspect-[2/3] w-24 sm:w-24">
                         <img
-                          src={story.coverImageUrl}
+                          src={displayCoverImageUrl}
                           alt={`Bìa truyện ${displayTitle}`}
                           className="w-full h-full object-contain object-center"
                           loading="lazy"
@@ -11124,7 +11180,7 @@ const StoryList = ({
                       </h3>
                       <p
                         className="text-slate-500 text-sm"
-                        style={{ display: '-webkit-box', WebkitLineClamp: story.coverImageUrl ? 4 : 5, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
+                        style={{ display: '-webkit-box', WebkitLineClamp: displayCoverImageUrl ? 4 : 5, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
                       >
                         {buildStoryCardMetaLine({ introduction: displayIntro, genre: displayGenre })}
                       </p>
@@ -13688,6 +13744,11 @@ const AppContent = () => {
       undefined,
       rawTitle,
     );
+    const normalizedCoverImageUrl = normalizeCoverImageForDisplay(
+      storyRow.cover_image_url ? String(storyRow.cover_image_url) : undefined,
+      normalizedTitle,
+      normalizedGenre,
+    );
     const normalizedIntroduction = buildStoryCardDisplayIntroduction({
       introduction: storyRow.introduction ? String(storyRow.introduction) : '',
       genre: normalizedGenre,
@@ -13700,7 +13761,7 @@ const AppContent = () => {
       authorId: String(storyRow.user_id || ''),
       title: normalizedTitle,
       content: String(storyRow.content || ''),
-      coverImageUrl: storyRow.cover_image_url ? String(storyRow.cover_image_url) : undefined,
+      coverImageUrl: normalizedCoverImageUrl,
       type: (storyRow.type === 'translated' || storyRow.type === 'continued') ? storyRow.type : 'original',
       genre: normalizedGenre,
       introduction: normalizedIntroduction,
@@ -13911,7 +13972,11 @@ const AppContent = () => {
         authorId: String(row.user_id || ''),
         title: String(row.title || 'Truyện chưa đặt tên'),
         introduction: row.introduction ? String(row.introduction) : '',
-        coverImageUrl: row.cover_image_url ? String(row.cover_image_url) : undefined,
+        coverImageUrl: normalizeCoverImageForDisplay(
+          row.cover_image_url ? String(row.cover_image_url) : undefined,
+          String(row.title || 'Truyện chưa đặt tên'),
+          row.genre ? String(row.genre) : '',
+        ),
         type: (row.type === 'translated' || row.type === 'continued') ? row.type : 'original',
         genre: row.genre ? String(row.genre) : '',
         chapterCount: chapterCountMap[String(row.story_id || '')] || 0,
@@ -19092,6 +19157,7 @@ ${JSON.stringify(violatingPayload)}
         title: item.title,
         metadata: resolvedMeta,
       });
+      const displayCoverImageUrl = normalizeCoverImageForDisplay(item.coverImageUrl, displayTitle, displayGenre);
       return (
         <article
           key={item.id}
@@ -19143,10 +19209,10 @@ ${JSON.stringify(violatingPayload)}
             </div>
           </div>
 
-          {item.coverImageUrl ? (
+          {displayCoverImageUrl ? (
             <div className="mb-4 mx-auto w-full max-w-[11.5rem] overflow-hidden rounded-2xl border border-slate-100 bg-slate-100">
               <img
-                src={item.coverImageUrl}
+                src={displayCoverImageUrl}
                 alt={`Bìa truyện ${displayTitle}`}
                 className="aspect-[2/3] w-full object-cover object-center"
                 loading="lazy"
