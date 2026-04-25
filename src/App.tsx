@@ -6941,6 +6941,17 @@ function getStyleReferencePreview(reference: StyleReference): string {
   return String(reference.content || '').trim();
 }
 
+function getStyleReferenceKindLabel(reference: StyleReference): string {
+  return reference.kind === 'learned' ? 'DNA văn phong' : 'Văn mẫu';
+}
+
+function getStyleReferenceInstructionPreview(reference: StyleReference): string {
+  if (reference.kind === 'learned' && reference.learnedProfile) {
+    return String(reference.learnedProfile.writing_instruction || '').trim();
+  }
+  return String(reference.content || '').trim().slice(0, 280);
+}
+
 function buildFallbackWritingInstruction(memory: StyleMemoryProfile, styleName: string): string {
   const parts = [
     styleName ? `Viết theo văn phong "${styleName}".` : 'Viết theo văn phong đã học.',
@@ -9546,15 +9557,20 @@ const AIRulesManager = () => {
 
 const StyleReferenceLibrary = ({ 
   onSelect, 
-  onClose 
+  onClose,
+  onSelectReference,
+  activeReferenceId,
 }: { 
   onSelect?: (content: string) => void, 
-  onClose?: () => void 
+  onClose?: () => void,
+  onSelectReference?: (reference: StyleReference) => void,
+  activeReferenceId?: string,
 }) => {
   const { user } = useAuth();
   const [references, setReferences] = useState<StyleReference[]>([]);
   const [isAdding, setIsAdding] = useState(false);
   const [createMode, setCreateMode] = useState<'manual' | 'learned'>('manual');
+  const [filterMode, setFilterMode] = useState<'all' | 'manual' | 'learned'>('all');
   const [newName, setNewName] = useState('');
   const [newContent, setNewContent] = useState('');
   const [isExtracting, setIsExtracting] = useState(false);
@@ -9614,6 +9630,18 @@ const StyleReferenceLibrary = ({
       e.target.value = '';
     }
   };
+
+  const visibleReferences = references.filter((reference) => {
+    if (filterMode === 'all') return true;
+    if (filterMode === 'learned') return reference.kind === 'learned';
+    return reference.kind !== 'learned';
+  });
+
+  const filterMeta = [
+    { key: 'all' as const, label: 'Tất cả', count: references.length },
+    { key: 'learned' as const, label: 'DNA văn phong', count: references.filter((item) => item.kind === 'learned').length },
+    { key: 'manual' as const, label: 'Văn mẫu', count: references.filter((item) => item.kind !== 'learned').length },
+  ];
 
   const handleLearningFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -9698,6 +9726,21 @@ const StyleReferenceLibrary = ({
             {isAdding ? 'Hủy' : <><Plus className="w-4 h-4" /> Thêm mới</>}
           </button>
         </div>
+      </div>
+
+      <div className="flex flex-wrap gap-2 rounded-2xl border border-slate-200 bg-white p-2">
+        {filterMeta.map((item) => (
+          <button
+            key={item.key}
+            onClick={() => setFilterMode(item.key)}
+            className={cn(
+              'rounded-xl px-3 py-2 text-xs font-bold transition-all',
+              filterMode === item.key ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-50',
+            )}
+          >
+            {item.label} ({item.count})
+          </button>
+        ))}
       </div>
 
       {isAdding && (
@@ -9810,50 +9853,81 @@ const StyleReferenceLibrary = ({
       )}
 
       <div className="grid grid-cols-1 gap-4">
-        {references.length === 0 ? (
+        {visibleReferences.length === 0 ? (
           <div className="text-center py-12 text-slate-400 border-2 border-dashed border-slate-100 rounded-3xl">
-            Chưa có văn mẫu hay DNA văn phong nào trong kho.
+            {references.length === 0 ? 'Chưa có văn mẫu hay DNA văn phong nào trong kho.' : 'Không có mục nào khớp bộ lọc hiện tại.'}
           </div>
         ) : (
-          references.map(ref => (
-            <div key={ref.id} className="p-4 bg-white border border-slate-100 rounded-2xl flex justify-between items-center group hover:border-indigo-200 transition-all">
-              <div className="flex-grow">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <h4 className="font-bold text-slate-800">{ref.name}</h4>
-                  <span className={cn(
-                    'px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-[0.14em]',
-                    ref.kind === 'learned' ? 'bg-indigo-50 text-indigo-600' : 'bg-slate-100 text-slate-500',
-                  )}>
-                    {ref.kind === 'learned' ? 'DNA văn phong' : 'Văn mẫu'}
-                  </span>
-                </div>
-                <p className="text-xs text-slate-400 line-clamp-2">{getStyleReferencePreview(ref)}</p>
-              </div>
-              <div className="flex items-center gap-2">
-                <button 
-                  onClick={() => setViewingRef(ref)}
-                  className="flex items-center gap-1 px-2 py-1 bg-slate-50 text-slate-500 rounded-lg text-[10px] font-bold hover:bg-slate-100 transition-all"
-                >
-                  <Eye className="w-3 h-3" />
-                  Xem
-                </button>
-                {onSelect && (
-                  <button 
-                    onClick={() => onSelect(getStyleReferenceDisplayContent(ref))}
-                    className="px-3 py-1.5 bg-indigo-50 text-indigo-600 rounded-lg text-xs font-bold hover:bg-indigo-100"
-                  >
-                    Sử dụng
-                  </button>
+          visibleReferences.map(ref => {
+            const isActive = Boolean(activeReferenceId && ref.id === activeReferenceId);
+            return (
+              <div
+                key={ref.id}
+                className={cn(
+                  'p-4 bg-white border rounded-2xl group transition-all',
+                  isActive ? 'border-indigo-300 shadow-[0_0_0_3px_rgba(99,102,241,0.08)]' : 'border-slate-100 hover:border-indigo-200',
                 )}
-                <button 
-                  onClick={() => handleDelete(ref.id)}
-                  className="p-2 text-slate-300 hover:text-red-500 transition-colors"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex-grow min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h4 className="font-bold text-slate-800">{ref.name}</h4>
+                      <span className={cn(
+                        'px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-[0.14em]',
+                        ref.kind === 'learned' ? 'bg-indigo-50 text-indigo-600' : 'bg-slate-100 text-slate-500',
+                      )}>
+                        {getStyleReferenceKindLabel(ref)}
+                      </span>
+                      {isActive ? (
+                        <span className="px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-[0.14em] bg-emerald-50 text-emerald-600">
+                          Đang áp dụng
+                        </span>
+                      ) : null}
+                    </div>
+                    <p className="mt-2 text-sm text-slate-600 line-clamp-3">{getStyleReferencePreview(ref)}</p>
+                    <div className="mt-3 flex flex-wrap gap-3 text-[11px] text-slate-400">
+                      <span>Cập nhật: {new Date(String(ref.updatedAt || ref.createdAt || '')).toLocaleString('vi-VN')}</span>
+                      {ref.kind === 'learned' ? (
+                        <>
+                          <span>Nguồn: {ref.sourceFileName || 'Dán tay'}</span>
+                          <span>{ref.chunkCount || 0} đợt học</span>
+                        </>
+                      ) : null}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button 
+                      onClick={() => setViewingRef(ref)}
+                      className="flex items-center gap-1 px-2 py-1 bg-slate-50 text-slate-500 rounded-lg text-[10px] font-bold hover:bg-slate-100 transition-all"
+                    >
+                      <Eye className="w-3 h-3" />
+                      Xem
+                    </button>
+                    {onSelect && (
+                      <button 
+                        onClick={() => {
+                          onSelect(getStyleReferenceDisplayContent(ref));
+                          onSelectReference?.(ref);
+                        }}
+                        className={cn(
+                          'px-3 py-1.5 rounded-lg text-xs font-bold transition-all',
+                          isActive ? 'bg-emerald-50 text-emerald-700' : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100',
+                        )}
+                      >
+                        {isActive ? 'Đã áp dụng' : ref.kind === 'learned' ? 'Áp dụng DNA' : 'Dùng văn mẫu'}
+                      </button>
+                    )}
+                    <button 
+                      onClick={() => handleDelete(ref.id)}
+                      className="p-2 text-slate-300 hover:text-red-500 transition-colors"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
               </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
 
@@ -9865,10 +9939,27 @@ const StyleReferenceLibrary = ({
             className="tf-modal-panel bg-white w-full max-w-2xl rounded-[32px] shadow-2xl overflow-hidden flex flex-col max-h-[80vh]"
           >
             <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-              <h3 className="text-xl font-serif font-bold tf-break-long pr-3">{viewingRef.name}</h3>
-              <button onClick={() => setViewingRef(null)} className="p-2 hover:bg-white rounded-full">
-                <Plus className="w-6 h-6 rotate-45 text-slate-400" />
-              </button>
+              <div className="min-w-0 pr-3">
+                <h3 className="text-xl font-serif font-bold tf-break-long">{viewingRef.name}</h3>
+                <p className="mt-1 text-xs text-slate-500">{getStyleReferenceKindLabel(viewingRef)}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                {onSelect ? (
+                  <button
+                    onClick={() => {
+                      onSelect(getStyleReferenceDisplayContent(viewingRef));
+                      onSelectReference?.(viewingRef);
+                      setViewingRef(null);
+                    }}
+                    className="px-3 py-2 rounded-xl bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 transition-all"
+                  >
+                    Áp dụng ngay
+                  </button>
+                ) : null}
+                <button onClick={() => setViewingRef(null)} className="p-2 hover:bg-white rounded-full">
+                  <Plus className="w-6 h-6 rotate-45 text-slate-400" />
+                </button>
+              </div>
             </div>
             <div className="tf-modal-content p-6 md:p-8 overflow-y-auto text-slate-600 text-sm leading-relaxed tf-break-long space-y-6">
               {viewingRef.kind === 'learned' && viewingRef.learnedProfile ? (
@@ -12870,6 +12961,7 @@ const AIStoryCreationModal = ({
   const [showStyleLibrary, setShowStyleLibrary] = useState(false);
   const [isExtractingStyle, setIsExtractingStyle] = useState(false);
   const [showPromptLibrary, setShowPromptLibrary] = useState(false);
+  const selectedStyleReference = styleReferences.find((reference) => reference.id === selectedStyleReferenceId) || null;
 
   useEffect(() => {
     if (!isOpen) return;
@@ -13052,7 +13144,7 @@ const AIStoryCreationModal = ({
                 <label className="flex items-center gap-1 px-2 py-1 bg-slate-100 text-slate-600 rounded-lg text-[10px] font-bold hover:bg-slate-200 cursor-pointer transition-colors">
                   {isExtractingStyle ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
                   Tải file
-                  <input type="file" accept=".docx,.txt" onChange={handleStyleFileUpload} className="hidden" />
+                  <input type="file" accept=".docx,.txt,.pdf,.epub" onChange={handleStyleFileUpload} className="hidden" />
                 </label>
                 <button 
                   onClick={() => setShowStyleLibrary(true)}
@@ -13084,9 +13176,36 @@ const AIStoryCreationModal = ({
                 ))}
               </select>
             </div>
+            {selectedStyleReference ? (
+              <div className="mb-3 rounded-2xl border border-indigo-100 bg-indigo-50/60 px-4 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-[0.16em] text-indigo-500">Đang áp dụng</p>
+                    <p className="mt-1 text-sm font-semibold text-slate-800">
+                      {selectedStyleReference.name} • {getStyleReferenceKindLabel(selectedStyleReference)}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setSelectedStyleReferenceId('');
+                      setStyleReference('');
+                    }}
+                    className="text-xs font-bold text-slate-500 hover:text-slate-700"
+                  >
+                    Bỏ chọn
+                  </button>
+                </div>
+                <p className="mt-2 text-xs leading-5 text-slate-600 line-clamp-4">
+                  {getStyleReferenceInstructionPreview(selectedStyleReference)}
+                </p>
+              </div>
+            ) : null}
             <textarea 
               value={styleReference}
-              onChange={(e) => setStyleReference(e.target.value)}
+              onChange={(e) => {
+                setSelectedStyleReferenceId('');
+                setStyleReference(e.target.value);
+              }}
               placeholder="Dán một đoạn văn mẫu bạn muốn AI bắt chước phong cách..."
               className="w-full h-24 p-4 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 resize-none text-sm tf-mobile-textarea"
             />
@@ -13100,7 +13219,7 @@ const AIStoryCreationModal = ({
                 className="tf-modal-panel bg-white w-full max-w-2xl rounded-[32px] shadow-2xl overflow-hidden flex flex-col max-h-[80vh]"
               >
                 <div className="p-6 border-b border-slate-100 flex justify-between items-center">
-                  <h3 className="text-xl font-serif font-bold">Thư viện văn mẫu</h3>
+                  <h3 className="text-xl font-serif font-bold">Kho văn phong</h3>
                   <button onClick={() => setShowStyleLibrary(false)} className="p-2 hover:bg-slate-100 rounded-full">
                     <Plus className="w-6 h-6 rotate-45 text-slate-400" />
                   </button>
@@ -13108,10 +13227,11 @@ const AIStoryCreationModal = ({
                 <div className="tf-modal-content p-6 overflow-y-auto">
                   <StyleReferenceLibrary 
                     onSelect={(content) => {
-                      setSelectedStyleReferenceId('');
                       setStyleReference(content);
                       setShowStyleLibrary(false);
-                    }} 
+                    }}
+                    onSelectReference={(reference) => setSelectedStyleReferenceId(reference.id)}
+                    activeReferenceId={selectedStyleReferenceId}
                   />
                 </div>
               </motion.div>
@@ -13204,6 +13324,7 @@ const AIGenerationModal = ({
   const [isExtractingStyle, setIsExtractingStyle] = useState(false);
   const [showPromptLibrary, setShowPromptLibrary] = useState(false);
   const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
+  const selectedStyleReference = styleReferences.find((reference) => reference.id === selectedStyleReferenceId) || null;
 
   useEffect(() => {
     if (isOpen) {
@@ -13767,7 +13888,7 @@ const AIGenerationModal = ({
                       <label className="flex items-center gap-1 px-2 py-1 bg-slate-100 text-slate-600 rounded-lg text-[10px] font-bold hover:bg-slate-200 cursor-pointer transition-colors">
                         {isExtractingStyle ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
                         Tải file
-                        <input type="file" accept=".docx,.txt" onChange={handleStyleFileUpload} className="hidden" />
+                        <input type="file" accept=".docx,.txt,.pdf,.epub" onChange={handleStyleFileUpload} className="hidden" />
                       </label>
                       <button 
                         onClick={() => setShowStyleLibrary(true)}
@@ -13797,9 +13918,36 @@ const AIGenerationModal = ({
                       </option>
                     ))}
                   </select>
+                  {selectedStyleReference ? (
+                    <div className="rounded-2xl border border-indigo-100 bg-indigo-50/60 px-4 py-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-xs font-bold uppercase tracking-[0.16em] text-indigo-500">Đang áp dụng</p>
+                          <p className="mt-1 text-sm font-semibold text-slate-800">
+                            {selectedStyleReference.name} • {getStyleReferenceKindLabel(selectedStyleReference)}
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => {
+                            setSelectedStyleReferenceId('');
+                            setStyleReference('');
+                          }}
+                          className="text-xs font-bold text-slate-500 hover:text-slate-700"
+                        >
+                          Bỏ chọn
+                        </button>
+                      </div>
+                      <p className="mt-2 text-xs leading-5 text-slate-600 line-clamp-4">
+                        {getStyleReferenceInstructionPreview(selectedStyleReference)}
+                      </p>
+                    </div>
+                  ) : null}
                   <textarea 
                     value={styleReference}
-                    onChange={(e) => setStyleReference(e.target.value)}
+                    onChange={(e) => {
+                      setSelectedStyleReferenceId('');
+                      setStyleReference(e.target.value);
+                    }}
                     placeholder="Dán một đoạn văn mẫu bạn muốn AI bắt chước phong cách..."
                     className="w-full h-24 p-3 rounded-xl border border-slate-200 text-sm resize-none tf-mobile-textarea"
                   />
@@ -13813,7 +13961,7 @@ const AIGenerationModal = ({
                       className="tf-modal-panel bg-white w-full max-w-2xl rounded-[32px] shadow-2xl overflow-hidden flex flex-col max-h-[80vh]"
                     >
                       <div className="p-6 border-b border-slate-100 flex justify-between items-center">
-                        <h3 className="text-xl font-serif font-bold">Thư viện văn mẫu</h3>
+                        <h3 className="text-xl font-serif font-bold">Kho văn phong</h3>
                         <button onClick={() => setShowStyleLibrary(false)} className="p-2 hover:bg-slate-100 rounded-full">
                           <Plus className="w-6 h-6 rotate-45 text-slate-400" />
                         </button>
@@ -13821,10 +13969,11 @@ const AIGenerationModal = ({
                       <div className="tf-modal-content p-6 overflow-y-auto">
                         <StyleReferenceLibrary 
                           onSelect={(content) => {
-                            setSelectedStyleReferenceId('');
                             setStyleReference(content);
                             setShowStyleLibrary(false);
-                          }} 
+                          }}
+                          onSelectReference={(reference) => setSelectedStyleReferenceId(reference.id)}
+                          activeReferenceId={selectedStyleReferenceId}
                         />
                       </div>
                     </motion.div>
