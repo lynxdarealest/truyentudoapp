@@ -5845,6 +5845,7 @@ interface Chapter {
   order: number;
   aiInstructions?: string;
   script?: string;
+  aiStyleQa?: StyleDriftQaReport;
   createdAt: any;
   updatedAt?: any;
 }
@@ -5876,6 +5877,7 @@ interface Story {
   storyPromptNotes?: string;
   characterRoster?: StoryCharacterProfile[];
   translationMemory?: TranslationDictionaryEntry[];
+  defaultStyleBindings?: StyleBlendBinding[];
   deletedChapterIds?: Record<string, string>;
   createdAt: any;
   updatedAt: any;
@@ -6844,6 +6846,31 @@ interface LearnedStyleProfile {
   writing_instruction: string;
 }
 
+interface StyleBlendBinding {
+  referenceId: string;
+  weight: number;
+}
+
+interface StyleReferenceVersion {
+  id: string;
+  createdAt: any;
+  name: string;
+  content: string;
+  kind: 'manual' | 'learned';
+  learnedProfile?: LearnedStyleProfile;
+  tags?: string[];
+  note?: string;
+}
+
+interface StyleDriftQaReport {
+  score: number;
+  verdict: string;
+  strengths: string[];
+  drifts: string[];
+  revisionInstruction: string;
+  checkedAt: any;
+}
+
 interface StyleReference {
   id: string;
   authorId: string;
@@ -6855,6 +6882,8 @@ interface StyleReference {
   sourceFileName?: string;
   sourceFormat?: string;
   chunkCount?: number;
+  tags?: string[];
+  versions?: StyleReferenceVersion[];
   styleMemory?: StyleMemoryProfile;
   learnedProfile?: LearnedStyleProfile;
 }
@@ -6908,6 +6937,319 @@ function normalizeLearnedStyleProfile(raw: unknown): LearnedStyleProfile {
     sample_lines: pickArray(parsed.sample_lines).slice(0, 5),
     writing_instruction: String(parsed.writing_instruction || '').trim(),
   };
+}
+
+function normalizeStyleBlendBindings(raw: unknown): StyleBlendBinding[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item) => {
+      const parsed = asRecord(item);
+      if (!parsed) return null;
+      const referenceId = String(parsed.referenceId || '').trim();
+      const weight = Math.max(5, Math.min(100, Number(parsed.weight) || 0));
+      if (!referenceId || !weight) return null;
+      return { referenceId, weight };
+    })
+    .filter((item): item is StyleBlendBinding => Boolean(item))
+    .slice(0, 3);
+}
+
+function normalizeStyleDriftQaReport(raw: unknown): StyleDriftQaReport | undefined {
+  const parsed = asRecord(raw);
+  if (!parsed) return undefined;
+  const pickArray = (value: unknown) => (Array.isArray(value) ? value.map((item) => String(item || '').trim()).filter(Boolean) : []);
+  return {
+    score: Math.max(0, Math.min(100, Number(parsed.score) || 0)),
+    verdict: String(parsed.verdict || '').trim() || 'Chưa đánh giá',
+    strengths: pickArray(parsed.strengths).slice(0, 4),
+    drifts: pickArray(parsed.drifts).slice(0, 4),
+    revisionInstruction: String(parsed.revisionInstruction || parsed.revision_instruction || '').trim(),
+    checkedAt: normalizeDateValue(parsed.checkedAt || parsed.checked_at || new Date().toISOString()),
+  };
+}
+
+function normalizeStyleReferenceVersions(raw: unknown): StyleReferenceVersion[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item) => {
+      const parsed = asRecord(item);
+      if (!parsed) return null;
+      const id = String(parsed.id || '').trim() || createClientId('style-ver');
+      const name = String(parsed.name || '').trim();
+      const content = String(parsed.content || '').trim();
+      if (!name || !content) return null;
+      return {
+        id,
+        createdAt: normalizeDateValue(parsed.createdAt || parsed.created_at || new Date().toISOString()),
+        name,
+        content,
+        kind: parsed.kind === 'learned' ? 'learned' : 'manual',
+        learnedProfile: parsed.learnedProfile ? normalizeLearnedStyleProfile(parsed.learnedProfile) : undefined,
+        tags: Array.isArray(parsed.tags) ? parsed.tags.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 8) : [],
+        note: String(parsed.note || '').trim() || undefined,
+      } satisfies StyleReferenceVersion;
+    })
+    .filter((item): item is StyleReferenceVersion => Boolean(item))
+    .sort((a, b) => new Date(String(b.createdAt || 0)).getTime() - new Date(String(a.createdAt || 0)).getTime())
+    .slice(0, 12);
+}
+
+function inferStyleTags(input: {
+  name?: string;
+  content?: string;
+  profile?: LearnedStyleProfile;
+  memory?: StyleMemoryProfile;
+}): string[] {
+  const profile = input.profile ? normalizeLearnedStyleProfile(input.profile) : undefined;
+  const memory = input.memory ? normalizeStyleMemoryProfile(input.memory) : undefined;
+  const corpus = normalizeSearchText([
+    input.name,
+    input.content,
+    profile?.style_name,
+    profile?.target_audience,
+    profile?.vocabulary_traits.join(' '),
+    profile?.sentence_structure.join(' '),
+    profile?.tone_and_mood.join(' '),
+    profile?.narration_style.join(' '),
+    profile?.dialogue_style.join(' '),
+    profile?.signature_patterns.join(' '),
+    memory?.audience,
+    memory?.vocabularyRules.join(' '),
+    memory?.toneRules.join(' '),
+    memory?.narrationRules.join(' '),
+  ].filter(Boolean).join(' '));
+  const tags: string[] = [];
+  const pushTag = (condition: boolean, label: string) => {
+    if (condition && !tags.includes(label)) tags.push(label);
+  };
+  pushTag(/kiem hiep|giang ho|vo lam/.test(corpus), 'Kiếm hiệp');
+  pushTag(/tien hiep|tu chan|phi thang|linh can/.test(corpus), 'Tiên hiệp');
+  pushTag(/do thi|hien dai|tong tai/.test(corpus), 'Đô thị');
+  pushTag(/ngon tinh|lang man|tinh cam/.test(corpus), 'Ngôn tình');
+  pushTag(/hai huoc|trao phong|di dom/.test(corpus), 'Hài hước');
+  pushTag(/u toi|kinh di|am anh|dark/.test(corpus), 'U tối');
+  pushTag(/bi an|trinh tham|hoi hop|mystery/.test(corpus), 'Bí ẩn');
+  pushTag(/co phong|han viet|co dien/.test(corpus), 'Cổ phong');
+  pushTag(/tre|thanh thieu nien|teen/.test(corpus), 'Teen');
+  pushTag(/truong thanh|nguoi lon|adult/.test(corpus), 'Trưởng thành');
+  pushTag(/chat tho|tho mong|lang dang/.test(corpus), 'Thơ mộng');
+  pushTag(/hanh dong|don dap|chien dau/.test(corpus), 'Hành động');
+  if (!tags.length && profile?.style_name) {
+    profile.style_name
+      .split(/[,\-|/]/)
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .slice(0, 3)
+      .forEach((item) => pushTag(true, item));
+  }
+  return tags.slice(0, 6);
+}
+
+function buildStyleReferenceVersionSnapshot(reference: StyleReference, note?: string): StyleReferenceVersion {
+  return {
+    id: createClientId('style-ver'),
+    createdAt: normalizeDateValue(reference.updatedAt || reference.createdAt || new Date().toISOString()),
+    name: String(reference.name || '').trim() || 'Phiên bản',
+    content: getStyleReferenceDisplayContent(reference),
+    kind: reference.kind === 'learned' ? 'learned' : 'manual',
+    learnedProfile: reference.learnedProfile ? normalizeLearnedStyleProfile(reference.learnedProfile) : undefined,
+    tags: Array.isArray(reference.tags) ? reference.tags.slice(0, 8) : inferStyleTags({
+      name: reference.name,
+      content: reference.content,
+      profile: reference.learnedProfile,
+      memory: reference.styleMemory,
+    }),
+    note: note?.trim() || undefined,
+  };
+}
+
+function buildStyleReferenceBlendSnippet(reference: StyleReference): string {
+  if (reference.kind === 'learned' && reference.learnedProfile) {
+    const profile = normalizeLearnedStyleProfile(reference.learnedProfile);
+    const parts = [
+      profile.writing_instruction,
+      profile.vocabulary_traits.length ? `Từ vựng: ${profile.vocabulary_traits.slice(0, 3).join('; ')}` : '',
+      profile.sentence_structure.length ? `Câu: ${profile.sentence_structure.slice(0, 3).join('; ')}` : '',
+      profile.tone_and_mood.length ? `Tone: ${profile.tone_and_mood.slice(0, 3).join('; ')}` : '',
+      profile.dialogue_style.length ? `Đối thoại: ${profile.dialogue_style.slice(0, 2).join('; ')}` : '',
+      profile.signature_patterns.length ? `Dấu hiệu: ${profile.signature_patterns.slice(0, 2).join('; ')}` : '',
+    ].filter(Boolean);
+    return parts.join('\n');
+  }
+  return String(reference.content || '').trim().slice(0, 1200);
+}
+
+function buildBlendedStyleReferencePrompt(
+  references: StyleReference[],
+  bindings: StyleBlendBinding[],
+  manualReference = '',
+): string {
+  const resolved = normalizeStyleBlendBindings(bindings)
+    .map((binding) => {
+      const reference = references.find((item) => item.id === binding.referenceId);
+      if (!reference) return null;
+      return { binding, reference };
+    })
+    .filter((item): item is { binding: StyleBlendBinding; reference: StyleReference } => Boolean(item));
+
+  const manual = String(manualReference || '').trim();
+  if (!resolved.length) return manual;
+
+  const totalWeight = resolved.reduce((sum, item) => sum + item.binding.weight, 0) || 1;
+  const sections = resolved
+    .sort((a, b) => b.binding.weight - a.binding.weight)
+    .map(({ binding, reference }, index) => {
+      const ratio = Math.round((binding.weight / totalWeight) * 100);
+      return [
+        `LOP VAN PHONG ${index + 1}: ${reference.name}`,
+        `Muc uu tien: ${ratio}%`,
+        `Loai: ${getStyleReferenceKindLabel(reference)}`,
+        buildStyleReferenceBlendSnippet(reference),
+      ].filter(Boolean).join('\n');
+    });
+
+  return [
+    'PHA TRON NHIEU DNA VAN PHONG:',
+    'Hãy giữ profile trọng số cao làm xương sống, profile thấp chỉ dùng để bổ sung nhịp câu, tone hoặc cách đối thoại.',
+    ...sections,
+    manual ? `GHI CHU VAN MAU BO SUNG RIENG:\n${manual}` : '',
+  ].filter(Boolean).join('\n\n').trim();
+}
+
+function buildStyleBindingsLabel(bindings: StyleBlendBinding[], references: StyleReference[]): string {
+  const resolved = normalizeStyleBlendBindings(bindings)
+    .map((binding) => {
+      const reference = references.find((item) => item.id === binding.referenceId);
+      if (!reference) return null;
+      return `${reference.name} ${binding.weight}%`;
+    })
+    .filter(Boolean);
+  return resolved.join(' • ');
+}
+
+function buildStyleReferenceExportPayload(reference: StyleReference) {
+  return {
+    kind: 'truyentudo-style-reference',
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    reference: {
+      ...reference,
+      tags: Array.isArray(reference.tags) ? reference.tags : inferStyleTags({
+        name: reference.name,
+        content: reference.content,
+        profile: reference.learnedProfile,
+        memory: reference.styleMemory,
+      }),
+      versions: normalizeStyleReferenceVersions(reference.versions),
+      styleMemory: reference.styleMemory ? normalizeStyleMemoryProfile(reference.styleMemory) : undefined,
+      learnedProfile: reference.learnedProfile ? normalizeLearnedStyleProfile(reference.learnedProfile) : undefined,
+    },
+  };
+}
+
+function parseImportedStyleReference(raw: string, authorId: string): StyleReference | null {
+  const parsed = tryParseJson<unknown>(String(raw || ''), 'object');
+  const root = asRecord(parsed);
+  if (!root) return null;
+  const nestedReference = asRecord(root.reference);
+  const learnedCandidate = root.writing_instruction ? root : null;
+  const source = nestedReference || learnedCandidate || root;
+  const name = String(source.name || source.style_name || '').trim();
+  if (!name) return null;
+  const learnedProfile = source.writing_instruction ? normalizeLearnedStyleProfile(source) : (source.learnedProfile ? normalizeLearnedStyleProfile(source.learnedProfile) : undefined);
+  const kind = source.kind === 'learned' || learnedProfile ? 'learned' : 'manual';
+  const content = kind === 'learned'
+    ? buildLearnedStyleReferenceContent(learnedProfile || normalizeLearnedStyleProfile(source))
+    : String(source.content || '').trim();
+  if (!content) return null;
+  const styleMemory = source.styleMemory ? normalizeStyleMemoryProfile(source.styleMemory) : undefined;
+  const imported: StyleReference = {
+    id: createClientId('style'),
+    authorId,
+    name,
+    content,
+    kind,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    sourceFileName: String(source.sourceFileName || '').trim() || undefined,
+    sourceFormat: String(source.sourceFormat || 'json').trim() || 'json',
+    chunkCount: Math.max(0, Number(source.chunkCount) || 0) || undefined,
+    styleMemory,
+    learnedProfile,
+    tags: Array.isArray(source.tags) ? source.tags.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 8) : inferStyleTags({ name, content, profile: learnedProfile, memory: styleMemory }),
+    versions: normalizeStyleReferenceVersions(source.versions),
+  };
+  imported.versions = [
+    buildStyleReferenceVersionSnapshot(imported, 'Bản nhập vào kho'),
+    ...normalizeStyleReferenceVersions(imported.versions),
+  ].slice(0, 12);
+  return imported;
+}
+
+function resolveActiveStyleBindings(
+  bindings: StyleBlendBinding[],
+  references: StyleReference[],
+): StyleBlendBinding[] {
+  const validIds = new Set(references.map((item) => item.id));
+  return normalizeStyleBlendBindings(bindings).filter((item) => validIds.has(item.referenceId));
+}
+
+async function assessStyleDriftWithAi({
+  ai,
+  stylePrompt,
+  chapterTitle,
+  chapterContent,
+}: {
+  ai: ReturnType<typeof createGeminiClient>;
+  stylePrompt: string;
+  chapterTitle: string;
+  chapterContent: string;
+}): Promise<StyleDriftQaReport | undefined> {
+  const normalizedStylePrompt = String(stylePrompt || '').trim();
+  const normalizedContent = String(chapterContent || '').trim();
+  if (!normalizedStylePrompt || !normalizedContent) return undefined;
+
+  const qaRaw = await generateGeminiText(
+    ai,
+    'balanced',
+    `Bạn là biên tập viên QA chuyên so độ bám văn phong.
+
+So sánh VAN PHONG MUC TIEU với DOAN NOI DUNG da tao. Chỉ đánh giá độ bám giọng văn, không đánh giá cốt truyện.
+
+Trả về JSON thuần:
+{
+  "score": 0,
+  "verdict": "",
+  "strengths": [],
+  "drifts": [],
+  "revisionInstruction": ""
+}
+
+Quy tắc:
+- score từ 0-100
+- strengths: tối đa 3 ý
+- drifts: tối đa 3 ý
+- revisionInstruction: 1 đoạn ngắn, trực tiếp, dùng cho lần rewrite tiếp theo
+- không bọc markdown
+
+VAN PHONG MUC TIEU:
+${normalizedStylePrompt.slice(0, 7000)}
+
+TIEU DE CHUONG:
+${chapterTitle || 'Chương mới'}
+
+DOAN NOI DUNG:
+${normalizedContent.slice(0, 9000)}`,
+    {
+      responseMimeType: 'application/json',
+      maxOutputTokens: 1200,
+      minOutputChars: 140,
+      maxRetries: 1,
+      safetySettings: GEMINI_UNRESTRICTED_SAFETY_SETTINGS,
+    },
+  );
+
+  return normalizeStyleDriftQaReport(tryParseJson<unknown>(qaRaw || '{}', 'object'));
 }
 
 function buildLearnedStyleReferenceContent(profile: LearnedStyleProfile): string {
@@ -9577,11 +9919,13 @@ const StyleReferenceLibrary = ({
   onClose,
   onSelectReference,
   activeReferenceId,
+  activeReferenceIds,
 }: { 
   onSelect?: (content: string) => void, 
   onClose?: () => void,
   onSelectReference?: (reference: StyleReference) => void,
   activeReferenceId?: string,
+  activeReferenceIds?: string[],
 }) => {
   const { user } = useAuth();
   const [references, setReferences] = useState<StyleReference[]>([]);
@@ -9600,11 +9944,31 @@ const StyleReferenceLibrary = ({
   const [editingRef, setEditingRef] = useState<StyleReference | null>(null);
   const [editingName, setEditingName] = useState('');
   const [editingContent, setEditingContent] = useState('');
+  const [isImporting, setIsImporting] = useState(false);
 
   useEffect(() => {
     const nextRefs = storage
       .getStyleReferences()
       .filter((reference: StyleReference) => !user || !reference.authorId || reference.authorId === user.uid)
+      .map((reference: StyleReference) => {
+        const learnedProfile = reference.learnedProfile ? normalizeLearnedStyleProfile(reference.learnedProfile) : undefined;
+        const styleMemory = reference.styleMemory ? normalizeStyleMemoryProfile(reference.styleMemory) : undefined;
+        return {
+          ...reference,
+          kind: reference.kind === 'learned' ? 'learned' : 'manual',
+          tags: Array.isArray(reference.tags) && reference.tags.length
+            ? reference.tags.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 8)
+            : inferStyleTags({
+                name: reference.name,
+                content: reference.content,
+                profile: learnedProfile,
+                memory: styleMemory,
+              }),
+          versions: normalizeStyleReferenceVersions(reference.versions),
+          learnedProfile,
+          styleMemory,
+        } satisfies StyleReference;
+      })
       .sort((a: StyleReference, b: StyleReference) => new Date(String(b.updatedAt || b.createdAt || 0)).getTime() - new Date(String(a.updatedAt || a.createdAt || 0)).getTime());
     setReferences(nextRefs);
   }, [user]);
@@ -9619,7 +9983,9 @@ const StyleReferenceLibrary = ({
       kind: 'manual',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      tags: inferStyleTags({ name: newName, content: newContent }),
     };
+    newRef.versions = [buildStyleReferenceVersionSnapshot(newRef, 'Bản tạo thủ công')];
     const newList = [newRef, ...references];
     persistReferences(newList);
     setNewName('');
@@ -9661,6 +10027,7 @@ const StyleReferenceLibrary = ({
       reference.name,
       getStyleReferencePreview(reference),
       reference.sourceFileName,
+      ...(reference.tags || []),
       reference.learnedProfile?.target_audience,
       reference.learnedProfile?.writing_instruction,
     ].some((value) => String(value || '').toLowerCase().includes(query));
@@ -9718,7 +10085,13 @@ const StyleReferenceLibrary = ({
         chunkCount: learned.chunkCount,
         styleMemory: learned.memory,
         learnedProfile: learned.profile,
+        tags: inferStyleTags({
+          name: learned.profile.style_name || newName.trim(),
+          profile: learned.profile,
+          memory: learned.memory,
+        }),
       };
+      styleReference.versions = [buildStyleReferenceVersionSnapshot(styleReference, 'Bản DNA gốc sau khi học')];
       const nextList = [styleReference, ...references];
       persistReferences(nextList);
       setNewName('');
@@ -9756,19 +10129,29 @@ const StyleReferenceLibrary = ({
           style_name: editingName.trim(),
           writing_instruction: editingContent.trim(),
         };
+        const previousVersion = buildStyleReferenceVersionSnapshot(reference, 'Trước khi chỉnh sửa');
         return {
           ...reference,
           name: editingName.trim(),
           content: buildLearnedStyleReferenceContent(nextProfile),
           updatedAt: new Date().toISOString(),
           learnedProfile: nextProfile,
+          tags: inferStyleTags({
+            name: editingName.trim(),
+            profile: nextProfile,
+            memory: reference.styleMemory,
+          }),
+          versions: [previousVersion, ...normalizeStyleReferenceVersions(reference.versions)].slice(0, 12),
         };
       }
+      const previousVersion = buildStyleReferenceVersionSnapshot(reference, 'Trước khi chỉnh sửa');
       return {
         ...reference,
         name: editingName.trim(),
         content: editingContent.trim(),
         updatedAt: new Date().toISOString(),
+        tags: inferStyleTags({ name: editingName.trim(), content: editingContent.trim() }),
+        versions: [previousVersion, ...normalizeStyleReferenceVersions(reference.versions)].slice(0, 12),
       };
     });
     persistReferences(nextList);
@@ -9795,6 +10178,73 @@ const StyleReferenceLibrary = ({
     notifyApp({ tone: 'success', message: 'Đã tạo AI Rule từ hồ sơ văn phong.' });
   };
 
+  const handleExportReference = (reference: StyleReference) => {
+    const payload = buildStyleReferenceExportPayload(reference);
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
+    downloadBlob(blob, `${sanitizeFilename(reference.name || 'style-reference')}.style.json`);
+    notifyApp({ tone: 'success', message: 'Đã xuất hồ sơ văn phong ra file JSON.' });
+  };
+
+  const handleImportReferenceFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !user) return;
+    setIsImporting(true);
+    try {
+      const raw = await file.text();
+      const imported = parseImportedStyleReference(raw, user.uid);
+      if (!imported) throw new Error('File không đúng định dạng hồ sơ văn phong.');
+      const nextList = [imported, ...references];
+      persistReferences(nextList);
+      notifyApp({ tone: 'success', message: 'Đã nhập hồ sơ văn phong vào kho.' });
+    } catch (error) {
+      notifyApp({ tone: 'error', message: error instanceof Error ? error.message : 'Không thể nhập hồ sơ văn phong.' });
+    } finally {
+      setIsImporting(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleRestoreVersion = (referenceId: string, version: StyleReferenceVersion) => {
+    const target = references.find((item) => item.id === referenceId);
+    if (!target) return;
+    if (!confirm(`Khôi phục "${version.name}" làm bản hiện tại?`)) return;
+    const previousVersion = buildStyleReferenceVersionSnapshot(target, 'Trước khi khôi phục phiên bản');
+    const learnedProfile = version.kind === 'learned' && version.learnedProfile
+      ? normalizeLearnedStyleProfile(version.learnedProfile)
+      : undefined;
+    const nextReference: StyleReference = {
+      ...target,
+      name: version.name,
+      content: version.content,
+      kind: version.kind,
+      learnedProfile,
+      updatedAt: new Date().toISOString(),
+      tags: Array.isArray(version.tags) && version.tags.length
+        ? version.tags
+        : inferStyleTags({
+            name: version.name,
+            content: version.content,
+            profile: learnedProfile,
+            memory: target.styleMemory,
+          }),
+      versions: [previousVersion, ...normalizeStyleReferenceVersions(target.versions).filter((item) => item.id !== version.id)].slice(0, 12),
+    };
+    const nextList = references.map((item) => (item.id === referenceId ? nextReference : item));
+    persistReferences(nextList);
+    setViewingRef(nextReference);
+    notifyApp({ tone: 'success', message: 'Đã khôi phục phiên bản văn phong.' });
+  };
+
+  const activeReferenceSet = React.useMemo(() => {
+    const next = new Set<string>();
+    if (activeReferenceId) next.add(activeReferenceId);
+    (activeReferenceIds || []).forEach((id) => {
+      const normalized = String(id || '').trim();
+      if (normalized) next.add(normalized);
+    });
+    return next;
+  }, [activeReferenceId, activeReferenceIds]);
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
@@ -9811,6 +10261,11 @@ const StyleReferenceLibrary = ({
               Đóng
             </button>
           ) : null}
+          <label className="flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 text-sm font-bold text-slate-500 hover:bg-slate-50 transition-all cursor-pointer">
+            {isImporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+            Nhập JSON
+            <input type="file" accept=".json,.style.json" onChange={handleImportReferenceFile} className="hidden" />
+          </label>
           <button 
             onClick={() => setIsAdding(!isAdding)}
             className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 transition-all"
@@ -9961,7 +10416,7 @@ const StyleReferenceLibrary = ({
           </div>
         ) : (
           visibleReferences.map(ref => {
-            const isActive = Boolean(activeReferenceId && ref.id === activeReferenceId);
+            const isActive = activeReferenceSet.has(ref.id);
             return (
               <div
                 key={ref.id}
@@ -9989,6 +10444,8 @@ const StyleReferenceLibrary = ({
                     <p className="mt-2 text-sm text-slate-600 line-clamp-3">{getStyleReferencePreview(ref)}</p>
                     <div className="mt-3 flex flex-wrap gap-3 text-[11px] text-slate-400">
                       <span>Cập nhật: {new Date(String(ref.updatedAt || ref.createdAt || '')).toLocaleString('vi-VN')}</span>
+                      {ref.tags?.length ? <span>Tag: {ref.tags.join(', ')}</span> : null}
+                      {ref.versions?.length ? <span>{ref.versions.length} phiên bản lưu</span> : null}
                       {ref.kind === 'learned' ? (
                         <>
                           <span>Nguồn: {ref.sourceFileName || 'Dán tay'}</span>
@@ -10019,10 +10476,17 @@ const StyleReferenceLibrary = ({
                       <Shield className="w-3 h-3" />
                       Tạo AI Rule
                     </button>
-                    {onSelect && (
+                    <button
+                      onClick={() => handleExportReference(ref)}
+                      className="flex items-center gap-1 px-2 py-1 bg-emerald-50 text-emerald-700 rounded-lg text-[10px] font-bold hover:bg-emerald-100 transition-all"
+                    >
+                      <Download className="w-3 h-3" />
+                      Xuất
+                    </button>
+                    {(onSelect || onSelectReference) && (
                       <button 
                         onClick={() => {
-                          onSelect(getStyleReferenceDisplayContent(ref));
+                          onSelect?.(getStyleReferenceDisplayContent(ref));
                           onSelectReference?.(ref);
                         }}
                         className={cn(
@@ -10075,10 +10539,16 @@ const StyleReferenceLibrary = ({
                 >
                   Tạo AI Rule
                 </button>
-                {onSelect ? (
+                <button
+                  onClick={() => handleExportReference(viewingRef)}
+                  className="px-3 py-2 rounded-xl bg-emerald-50 text-emerald-700 text-xs font-bold hover:bg-emerald-100 transition-all"
+                >
+                  Xuất JSON
+                </button>
+                {(onSelect || onSelectReference) ? (
                   <button
                     onClick={() => {
-                      onSelect(getStyleReferenceDisplayContent(viewingRef));
+                      onSelect?.(getStyleReferenceDisplayContent(viewingRef));
                       onSelectReference?.(viewingRef);
                       setViewingRef(null);
                     }}
@@ -10109,6 +10579,18 @@ const StyleReferenceLibrary = ({
                       <p className="mt-2">{viewingRef.sourceFileName || 'Dán tay'} • {viewingRef.chunkCount || 0} đợt phân tích</p>
                     </div>
                   </div>
+                  {viewingRef.tags?.length ? (
+                    <div className="rounded-2xl border border-slate-200 p-4">
+                      <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">Tags</p>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {viewingRef.tags.map((tag) => (
+                          <span key={tag} className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
                   {[
                     { label: 'Từ vựng', items: viewingRef.learnedProfile.vocabulary_traits },
                     { label: 'Cấu trúc câu', items: viewingRef.learnedProfile.sentence_structure },
@@ -10131,8 +10613,52 @@ const StyleReferenceLibrary = ({
                   ))}
                 </>
               ) : (
-                <div className="whitespace-pre-wrap">{viewingRef.content}</div>
+                <>
+                  {viewingRef.tags?.length ? (
+                    <div className="rounded-2xl border border-slate-200 p-4">
+                      <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">Tags</p>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {viewingRef.tags.map((tag) => (
+                          <span key={tag} className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                  <div className="whitespace-pre-wrap">{viewingRef.content}</div>
+                </>
               )}
+              {viewingRef.versions?.length ? (
+                <div className="rounded-2xl border border-slate-200 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">Lịch sử phiên bản</p>
+                    <span className="text-[11px] text-slate-400">{viewingRef.versions.length} bản lưu</span>
+                  </div>
+                  <div className="mt-3 space-y-3">
+                    {viewingRef.versions.slice(0, 6).map((version) => (
+                      <div key={version.id} className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="font-semibold text-slate-800 tf-break-long">{version.name}</p>
+                            <p className="mt-1 text-[11px] text-slate-400">
+                              {new Date(String(version.createdAt || '')).toLocaleString('vi-VN')}
+                              {version.note ? ` • ${version.note}` : ''}
+                            </p>
+                            <p className="mt-2 text-xs text-slate-500 line-clamp-3">{version.content}</p>
+                          </div>
+                          <button
+                            onClick={() => handleRestoreVersion(viewingRef.id, version)}
+                            className="shrink-0 rounded-xl bg-white px-3 py-2 text-xs font-bold text-indigo-600 border border-indigo-200 hover:bg-indigo-50 transition-all"
+                          >
+                            Khôi phục
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </div>
           </motion.div>
         </div>
@@ -10925,6 +11451,9 @@ const StoryDetail = ({
   const [editContent, setEditContent] = useState('');
   const [chapterRenderLimit, setChapterRenderLimit] = useState(CHAPTER_RENDER_BATCH_SIZE);
   const [chapterSearchTerm, setChapterSearchTerm] = useState('');
+  const [showStyleLockModal, setShowStyleLockModal] = useState(false);
+  const [storyStyleReferences, setStoryStyleReferences] = useState<StyleReference[]>([]);
+  const [storyStyleBindingsDraft, setStoryStyleBindingsDraft] = useState<StyleBlendBinding[]>([]);
   const displayGenre = parseStoryGenreAndPrompt(story.genre || '', story.storyPromptNotes || '').genreLabel || 'Chưa phân loại';
   const normalizedStoryCoverImageUrl = React.useMemo(
     () => normalizeCoverImageForDisplay(story.coverImageUrl, story.title, displayGenre),
@@ -10938,6 +11467,23 @@ const StoryDetail = ({
   );
   const selectedChapter = forcedSelectedChapter || manualSelectedChapter;
   const selectedChapterId = String(selectedChapter?.id || '').trim();
+  const activeStoryStyleBindings = React.useMemo(
+    () => resolveActiveStyleBindings(story.defaultStyleBindings || [], storyStyleReferences),
+    [story.defaultStyleBindings, storyStyleReferences],
+  );
+  const activeStoryStylePreview = React.useMemo(
+    () => buildStyleBindingsLabel(activeStoryStyleBindings, storyStyleReferences),
+    [activeStoryStyleBindings, storyStyleReferences],
+  );
+
+  useEffect(() => {
+    const refs = storage
+      .getStyleReferences()
+      .filter((reference: StyleReference) => !currentUserId || !reference.authorId || reference.authorId === currentUserId)
+      .sort((a: StyleReference, b: StyleReference) => new Date(String(b.updatedAt || b.createdAt || 0)).getTime() - new Date(String(a.updatedAt || a.createdAt || 0)).getTime());
+    setStoryStyleReferences(refs);
+    setStoryStyleBindingsDraft(resolveActiveStyleBindings(story.defaultStyleBindings || [], refs));
+  }, [currentUserId, story.defaultStyleBindings, story.id]);
 
   const getRenderableChapterContent = (content: string) => {
     if (!content) return '';
@@ -11231,6 +11777,20 @@ const StoryDetail = ({
     onUpdateStory(updatedStory);
   };
 
+  const handleSaveStoryStyleBindings = () => {
+    const nextBindings = resolveActiveStyleBindings(storyStyleBindingsDraft, storyStyleReferences);
+    persistUpdatedStory({
+      ...story,
+      defaultStyleBindings: nextBindings,
+      updatedAt: new Date().toISOString(),
+    });
+    setShowStyleLockModal(false);
+    notifyApp({
+      tone: 'success',
+      message: nextBindings.length ? 'Đã khóa văn phong mặc định cho truyện.' : 'Đã gỡ khóa văn phong mặc định.',
+    });
+  };
+
   const handleSaveChapterEdit = async () => {
     if (!selectedChapter || !story.chapters) return;
     const updatedAt = new Date().toISOString();
@@ -11440,6 +12000,36 @@ const StoryDetail = ({
               >
                 {selectedChapterDisplayTitle}
               </h1>
+              {selectedChapter.aiStyleQa ? (
+                <div className="mb-8 rounded-[24px] border border-emerald-200 bg-emerald-50/70 px-5 py-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-600">QA văn phong</p>
+                      <p className="mt-1 text-sm font-semibold text-slate-800">
+                        {selectedChapter.aiStyleQa.score}/100 · {selectedChapter.aiStyleQa.verdict}
+                      </p>
+                    </div>
+                    <span className="text-xs text-slate-500">
+                      {new Date(String(selectedChapter.aiStyleQa.checkedAt || '')).toLocaleString('vi-VN')}
+                    </span>
+                  </div>
+                  {selectedChapter.aiStyleQa.drifts?.length ? (
+                    <div className="mt-3 text-sm text-slate-600">
+                      <p className="font-semibold text-slate-800">Lệch chính</p>
+                      <ul className="mt-2 list-disc space-y-1 pl-5">
+                        {selectedChapter.aiStyleQa.drifts.map((item, index) => (
+                          <li key={`${item}-${index}`}>{item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                  {selectedChapter.aiStyleQa.revisionInstruction ? (
+                    <p className="mt-3 text-sm text-slate-600">
+                      <span className="font-semibold text-slate-800">Gợi ý lần viết sau:</span> {selectedChapter.aiStyleQa.revisionInstruction}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
             
             <div
             className="reader-markdown markdown-body text-lg leading-relaxed text-slate-700"
@@ -11788,8 +12378,153 @@ const StoryDetail = ({
               </div>
             </div>
           </div>
+          <div className="rounded-[32px] border border-indigo-100 bg-white p-5 sm:p-6 shadow-sm">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-bold text-slate-900">Khóa văn phong theo truyện</h3>
+                <p className="mt-1 text-sm text-slate-500">
+                  Khi viết chương mới, modal AI sẽ tự nạp các văn phong này làm mặc định.
+                </p>
+              </div>
+              {!isReadOnly ? (
+                <button
+                  onClick={() => setShowStyleLockModal(true)}
+                  className="rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition-all"
+                >
+                  Chỉnh
+                </button>
+              ) : null}
+            </div>
+            {activeStoryStyleBindings.length ? (
+              <div className="mt-4 space-y-3">
+                <p className="text-sm font-semibold text-slate-800">{activeStoryStylePreview}</p>
+                <div className="space-y-2">
+                  {activeStoryStyleBindings.map((binding) => {
+                    const reference = storyStyleReferences.find((item) => item.id === binding.referenceId);
+                    if (!reference) return null;
+                    return (
+                      <div key={reference.id} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold text-slate-800">{reference.name}</p>
+                            <p className="mt-1 text-xs text-slate-500 line-clamp-2">{getStyleReferenceInstructionPreview(reference)}</p>
+                          </div>
+                          <span className="rounded-full bg-indigo-100 px-3 py-1 text-xs font-bold text-indigo-700">
+                            {binding.weight}%
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : (
+              <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-500">
+                Chưa khóa văn phong nào. Mỗi lần viết chương AI sẽ dùng cấu hình thủ công của bạn.
+              </div>
+            )}
+          </div>
         </div>
       </div>
+      {showStyleLockModal ? (
+        <div className="fixed inset-0 z-[210] tf-modal-overlay flex items-center justify-center p-6 bg-slate-900/60 backdrop-blur-md">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="tf-modal-panel bg-white w-full max-w-2xl rounded-[32px] shadow-2xl overflow-hidden flex flex-col max-h-[80vh]"
+          >
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-xl font-serif font-bold text-slate-900">Khóa văn phong mặc định</h3>
+                <p className="mt-1 text-xs text-slate-500">Chọn tối đa 3 hồ sơ và chỉnh trọng số cho từng lớp văn phong.</p>
+              </div>
+              <button onClick={() => setShowStyleLockModal(false)} className="p-2 hover:bg-slate-100 rounded-full">
+                <Plus className="w-6 h-6 rotate-45 text-slate-400" />
+              </button>
+            </div>
+            <div className="tf-modal-content p-6 overflow-y-auto space-y-4">
+              <select
+                value=""
+                onChange={(e) => {
+                  const reference = storyStyleReferences.find((item) => item.id === e.target.value);
+                  if (!reference) return;
+                  setStoryStyleBindingsDraft((prev) => {
+                    if (prev.some((item) => item.referenceId === reference.id)) return prev;
+                    if (prev.length >= 3) return prev;
+                    return [...prev, { referenceId: reference.id, weight: prev.length === 0 ? 70 : prev.length === 1 ? 30 : 20 }];
+                  });
+                }}
+                className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-500"
+              >
+                <option value="">Thêm hồ sơ từ kho văn phong...</option>
+                {storyStyleReferences.map((reference) => (
+                  <option key={reference.id} value={reference.id}>
+                    {reference.name}{reference.kind === 'learned' ? ' • DNA văn phong' : ' • Văn mẫu'}
+                  </option>
+                ))}
+              </select>
+              {storyStyleBindingsDraft.length ? (
+                <div className="space-y-3">
+                  {storyStyleBindingsDraft.map((binding) => {
+                    const reference = storyStyleReferences.find((item) => item.id === binding.referenceId);
+                    if (!reference) return null;
+                    return (
+                      <div key={reference.id} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold text-slate-800">{reference.name}</p>
+                            <p className="mt-1 text-xs text-slate-500 line-clamp-3">{getStyleReferenceInstructionPreview(reference)}</p>
+                          </div>
+                          <button
+                            onClick={() => setStoryStyleBindingsDraft((prev) => prev.filter((item) => item.referenceId !== reference.id))}
+                            className="text-xs font-bold text-slate-500 hover:text-slate-700"
+                          >
+                            Gỡ
+                          </button>
+                        </div>
+                        <div className="mt-3 flex items-center gap-3">
+                          <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Trọng số</span>
+                          <input
+                            type="range"
+                            min="10"
+                            max="100"
+                            step="5"
+                            value={binding.weight}
+                            onChange={(e) => {
+                              const nextWeight = Math.max(10, Math.min(100, Number(e.target.value) || 10));
+                              setStoryStyleBindingsDraft((prev) => prev.map((item) => item.referenceId === reference.id ? { ...item, weight: nextWeight } : item));
+                            }}
+                            className="flex-1"
+                          />
+                          <span className="text-xs font-bold text-indigo-600">{binding.weight}%</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-500">
+                  Chưa chọn profile nào.
+                </div>
+              )}
+            </div>
+            <div className="p-6 border-t border-slate-100 bg-slate-50 flex items-center justify-between gap-3">
+              <button
+                onClick={() => setStoryStyleBindingsDraft([])}
+                className="rounded-xl border border-slate-200 px-4 py-3 text-sm font-bold text-slate-500 hover:bg-white transition-all"
+              >
+                Xóa hết
+              </button>
+              <button
+                onClick={handleSaveStoryStyleBindings}
+                className="rounded-xl bg-indigo-600 px-4 py-3 text-sm font-bold text-white hover:bg-indigo-700 transition-all"
+              >
+                Lưu mặc định
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      ) : null}
     </motion.div>
   );
 };
@@ -13131,7 +13866,8 @@ const AIStoryCreationModal = ({
     customTone?: string,
     perspective: string,
     audience: string,
-    styleReference: string
+    styleReference: string,
+    styleBindings: StyleBlendBinding[],
   }) => void,
   fileName: string
 }) => {
@@ -13146,19 +13882,39 @@ const AIStoryCreationModal = ({
   const [audience, setAudience] = useState('general');
   const [styleReference, setStyleReference] = useState('');
   const [styleReferences, setStyleReferences] = useState<StyleReference[]>([]);
-  const [selectedStyleReferenceId, setSelectedStyleReferenceId] = useState('');
+  const [selectedStyleBindings, setSelectedStyleBindings] = useState<StyleBlendBinding[]>([]);
   const [showStyleLibrary, setShowStyleLibrary] = useState(false);
   const [isExtractingStyle, setIsExtractingStyle] = useState(false);
   const [showPromptLibrary, setShowPromptLibrary] = useState(false);
-  const selectedStyleReference = styleReferences.find((reference) => reference.id === selectedStyleReferenceId) || null;
+  const selectedStyleReferences = selectedStyleBindings
+    .map((binding) => {
+      const reference = styleReferences.find((item) => item.id === binding.referenceId);
+      if (!reference) return null;
+      return { binding, reference };
+    })
+    .filter((item): item is { binding: StyleBlendBinding; reference: StyleReference } => Boolean(item));
+
+  const handleAddStyleBinding = (reference: StyleReference) => {
+    setSelectedStyleBindings((prev) => {
+      if (prev.some((item) => item.referenceId === reference.id)) return prev;
+      if (prev.length >= 3) {
+        notifyApp({ tone: 'warn', message: 'Chỉ nên trộn tối đa 3 văn phong để giữ kết quả ổn định.' });
+        return prev;
+      }
+      return [...prev, { referenceId: reference.id, weight: prev.length === 0 ? 70 : prev.length === 1 ? 30 : 20 }];
+    });
+  };
 
   useEffect(() => {
     if (!isOpen) return;
+    setStyleReference('');
+    setSelectedStyleBindings([]);
     const nextReferences = storage
       .getStyleReferences()
       .filter((reference: StyleReference) => !user || !reference.authorId || reference.authorId === user.uid)
       .sort((a: StyleReference, b: StyleReference) => new Date(String(b.updatedAt || b.createdAt || 0)).getTime() - new Date(String(a.updatedAt || a.createdAt || 0)).getTime());
     setStyleReferences(nextReferences);
+    setSelectedStyleBindings((prev) => resolveActiveStyleBindings(prev, nextReferences));
   }, [isOpen, user]);
 
   const handleStyleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -13167,7 +13923,6 @@ const AIStoryCreationModal = ({
     setIsExtractingStyle(true);
     try {
       const content = await readTextFromSupportedFile(file);
-      setSelectedStyleReferenceId('');
       setStyleReference(content);
     } catch (error) {
       notifyApp({ tone: 'error', message: 'Lỗi khi đọc file: ' + error });
@@ -13346,18 +14101,17 @@ const AIStoryCreationModal = ({
             </div>
             <div className="mb-3">
               <select
-                value={selectedStyleReferenceId}
+                value=""
                 onChange={(e) => {
                   const nextId = e.target.value;
-                  setSelectedStyleReferenceId(nextId);
                   const selected = styleReferences.find((reference) => reference.id === nextId);
                   if (selected) {
-                    setStyleReference(getStyleReferenceDisplayContent(selected));
+                    handleAddStyleBinding(selected);
                   }
                 }}
                 className="w-full p-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 text-sm"
               >
-                <option value="">Chọn nhanh từ kho văn phong...</option>
+                <option value="">Thêm văn phong từ kho để trộn...</option>
                 {styleReferences.map((reference) => (
                   <option key={reference.id} value={reference.id}>
                     {reference.name}{reference.kind === 'learned' ? ' • DNA văn phong' : ' • Văn mẫu'}
@@ -13365,37 +14119,58 @@ const AIStoryCreationModal = ({
                 ))}
               </select>
             </div>
-            {selectedStyleReference ? (
-              <div className="mb-3 rounded-2xl border border-indigo-100 bg-indigo-50/60 px-4 py-3">
+            {selectedStyleReferences.length ? (
+              <div className="mb-3 rounded-2xl border border-indigo-100 bg-indigo-50/60 px-4 py-3 space-y-3">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <p className="text-xs font-bold uppercase tracking-[0.16em] text-indigo-500">Đang áp dụng</p>
+                    <p className="text-xs font-bold uppercase tracking-[0.16em] text-indigo-500">Đang trộn văn phong</p>
                     <p className="mt-1 text-sm font-semibold text-slate-800">
-                      {selectedStyleReference.name} • {getStyleReferenceKindLabel(selectedStyleReference)}
+                      {buildStyleBindingsLabel(selectedStyleBindings, styleReferences)}
                     </p>
                   </div>
-                  <button
-                    onClick={() => {
-                      setSelectedStyleReferenceId('');
-                      setStyleReference('');
-                    }}
-                    className="text-xs font-bold text-slate-500 hover:text-slate-700"
-                  >
-                    Bỏ chọn
-                  </button>
                 </div>
-                <p className="mt-2 text-xs leading-5 text-slate-600 line-clamp-4">
-                  {getStyleReferenceInstructionPreview(selectedStyleReference)}
-                </p>
+                <div className="space-y-3">
+                  {selectedStyleReferences.map(({ binding, reference }) => (
+                    <div key={reference.id} className="rounded-2xl border border-white/70 bg-white/80 px-4 py-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-slate-800">{reference.name}</p>
+                          <p className="mt-1 text-xs text-slate-500 line-clamp-3">{getStyleReferenceInstructionPreview(reference)}</p>
+                        </div>
+                        <button
+                          onClick={() => setSelectedStyleBindings((prev) => prev.filter((item) => item.referenceId !== reference.id))}
+                          className="text-xs font-bold text-slate-500 hover:text-slate-700"
+                        >
+                          Bỏ
+                        </button>
+                      </div>
+                      <div className="mt-3 flex items-center gap-3">
+                        <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Trọng số</span>
+                        <input
+                          type="range"
+                          min="10"
+                          max="100"
+                          step="5"
+                          value={binding.weight}
+                          onChange={(e) => {
+                            const nextWeight = Math.max(10, Math.min(100, Number(e.target.value) || 10));
+                            setSelectedStyleBindings((prev) => prev.map((item) => item.referenceId === reference.id ? { ...item, weight: nextWeight } : item));
+                          }}
+                          className="flex-1"
+                        />
+                        <span className="text-xs font-bold text-indigo-600">{binding.weight}%</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             ) : null}
             <textarea 
               value={styleReference}
               onChange={(e) => {
-                setSelectedStyleReferenceId('');
                 setStyleReference(e.target.value);
               }}
-              placeholder="Dán một đoạn văn mẫu bạn muốn AI bắt chước phong cách..."
+              placeholder="Ghi chú văn mẫu riêng hoặc dán thêm đoạn văn ngoài kho..."
               className="w-full h-24 p-4 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 resize-none text-sm tf-mobile-textarea"
             />
           </div>
@@ -13415,12 +14190,11 @@ const AIStoryCreationModal = ({
                 </div>
                 <div className="tf-modal-content p-6 overflow-y-auto">
                   <StyleReferenceLibrary 
-                    onSelect={(content) => {
-                      setStyleReference(content);
+                    onSelectReference={(reference) => {
+                      handleAddStyleBinding(reference);
                       setShowStyleLibrary(false);
                     }}
-                    onSelectReference={(reference) => setSelectedStyleReferenceId(reference.id)}
-                    activeReferenceId={selectedStyleReferenceId}
+                    activeReferenceIds={selectedStyleBindings.map((item) => item.referenceId)}
                   />
                 </div>
               </motion.div>
@@ -13430,7 +14204,18 @@ const AIStoryCreationModal = ({
 
         <div className="p-6 md:p-8 bg-slate-50 border-t border-slate-100 tf-modal-actions">
           <button 
-            onClick={() => onConfirm({ genre, pacing, tone, isAdult, customPacing, customTone, perspective, audience, styleReference })}
+            onClick={() => onConfirm({
+              genre,
+              pacing,
+              tone,
+              isAdult,
+              customPacing,
+              customTone,
+              perspective,
+              audience,
+              styleReference: buildBlendedStyleReferencePrompt(styleReferences, selectedStyleBindings, styleReference),
+              styleBindings: selectedStyleBindings,
+            })}
             className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-900/20 flex items-center justify-center gap-3"
           >
             <Sparkles className="w-5 h-5" />
@@ -13449,6 +14234,7 @@ const AIGenerationModal = ({
   onGenerate,
   initialOutline = "",
   isAdult: initialIsAdult = false,
+  storyId,
   lastChapterContent = ""
 }: { 
   isOpen: boolean, 
@@ -13471,6 +14257,8 @@ const AIGenerationModal = ({
     perspective: string,
     audience: string,
     styleReference: string,
+    styleBindings: StyleBlendBinding[],
+    styleQaEnabled: boolean,
     aiInstructions: string,
     chapterScript: string,
     bannedPhrases: string,
@@ -13501,7 +14289,8 @@ const AIGenerationModal = ({
   const [audience, setAudience] = useState('general');
   const [styleReference, setStyleReference] = useState('');
   const [styleReferences, setStyleReferences] = useState<StyleReference[]>([]);
-  const [selectedStyleReferenceId, setSelectedStyleReferenceId] = useState('');
+  const [selectedStyleBindings, setSelectedStyleBindings] = useState<StyleBlendBinding[]>([]);
+  const [styleQaEnabled, setStyleQaEnabled] = useState(true);
   const [aiInstructions, setAiInstructions] = useState('');
   const [chapterScript, setChapterScript] = useState('');
   const [bannedPhrases, setBannedPhrases] = useState(DEFAULT_FORBIDDEN_CLICHE_PHRASES.join('\n'));
@@ -13513,7 +14302,24 @@ const AIGenerationModal = ({
   const [isExtractingStyle, setIsExtractingStyle] = useState(false);
   const [showPromptLibrary, setShowPromptLibrary] = useState(false);
   const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
-  const selectedStyleReference = styleReferences.find((reference) => reference.id === selectedStyleReferenceId) || null;
+  const selectedStyleReferences = selectedStyleBindings
+    .map((binding) => {
+      const reference = styleReferences.find((item) => item.id === binding.referenceId);
+      if (!reference) return null;
+      return { binding, reference };
+    })
+    .filter((item): item is { binding: StyleBlendBinding; reference: StyleReference } => Boolean(item));
+
+  const handleAddStyleBinding = (reference: StyleReference) => {
+    setSelectedStyleBindings((prev) => {
+      if (prev.some((item) => item.referenceId === reference.id)) return prev;
+      if (prev.length >= 3) {
+        notifyApp({ tone: 'warn', message: 'Chỉ nên trộn tối đa 3 văn phong để tránh prompt bị loãng.' });
+        return prev;
+      }
+      return [...prev, { referenceId: reference.id, weight: prev.length === 0 ? 70 : prev.length === 1 ? 30 : 20 }];
+    });
+  };
 
   useEffect(() => {
     if (isOpen) {
@@ -13521,6 +14327,7 @@ const AIGenerationModal = ({
       setIsAdult(initialIsAdult);
       setPreviousContext(lastChapterContent);
       setShowAdvancedOptions(false);
+      setStyleQaEnabled(true);
     }
   }, [isOpen, initialOutline, initialIsAdult, lastChapterContent]);
 
@@ -13542,7 +14349,7 @@ const AIGenerationModal = ({
     },
     {
       label: 'Kịch bản hoặc văn mẫu',
-      ready: Boolean(chapterScript.trim()) || Boolean(styleReference.trim()),
+      ready: Boolean(chapterScript.trim()) || Boolean(styleReference.trim()) || selectedStyleBindings.length > 0,
       hint: 'Rất hữu ích khi muốn giữ nhịp điệu và giọng văn ổn định.',
     },
   ];
@@ -13625,7 +14432,6 @@ const AIGenerationModal = ({
     setIsExtractingStyle(true);
     try {
       const content = await readTextFromSupportedFile(file);
-      setSelectedStyleReferenceId('');
       setStyleReference(content);
     } catch (error) {
       notifyApp({ tone: 'error', message: 'Lỗi khi đọc file: ' + error });
@@ -13647,11 +14453,15 @@ const AIGenerationModal = ({
         .getStyleReferences()
         .filter((reference: StyleReference) => !reference.authorId || reference.authorId === user.uid)
         .sort((a: StyleReference, b: StyleReference) => new Date(String(b.updatedAt || b.createdAt || 0)).getTime() - new Date(String(a.updatedAt || a.createdAt || 0)).getTime());
+      const storyDefaults = storyId
+        ? normalizeStyleBlendBindings(storage.getStoryById(storyId)?.defaultStyleBindings || [])
+        : [];
       setCharacters(nextCharacters);
       setAiRules(nextRules);
       setStyleReferences(nextStyleReferences);
+      setSelectedStyleBindings(resolveActiveStyleBindings(storyDefaults, nextStyleReferences));
     }
-  }, [isOpen, user]);
+  }, [isOpen, storyId, user]);
 
   if (!isOpen) return null;
 
@@ -14089,57 +14899,97 @@ const AIGenerationModal = ({
                     </div>
                   </div>
                   <select
-                    value={selectedStyleReferenceId}
+                    value=""
                     onChange={(e) => {
                       const nextId = e.target.value;
-                      setSelectedStyleReferenceId(nextId);
                       const selected = styleReferences.find((reference) => reference.id === nextId);
                       if (selected) {
-                        setStyleReference(getStyleReferenceDisplayContent(selected));
+                        handleAddStyleBinding(selected);
                       }
                     }}
                     className="w-full p-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 text-sm"
                   >
-                    <option value="">Chọn nhanh từ kho văn phong...</option>
+                    <option value="">Thêm văn phong từ kho để trộn...</option>
                     {styleReferences.map((reference) => (
                       <option key={reference.id} value={reference.id}>
                         {reference.name}{reference.kind === 'learned' ? ' • DNA văn phong' : ' • Văn mẫu'}
                       </option>
                     ))}
                   </select>
-                  {selectedStyleReference ? (
-                    <div className="rounded-2xl border border-indigo-100 bg-indigo-50/60 px-4 py-3">
+                  {selectedStyleReferences.length ? (
+                    <div className="space-y-3 rounded-2xl border border-indigo-100 bg-indigo-50/60 px-4 py-3">
                       <div className="flex items-center justify-between gap-3">
                         <div>
-                          <p className="text-xs font-bold uppercase tracking-[0.16em] text-indigo-500">Đang áp dụng</p>
+                          <p className="text-xs font-bold uppercase tracking-[0.16em] text-indigo-500">Đang trộn văn phong</p>
                           <p className="mt-1 text-sm font-semibold text-slate-800">
-                            {selectedStyleReference.name} • {getStyleReferenceKindLabel(selectedStyleReference)}
+                            {buildStyleBindingsLabel(selectedStyleBindings, styleReferences)}
                           </p>
                         </div>
-                        <button
-                          onClick={() => {
-                            setSelectedStyleReferenceId('');
-                            setStyleReference('');
-                          }}
-                          className="text-xs font-bold text-slate-500 hover:text-slate-700"
-                        >
-                          Bỏ chọn
-                        </button>
+                        {storyId && storage.getStoryById(storyId)?.defaultStyleBindings?.length ? (
+                          <button
+                            onClick={() => setSelectedStyleBindings(resolveActiveStyleBindings(storage.getStoryById(storyId)?.defaultStyleBindings || [], styleReferences))}
+                            className="text-xs font-bold text-indigo-600 hover:text-indigo-700"
+                          >
+                            Dùng mặc định truyện
+                          </button>
+                        ) : null}
                       </div>
-                      <p className="mt-2 text-xs leading-5 text-slate-600 line-clamp-4">
-                        {getStyleReferenceInstructionPreview(selectedStyleReference)}
-                      </p>
+                      {selectedStyleReferences.map(({ binding, reference }) => (
+                        <div key={reference.id} className="rounded-2xl border border-white/70 bg-white/80 px-4 py-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="text-sm font-semibold text-slate-800">{reference.name}</p>
+                              <p className="mt-1 text-xs text-slate-500 line-clamp-3">{getStyleReferenceInstructionPreview(reference)}</p>
+                            </div>
+                            <button
+                              onClick={() => setSelectedStyleBindings((prev) => prev.filter((item) => item.referenceId !== reference.id))}
+                              className="text-xs font-bold text-slate-500 hover:text-slate-700"
+                            >
+                              Bỏ
+                            </button>
+                          </div>
+                          <div className="mt-3 flex items-center gap-3">
+                            <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Trọng số</span>
+                            <input
+                              type="range"
+                              min="10"
+                              max="100"
+                              step="5"
+                              value={binding.weight}
+                              onChange={(e) => {
+                                const nextWeight = Math.max(10, Math.min(100, Number(e.target.value) || 10));
+                                setSelectedStyleBindings((prev) => prev.map((item) => item.referenceId === reference.id ? { ...item, weight: nextWeight } : item));
+                              }}
+                              className="flex-1"
+                            />
+                            <span className="text-xs font-bold text-indigo-600">{binding.weight}%</span>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   ) : null}
                   <textarea 
                     value={styleReference}
                     onChange={(e) => {
-                      setSelectedStyleReferenceId('');
                       setStyleReference(e.target.value);
                     }}
-                    placeholder="Dán một đoạn văn mẫu bạn muốn AI bắt chước phong cách..."
+                    placeholder="Ghi chú văn mẫu riêng hoặc dán thêm đoạn văn ngoài kho..."
                     className="w-full h-24 p-3 rounded-xl border border-slate-200 text-sm resize-none tf-mobile-textarea"
                   />
+                  <button
+                    onClick={() => setStyleQaEnabled((prev) => !prev)}
+                    className={cn(
+                      'w-full rounded-xl border px-4 py-3 text-left text-sm transition-all',
+                      styleQaEnabled ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-white text-slate-500'
+                    )}
+                  >
+                    <span className="block font-semibold">QA lệch văn phong sau khi sinh</span>
+                    <span className="mt-1 block text-xs leading-5">
+                      {styleQaEnabled
+                        ? 'Bật: AI sẽ chấm nhanh độ bám văn phong và gợi ý chỉnh sửa sau khi sinh chương.'
+                        : 'Tắt: bỏ bước QA để tiết kiệm thời gian và quota.'}
+                    </span>
+                  </button>
                 </div>
 
                 {showStyleLibrary && (
@@ -14157,12 +15007,11 @@ const AIGenerationModal = ({
                       </div>
                       <div className="tf-modal-content p-6 overflow-y-auto">
                         <StyleReferenceLibrary 
-                          onSelect={(content) => {
-                            setStyleReference(content);
+                          onSelectReference={(reference) => {
+                            handleAddStyleBinding(reference);
                             setShowStyleLibrary(false);
                           }}
-                          onSelectReference={(reference) => setSelectedStyleReferenceId(reference.id)}
-                          activeReferenceId={selectedStyleReferenceId}
+                          activeReferenceIds={selectedStyleBindings.map((item) => item.referenceId)}
                         />
                       </div>
                     </motion.div>
@@ -14197,7 +15046,9 @@ const AIGenerationModal = ({
               previousContext,
               perspective,
               audience,
-              styleReference,
+              styleReference: buildBlendedStyleReferencePrompt(styleReferences, selectedStyleBindings, styleReference),
+              styleBindings: selectedStyleBindings,
+              styleQaEnabled,
               aiInstructions,
               chapterScript,
               bannedPhrases,
@@ -18898,6 +19749,8 @@ YÊU CẦU SỬA LỖI:
     perspective: string,
     audience: string,
     styleReference: string,
+    styleBindings: StyleBlendBinding[],
+    styleQaEnabled: boolean,
     aiInstructions: string,
     chapterScript: string,
     bannedPhrases: string,
@@ -18906,11 +19759,24 @@ YÊU CẦU SỬA LỖI:
     const { 
       outline, chapterLength, chapterCount, isAdult, pacing, tone, focus, predictPlot,
       customPacing, customTone, customFocus, selectedCharacters, keyEvents, previousContext,
-      perspective, audience, styleReference, aiInstructions, chapterScript, bannedPhrases, selectedRuleId
+      perspective, audience, styleReference, styleBindings, styleQaEnabled, aiInstructions, chapterScript, bannedPhrases, selectedRuleId
     } = options;
     if (!user || !selectedStory) return;
     const latestStory = (storage.getStories() as Story[]).find((story) => story.id === selectedStory.id) || selectedStory;
     const currentChapters = normalizeChaptersForLocal((latestStory.chapters || []) as Chapter[]);
+    const availableStyleReferences = storage
+      .getStyleReferences()
+      .filter((reference: StyleReference) => !reference.authorId || reference.authorId === user.uid)
+      .sort((a: StyleReference, b: StyleReference) => new Date(String(b.updatedAt || b.createdAt || 0)).getTime() - new Date(String(a.updatedAt || a.createdAt || 0)).getTime());
+    const effectiveStyleBindings = resolveActiveStyleBindings(
+      styleBindings?.length ? styleBindings : normalizeStyleBlendBindings(latestStory.defaultStyleBindings || []),
+      availableStyleReferences,
+    );
+    const compiledStyleReference = buildBlendedStyleReferencePrompt(
+      availableStyleReferences,
+      effectiveStyleBindings,
+      styleReference,
+    );
     const latestChapterContext = currentChapters.length
       ? String(
           [...currentChapters]
@@ -19056,7 +19922,7 @@ YÊU CẦU SỬA LỖI:
         - Đối tượng độc giả: ${audience === 'teen' ? 'Thanh thiếu niên' : audience === 'adult' ? 'Người trưởng thành' : audience === 'hardcore' ? 'Độc giả lâu năm' : 'Đại chúng'}
         - Chỉ dẫn mạch truyện: ${predictInstruction}
         
-        ${styleReference ? `PHONG CÁCH VĂN MẪU (Hãy bắt chước giọng văn này):\n${styleReference}\n` : ""}
+        ${compiledStyleReference ? `PHONG CÁCH VĂN MẪU (Hãy bắt chước giọng văn này):\n${compiledStyleReference}\n` : ""}
         ${finalInstructions ? `CHỈ DẪN THÊM CHO AI:\n${finalInstructions}\n` : ""}
         ${chapterScript ? `KỊCH BẢN CHI TIẾT CHO CHƯƠNG NÀY:\n${chapterScript}\n` : ""}
         ${storyTranslationContext ? `${storyTranslationContext}\n` : ""}
@@ -19327,6 +20193,20 @@ ${JSON.stringify(violatingPayload)}
 
       const nextOrder = currentChapters.length + 1;
       
+      let styleQaReport: StyleDriftQaReport | undefined;
+      if (styleQaEnabled && compiledStyleReference.trim() && chapterDrafts.length) {
+        try {
+          styleQaReport = await assessStyleDriftWithAi({
+            ai,
+            stylePrompt: compiledStyleReference,
+            chapterTitle: String(chapterDrafts[0]?.title || `Chương mới ${nextOrder}`),
+            chapterContent: chapterDrafts.slice(0, 2).map((item) => `${item.title}\n${item.content}`).join('\n\n').slice(0, 12000),
+          });
+        } catch (qaError) {
+          console.warn('Style drift QA failed', qaError);
+        }
+      }
+
       const newChapters = chapterDrafts.map((c, i) => {
         const chapter: any = {
           id: createClientId('chapter'),
@@ -19337,6 +20217,7 @@ ${JSON.stringify(violatingPayload)}
         };
         if (i === 0 && aiInstructions) chapter.aiInstructions = aiInstructions;
         if (i === 0 && chapterScript) chapter.script = chapterScript;
+        if (styleQaReport) chapter.aiStyleQa = styleQaReport;
         return chapter;
       });
 
@@ -19347,6 +20228,7 @@ ${JSON.stringify(violatingPayload)}
       const updatedStory: Story = {
         ...latestStory,
         chapters: normalizeChaptersForLocal(updatedChapters),
+        defaultStyleBindings: effectiveStyleBindings.length ? effectiveStyleBindings : latestStory.defaultStyleBindings,
         updatedAt: new Date().toISOString(),
       };
       const newList = stories.map(s => s.id === latestStory.id ? updatedStory : s);
@@ -19358,7 +20240,10 @@ ${JSON.stringify(violatingPayload)}
         generatedChapters: newChapters.length,
         totalChapters: updatedStory.chapters.length,
       });
-      notifyApp({ tone: 'success', message: `Đã tạo thành công ${newChapters.length} chương mới!`, timeoutMs: 5200 });
+      const qaSuffix = styleQaReport
+        ? ` QA văn phong: ${styleQaReport.score}/100 · ${styleQaReport.verdict}.`
+        : '';
+      notifyApp({ tone: 'success', message: `Đã tạo thành công ${newChapters.length} chương mới!${qaSuffix}`, timeoutMs: 6200 });
     } catch (error) {
       generateTaskRun?.fail(error, {
         at: 'handleAIGenerateChapters',
@@ -19434,9 +20319,10 @@ ${JSON.stringify(violatingPayload)}
     customTone?: string,
     perspective: string,
     audience: string,
-    styleReference: string
+    styleReference: string,
+    styleBindings: StyleBlendBinding[],
   }) => {
-    const { file, genre, pacing, tone, isAdult, customPacing, customTone, perspective, audience, styleReference } = options;
+    const { file, genre, pacing, tone, isAdult, customPacing, customTone, perspective, audience, styleReference, styleBindings } = options;
     if (!user) return;
     setShowAIStoryModal(false);
     const aiRun = beginAiRun("Đang xử lý file và tạo truyện...", {
@@ -19480,6 +20366,13 @@ ${JSON.stringify(violatingPayload)}
         mystery: "Bí ẩn, hồi hộp"
       }[tone as keyof typeof toneDesc] || tone);
 
+      const availableStyleReferences = storage
+        .getStyleReferences()
+        .filter((reference: StyleReference) => !reference.authorId || reference.authorId === user.uid)
+        .sort((a: StyleReference, b: StyleReference) => new Date(String(b.updatedAt || b.createdAt || 0)).getTime() - new Date(String(a.updatedAt || a.createdAt || 0)).getTime());
+      const effectiveStyleBindings = resolveActiveStyleBindings(styleBindings, availableStyleReferences);
+      const compiledStyleReference = buildBlendedStyleReferencePrompt(availableStyleReferences, effectiveStyleBindings, styleReference);
+
       const aiStoryText = await generateGeminiText(
         ai,
         'quality',
@@ -19493,7 +20386,7 @@ ${JSON.stringify(violatingPayload)}
         - Đối tượng độc giả: ${audience === 'teen' ? 'Thanh thiếu niên' : audience === 'adult' ? 'Người trưởng thành' : audience === 'hardcore' ? 'Độc giả lâu năm' : 'Đại chúng'}
         - ${adultContentInstruction}
         
-        ${styleReference ? `PHONG CÁCH VĂN MẪU (Hãy bắt chước giọng văn này):\n${styleReference}\n` : ""}
+        ${compiledStyleReference ? `PHONG CÁCH VĂN MẪU (Hãy bắt chước giọng văn này):\n${compiledStyleReference}\n` : ""}
 
         YÊU CẦU CHI TIẾT:
         - Tạo Tiêu đề hấp dẫn.
@@ -19551,7 +20444,7 @@ ${JSON.stringify(violatingPayload)}
           - Đối tượng độc giả: ${audience === 'teen' ? 'Thanh thiếu niên' : audience === 'adult' ? 'Người trưởng thành' : audience === 'hardcore' ? 'Độc giả lâu năm' : 'Đại chúng'}
           - ${adultContentInstruction}
           
-          ${styleReference ? `PHONG CÁCH VĂN MẪU (Hãy bắt chước giọng văn này):\n${styleReference}\n` : ""}
+          ${compiledStyleReference ? `PHONG CÁCH VĂN MẪU (Hãy bắt chước giọng văn này):\n${compiledStyleReference}\n` : ""}
 
           QUY TẮC TRẢ VỀ:
           Trả theo định dạng văn bản:
@@ -19591,6 +20484,7 @@ ${JSON.stringify(violatingPayload)}
           isAdult: Boolean(isAdult),
           isPublic: false,
           isAI: true,
+          defaultStyleBindings: effectiveStyleBindings,
           createdAt: now,
           updatedAt: now,
           chapters: [],
@@ -20729,6 +21623,7 @@ ${JSON.stringify(violatingPayload)}
         onGenerate={handleAIGenerateChapters}
         initialOutline={selectedStory?.content || ""}
         isAdult={selectedStory?.isAdult}
+        storyId={selectedStory?.id}
         lastChapterContent={selectedStory?.chapters?.length ? [...selectedStory.chapters].sort((a, b) => b.order - a.order)[0].content : ""}
       />
 
