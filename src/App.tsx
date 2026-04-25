@@ -6952,6 +6952,23 @@ function getStyleReferenceInstructionPreview(reference: StyleReference): string 
   return String(reference.content || '').trim().slice(0, 280);
 }
 
+function buildAiRuleContentFromStyleReference(reference: StyleReference): string {
+  if (reference.kind === 'learned' && reference.learnedProfile) {
+    const profile = normalizeLearnedStyleProfile(reference.learnedProfile);
+    const parts = [
+      profile.writing_instruction,
+      profile.vocabulary_traits.length ? `Tu vung uu tien:\n- ${profile.vocabulary_traits.join('\n- ')}` : '',
+      profile.sentence_structure.length ? `Cau truc cau:\n- ${profile.sentence_structure.join('\n- ')}` : '',
+      profile.tone_and_mood.length ? `Tong giong:\n- ${profile.tone_and_mood.join('\n- ')}` : '',
+      profile.narration_style.length ? `Giong ke:\n- ${profile.narration_style.join('\n- ')}` : '',
+      profile.dialogue_style.length ? `Doi thoai:\n- ${profile.dialogue_style.join('\n- ')}` : '',
+      profile.signature_patterns.length ? `Dau hieu nhan dien:\n- ${profile.signature_patterns.join('\n- ')}` : '',
+    ].filter(Boolean);
+    return parts.join('\n\n').trim();
+  }
+  return String(reference.content || '').trim();
+}
+
 function buildFallbackWritingInstruction(memory: StyleMemoryProfile, styleName: string): string {
   const parts = [
     styleName ? `Viết theo văn phong "${styleName}".` : 'Viết theo văn phong đã học.',
@@ -9571,6 +9588,7 @@ const StyleReferenceLibrary = ({
   const [isAdding, setIsAdding] = useState(false);
   const [createMode, setCreateMode] = useState<'manual' | 'learned'>('manual');
   const [filterMode, setFilterMode] = useState<'all' | 'manual' | 'learned'>('all');
+  const [searchQuery, setSearchQuery] = useState('');
   const [newName, setNewName] = useState('');
   const [newContent, setNewContent] = useState('');
   const [isExtracting, setIsExtracting] = useState(false);
@@ -9579,6 +9597,9 @@ const StyleReferenceLibrary = ({
   const [isLearningStyle, setIsLearningStyle] = useState(false);
   const [learningStatus, setLearningStatus] = useState('');
   const [viewingRef, setViewingRef] = useState<StyleReference | null>(null);
+  const [editingRef, setEditingRef] = useState<StyleReference | null>(null);
+  const [editingName, setEditingName] = useState('');
+  const [editingContent, setEditingContent] = useState('');
 
   useEffect(() => {
     const nextRefs = storage
@@ -9600,8 +9621,7 @@ const StyleReferenceLibrary = ({
       updatedAt: new Date().toISOString(),
     };
     const newList = [newRef, ...references];
-    setReferences(newList);
-    storage.saveStyleReferences(newList);
+    persistReferences(newList);
     setNewName('');
     setNewContent('');
     setIsAdding(false);
@@ -9611,8 +9631,7 @@ const StyleReferenceLibrary = ({
   const handleDelete = async (id: string) => {
     if (!confirm('Bạn có chắc chắn muốn xóa văn mẫu này?')) return;
     const newList = references.filter(r => r.id !== id);
-    setReferences(newList);
-    storage.saveStyleReferences(newList);
+    persistReferences(newList);
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -9635,6 +9654,16 @@ const StyleReferenceLibrary = ({
     if (filterMode === 'all') return true;
     if (filterMode === 'learned') return reference.kind === 'learned';
     return reference.kind !== 'learned';
+  }).filter((reference) => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return true;
+    return [
+      reference.name,
+      getStyleReferencePreview(reference),
+      reference.sourceFileName,
+      reference.learnedProfile?.target_audience,
+      reference.learnedProfile?.writing_instruction,
+    ].some((value) => String(value || '').toLowerCase().includes(query));
   });
 
   const filterMeta = [
@@ -9642,6 +9671,11 @@ const StyleReferenceLibrary = ({
     { key: 'learned' as const, label: 'DNA văn phong', count: references.filter((item) => item.kind === 'learned').length },
     { key: 'manual' as const, label: 'Văn mẫu', count: references.filter((item) => item.kind !== 'learned').length },
   ];
+
+  const persistReferences = (nextList: StyleReference[]) => {
+    setReferences(nextList);
+    storage.saveStyleReferences(nextList);
+  };
 
   const handleLearningFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -9686,8 +9720,7 @@ const StyleReferenceLibrary = ({
         learnedProfile: learned.profile,
       };
       const nextList = [styleReference, ...references];
-      setReferences(nextList);
-      storage.saveStyleReferences(nextList);
+      persistReferences(nextList);
       setNewName('');
       setLearningSourceText('');
       setLearningSourceFileName('');
@@ -9701,6 +9734,65 @@ const StyleReferenceLibrary = ({
     } finally {
       setIsLearningStyle(false);
     }
+  };
+
+  const handleStartEdit = (reference: StyleReference) => {
+    setEditingRef(reference);
+    setEditingName(reference.name);
+    setEditingContent(
+      reference.kind === 'learned'
+        ? getStyleReferenceInstructionPreview(reference)
+        : String(reference.content || ''),
+    );
+  };
+
+  const handleSaveEdit = () => {
+    if (!editingRef || !editingName.trim() || !editingContent.trim()) return;
+    const nextList = references.map((reference) => {
+      if (reference.id !== editingRef.id) return reference;
+      if (reference.kind === 'learned' && reference.learnedProfile) {
+        const nextProfile: LearnedStyleProfile = {
+          ...normalizeLearnedStyleProfile(reference.learnedProfile),
+          style_name: editingName.trim(),
+          writing_instruction: editingContent.trim(),
+        };
+        return {
+          ...reference,
+          name: editingName.trim(),
+          content: buildLearnedStyleReferenceContent(nextProfile),
+          updatedAt: new Date().toISOString(),
+          learnedProfile: nextProfile,
+        };
+      }
+      return {
+        ...reference,
+        name: editingName.trim(),
+        content: editingContent.trim(),
+        updatedAt: new Date().toISOString(),
+      };
+    });
+    persistReferences(nextList);
+    setEditingRef(null);
+    setEditingName('');
+    setEditingContent('');
+    notifyApp({ tone: 'success', message: 'Đã cập nhật hồ sơ văn phong.' });
+  };
+
+  const handleCreateAiRule = (reference: StyleReference) => {
+    if (!user) {
+      notifyApp({ tone: 'warn', message: 'Cần đăng nhập để lưu AI Rule.' });
+      return;
+    }
+    const nextRule: AIRule = {
+      id: `rule-${Date.now()}`,
+      authorId: user.uid,
+      name: `[Style] ${reference.name}`,
+      content: buildAiRuleContentFromStyleReference(reference),
+      createdAt: new Date().toISOString(),
+    };
+    const nextRules = [nextRule, ...storage.getAIRules()];
+    storage.saveAIRules(nextRules);
+    notifyApp({ tone: 'success', message: 'Đã tạo AI Rule từ hồ sơ văn phong.' });
   };
 
   return (
@@ -9741,6 +9833,16 @@ const StyleReferenceLibrary = ({
             {item.label} ({item.count})
           </button>
         ))}
+      </div>
+
+      <div className="rounded-2xl border border-slate-200 bg-white p-3">
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Tìm theo tên, instruction, độc giả mục tiêu hoặc file nguồn..."
+          className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-500"
+        />
       </div>
 
       {isAdding && (
@@ -9903,6 +10005,20 @@ const StyleReferenceLibrary = ({
                       <Eye className="w-3 h-3" />
                       Xem
                     </button>
+                    <button
+                      onClick={() => handleStartEdit(ref)}
+                      className="flex items-center gap-1 px-2 py-1 bg-slate-50 text-slate-500 rounded-lg text-[10px] font-bold hover:bg-slate-100 transition-all"
+                    >
+                      <Edit3 className="w-3 h-3" />
+                      Sửa
+                    </button>
+                    <button
+                      onClick={() => handleCreateAiRule(ref)}
+                      className="flex items-center gap-1 px-2 py-1 bg-amber-50 text-amber-700 rounded-lg text-[10px] font-bold hover:bg-amber-100 transition-all"
+                    >
+                      <Shield className="w-3 h-3" />
+                      Tạo AI Rule
+                    </button>
                     {onSelect && (
                       <button 
                         onClick={() => {
@@ -9944,6 +10060,21 @@ const StyleReferenceLibrary = ({
                 <p className="mt-1 text-xs text-slate-500">{getStyleReferenceKindLabel(viewingRef)}</p>
               </div>
               <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    setViewingRef(null);
+                    handleStartEdit(viewingRef);
+                  }}
+                  className="px-3 py-2 rounded-xl bg-slate-100 text-slate-700 text-xs font-bold hover:bg-slate-200 transition-all"
+                >
+                  Sửa
+                </button>
+                <button
+                  onClick={() => handleCreateAiRule(viewingRef)}
+                  className="px-3 py-2 rounded-xl bg-amber-50 text-amber-700 text-xs font-bold hover:bg-amber-100 transition-all"
+                >
+                  Tạo AI Rule
+                </button>
                 {onSelect ? (
                   <button
                     onClick={() => {
@@ -10002,6 +10133,64 @@ const StyleReferenceLibrary = ({
               ) : (
                 <div className="whitespace-pre-wrap">{viewingRef.content}</div>
               )}
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {editingRef && (
+        <div className="fixed inset-0 z-[260] tf-modal-overlay flex items-center justify-center p-6 bg-slate-900/60 backdrop-blur-md">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="tf-modal-panel bg-white w-full max-w-2xl rounded-[32px] shadow-2xl overflow-hidden flex flex-col max-h-[80vh]"
+          >
+            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+              <div className="min-w-0 pr-3">
+                <h3 className="text-xl font-serif font-bold tf-break-long">Chỉnh sửa hồ sơ văn phong</h3>
+                <p className="mt-1 text-xs text-slate-500">
+                  {editingRef.kind === 'learned' ? 'Có thể đổi tên và tinh chỉnh system instruction.' : 'Có thể đổi tên và sửa nội dung văn mẫu.'}
+                </p>
+              </div>
+              <button onClick={() => setEditingRef(null)} className="p-2 hover:bg-white rounded-full">
+                <Plus className="w-6 h-6 rotate-45 text-slate-400" />
+              </button>
+            </div>
+            <div className="tf-modal-content p-6 md:p-8 overflow-y-auto space-y-4">
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-[0.16em] text-slate-400 mb-2">Tên hiển thị</label>
+                <input
+                  type="text"
+                  value={editingName}
+                  onChange={(e) => setEditingName(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-[0.16em] text-slate-400 mb-2">
+                  {editingRef.kind === 'learned' ? 'System instruction / hướng áp dụng' : 'Nội dung văn mẫu'}
+                </label>
+                <textarea
+                  value={editingContent}
+                  onChange={(e) => setEditingContent(e.target.value)}
+                  className="w-full h-64 rounded-xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-500 resize-none"
+                />
+              </div>
+            </div>
+            <div className="p-6 border-t border-slate-100 bg-slate-50 flex items-center justify-end gap-3">
+              <button
+                onClick={() => setEditingRef(null)}
+                className="px-4 py-3 rounded-xl border border-slate-200 text-sm font-bold text-slate-500 hover:bg-white transition-all"
+              >
+                Hủy
+              </button>
+              <button
+                onClick={handleSaveEdit}
+                disabled={!editingName.trim() || !editingContent.trim()}
+                className="px-4 py-3 rounded-xl bg-indigo-600 text-white text-sm font-bold hover:bg-indigo-700 transition-all disabled:opacity-50"
+              >
+                Lưu thay đổi
+              </button>
             </div>
           </motion.div>
         </div>
