@@ -6817,12 +6817,143 @@ interface AIRule {
   createdAt: any;
 }
 
+interface StyleMemoryProfile {
+  audience: string;
+  vocabularyRules: string[];
+  sentenceRules: string[];
+  toneRules: string[];
+  narrationRules: string[];
+  dialogueRules: string[];
+  tabooRules: string[];
+  signaturePatterns: string[];
+  sampleLines: string[];
+  doRules: string[];
+  dontRules: string[];
+}
+
+interface LearnedStyleProfile {
+  style_name: string;
+  target_audience: string;
+  vocabulary_traits: string[];
+  sentence_structure: string[];
+  tone_and_mood: string[];
+  narration_style: string[];
+  dialogue_style: string[];
+  signature_patterns: string[];
+  sample_lines: string[];
+  writing_instruction: string;
+}
+
 interface StyleReference {
   id: string;
   authorId: string;
   name: string;
   content: string;
   createdAt: any;
+  kind?: 'manual' | 'learned';
+  updatedAt?: any;
+  sourceFileName?: string;
+  sourceFormat?: string;
+  chunkCount?: number;
+  styleMemory?: StyleMemoryProfile;
+  learnedProfile?: LearnedStyleProfile;
+}
+
+function createEmptyStyleMemory(): StyleMemoryProfile {
+  return {
+    audience: '',
+    vocabularyRules: [],
+    sentenceRules: [],
+    toneRules: [],
+    narrationRules: [],
+    dialogueRules: [],
+    tabooRules: [],
+    signaturePatterns: [],
+    sampleLines: [],
+    doRules: [],
+    dontRules: [],
+  };
+}
+
+function normalizeStyleMemoryProfile(raw: unknown): StyleMemoryProfile {
+  const parsed = (raw && typeof raw === 'object') ? (raw as Record<string, unknown>) : {};
+  const pickArray = (value: unknown) => (Array.isArray(value) ? value.map((item) => String(item || '').trim()).filter(Boolean) : []);
+  return {
+    audience: String(parsed.audience || '').trim(),
+    vocabularyRules: pickArray(parsed.vocabularyRules),
+    sentenceRules: pickArray(parsed.sentenceRules),
+    toneRules: pickArray(parsed.toneRules),
+    narrationRules: pickArray(parsed.narrationRules),
+    dialogueRules: pickArray(parsed.dialogueRules),
+    tabooRules: pickArray(parsed.tabooRules),
+    signaturePatterns: pickArray(parsed.signaturePatterns),
+    sampleLines: pickArray(parsed.sampleLines).slice(0, 5),
+    doRules: pickArray(parsed.doRules),
+    dontRules: pickArray(parsed.dontRules),
+  };
+}
+
+function normalizeLearnedStyleProfile(raw: unknown): LearnedStyleProfile {
+  const parsed = (raw && typeof raw === 'object') ? (raw as Record<string, unknown>) : {};
+  const pickArray = (value: unknown) => (Array.isArray(value) ? value.map((item) => String(item || '').trim()).filter(Boolean) : []);
+  return {
+    style_name: String(parsed.style_name || '').trim(),
+    target_audience: String(parsed.target_audience || '').trim(),
+    vocabulary_traits: pickArray(parsed.vocabulary_traits),
+    sentence_structure: pickArray(parsed.sentence_structure),
+    tone_and_mood: pickArray(parsed.tone_and_mood),
+    narration_style: pickArray(parsed.narration_style),
+    dialogue_style: pickArray(parsed.dialogue_style),
+    signature_patterns: pickArray(parsed.signature_patterns),
+    sample_lines: pickArray(parsed.sample_lines).slice(0, 5),
+    writing_instruction: String(parsed.writing_instruction || '').trim(),
+  };
+}
+
+function buildLearnedStyleReferenceContent(profile: LearnedStyleProfile): string {
+  const sections = [
+    profile.style_name ? `TEN VAN PHONG: ${profile.style_name}` : '',
+    profile.target_audience ? `DOI TUONG DOC GIA: ${profile.target_audience}` : '',
+    profile.writing_instruction ? `SYSTEM INSTRUCTION:\n${profile.writing_instruction}` : '',
+    profile.vocabulary_traits.length ? `QUY TAC TU VUNG:\n- ${profile.vocabulary_traits.join('\n- ')}` : '',
+    profile.sentence_structure.length ? `CAU TRUC CAU:\n- ${profile.sentence_structure.join('\n- ')}` : '',
+    profile.tone_and_mood.length ? `TONE VA KHONG KHI:\n- ${profile.tone_and_mood.join('\n- ')}` : '',
+    profile.narration_style.length ? `GIỌNG KỂ:\n- ${profile.narration_style.join('\n- ')}` : '',
+    profile.dialogue_style.length ? `DOI THOAI:\n- ${profile.dialogue_style.join('\n- ')}` : '',
+    profile.signature_patterns.length ? `DAU HIEU NHAN DIEN:\n- ${profile.signature_patterns.join('\n- ')}` : '',
+    profile.sample_lines.length ? `CAU MAU:\n- ${profile.sample_lines.join('\n- ')}` : '',
+  ].filter(Boolean);
+  return sections.join('\n\n').trim();
+}
+
+function getStyleReferenceDisplayContent(reference: StyleReference): string {
+  if (reference.kind === 'learned' && reference.learnedProfile) {
+    return buildLearnedStyleReferenceContent(normalizeLearnedStyleProfile(reference.learnedProfile));
+  }
+  return String(reference.content || '').trim();
+}
+
+function getStyleReferencePreview(reference: StyleReference): string {
+  if (reference.kind === 'learned' && reference.learnedProfile) {
+    const profile = normalizeLearnedStyleProfile(reference.learnedProfile);
+    return profile.writing_instruction || profile.signature_patterns[0] || profile.target_audience || '';
+  }
+  return String(reference.content || '').trim();
+}
+
+function buildFallbackWritingInstruction(memory: StyleMemoryProfile, styleName: string): string {
+  const parts = [
+    styleName ? `Viết theo văn phong "${styleName}".` : 'Viết theo văn phong đã học.',
+    memory.audience ? `Nhắm tới đối tượng: ${memory.audience}.` : '',
+    memory.vocabularyRules.length ? `Từ vựng: ${memory.vocabularyRules.slice(0, 4).join('; ')}.` : '',
+    memory.sentenceRules.length ? `Cấu trúc câu: ${memory.sentenceRules.slice(0, 4).join('; ')}.` : '',
+    memory.toneRules.length ? `Tông giọng: ${memory.toneRules.slice(0, 4).join('; ')}.` : '',
+    memory.narrationRules.length ? `Giọng kể: ${memory.narrationRules.slice(0, 3).join('; ')}.` : '',
+    memory.dialogueRules.length ? `Đối thoại: ${memory.dialogueRules.slice(0, 3).join('; ')}.` : '',
+    memory.signaturePatterns.length ? `Dấu hiệu nhận diện: ${memory.signaturePatterns.slice(0, 4).join('; ')}.` : '',
+    memory.tabooRules.length ? `Tránh: ${memory.tabooRules.slice(0, 4).join('; ')}.` : '',
+  ].filter(Boolean);
+  return parts.join(' ');
 }
 
 
@@ -7258,6 +7389,163 @@ const parseEPUB = async (file: File): Promise<string> => {
   }
   return text;
 };
+
+async function readTextFromSupportedFile(file: File): Promise<string> {
+  const fileName = String(file.name || '').toLowerCase();
+  if (fileName.endsWith('.pdf')) return parsePDF(file);
+  if (fileName.endsWith('.epub')) return parseEPUB(file);
+  if (fileName.endsWith('.docx')) {
+    const arrayBuffer = await file.arrayBuffer();
+    return extractDocxText(arrayBuffer);
+  }
+  return file.text();
+}
+
+async function learnStyleProfileFromText({
+  ai,
+  sourceText,
+  styleName,
+  onProgress,
+}: {
+  ai: AiAuth;
+  sourceText: string;
+  styleName: string;
+  onProgress?: (step: string, detail: string) => void;
+}): Promise<{ memory: StyleMemoryProfile; profile: LearnedStyleProfile; chunkCount: number }> {
+  const normalizedText = String(sourceText || '').trim();
+  if (normalizedText.length < 1200) {
+    throw new Error('Nội dung quá ngắn để học văn phong. Hãy dùng ít nhất vài đoạn văn rõ giọng kể.');
+  }
+
+  const batches = splitTextForTranslation(normalizedText, 5200).slice(0, 10);
+  if (!batches.length) {
+    throw new Error('Không thể tách nội dung thành các đợt học văn phong.');
+  }
+
+  let memory = createEmptyStyleMemory();
+
+  for (let index = 0; index < batches.length; index += 1) {
+    const chunk = batches[index];
+    onProgress?.('Phân tích văn phong', `Đợt ${index + 1}/${batches.length} - ${Math.min(chunk.length, 5200)} ký tự`);
+    const prompt = `
+Vai trò: Chuyên gia ngôn ngữ học AI chuyên trích xuất DNA văn phong.
+
+Mục tiêu:
+Phân tích các đoạn truyện được gửi theo từng đợt để cập nhật một "style_memory" ngắn gọn, ổn định, dùng lại được cho AI viết truyện.
+
+Nguyên tắc:
+- Chỉ học văn phong, không học cốt truyện cụ thể.
+- Không giữ tên riêng, địa danh, tình tiết nếu chúng không phản ánh phong cách viết.
+- Ưu tiên quy tắc lặp lại nhiều lần.
+- Loại bỏ đặc điểm yếu, ngẫu nhiên, hoặc phụ thuộc ngữ cảnh.
+- Viết ngắn gọn, máy đọc được, không giải thích dài.
+
+Đầu vào:
+current_style_memory:
+${JSON.stringify(memory, null, 2)}
+
+new_excerpt_batch:
+${chunk}
+
+Nhiệm vụ:
+1. Phân tích batch mới theo các trục: từ vựng, cấu trúc câu, nhịp văn, giọng kể, giọng hội thoại, cảm xúc/không khí, dấu hiệu nhận diện, độc giả mục tiêu.
+2. Gộp vào current_style_memory.
+3. Chỉ trả JSON thuần theo cấu trúc:
+{
+  "style_memory": {
+    "audience": "",
+    "vocabularyRules": [],
+    "sentenceRules": [],
+    "toneRules": [],
+    "narrationRules": [],
+    "dialogueRules": [],
+    "tabooRules": [],
+    "signaturePatterns": [],
+    "sampleLines": [],
+    "doRules": [],
+    "dontRules": []
+  },
+  "delta_summary": "",
+  "next_focus": ""
+}
+    `.trim();
+
+    const response = await generateGeminiText(ai, 'quality', prompt, {
+      responseMimeType: 'application/json',
+      maxOutputTokens: 2400,
+      minOutputChars: 420,
+      maxRetries: 2,
+      promptVersion: 'style-memory-v1',
+      safetySettings: GEMINI_UNRESTRICTED_SAFETY_SETTINGS,
+    });
+    const parsed = tryParseJson<Record<string, unknown>>(response, 'object');
+    const nextMemory = normalizeStyleMemoryProfile(parsed?.style_memory || parsed);
+    const hasSignal = Boolean(
+      nextMemory.audience
+      || nextMemory.vocabularyRules.length
+      || nextMemory.sentenceRules.length
+      || nextMemory.toneRules.length
+      || nextMemory.narrationRules.length
+      || nextMemory.dialogueRules.length
+      || nextMemory.signaturePatterns.length,
+    );
+    if (!hasSignal) {
+      throw new Error(`AI không trả về style memory hợp lệ ở đợt ${index + 1}.`);
+    }
+    memory = nextMemory;
+  }
+
+  onProgress?.('Đóng gói hồ sơ', 'Tạo profile dùng lại khi viết truyện');
+  const finalizePrompt = `
+Vai trò: Chuyên gia ngôn ngữ học AI chuyên đóng gói DNA văn phong.
+
+Dựa trên style_memory sau, hãy đóng gói thành hồ sơ văn phong cuối cùng để lưu vào database.
+
+style_memory:
+${JSON.stringify(memory, null, 2)}
+
+Trả về đúng JSON:
+{
+  "style_name": "${styleName}",
+  "target_audience": "",
+  "vocabulary_traits": [],
+  "sentence_structure": [],
+  "tone_and_mood": [],
+  "narration_style": [],
+  "dialogue_style": [],
+  "signature_patterns": [],
+  "sample_lines": [],
+  "writing_instruction": ""
+}
+
+Yêu cầu:
+- writing_instruction phải ngắn, rõ, dùng trực tiếp làm system instruction cho AI viết truyện.
+- Không nhắc tới tên nhân vật hay cốt truyện cụ thể.
+- Chỉ trả JSON thuần.
+  `.trim();
+
+  const finalizedRaw = await generateGeminiText(ai, 'quality', finalizePrompt, {
+    responseMimeType: 'application/json',
+    maxOutputTokens: 2400,
+    minOutputChars: 320,
+    maxRetries: 2,
+    promptVersion: 'style-profile-v1',
+    safetySettings: GEMINI_UNRESTRICTED_SAFETY_SETTINGS,
+  });
+  const finalized = normalizeLearnedStyleProfile(tryParseJson<Record<string, unknown>>(finalizedRaw, 'object'));
+  const profile: LearnedStyleProfile = {
+    ...finalized,
+    style_name: finalized.style_name || styleName,
+    writing_instruction: finalized.writing_instruction || buildFallbackWritingInstruction(memory, styleName),
+    sample_lines: finalized.sample_lines.length ? finalized.sample_lines : memory.sampleLines.slice(0, 5),
+  };
+
+  return {
+    memory,
+    profile,
+    chunkCount: batches.length,
+  };
+}
 
 const WriterProPanel = () => {
   const { user } = useAuth();
@@ -7890,6 +8178,7 @@ const ToolsManager = ({
   const relayReconnectRef = useRef<number | null>(null);
   const relayShouldReconnectRef = useRef(false);
   const relayRequestReadyRef = useRef(false);
+  const apiHydrationSignatureRef = useRef('');
   const hydrateApiStore = useApiStore((state) => state.actions.hydrateFromExternal);
   const refreshAiUsageStats = useCallback(() => {
     const next = readMainAiUsage();
@@ -8893,7 +9182,98 @@ const ToolsManager = ({
       : 'Đang bật nhưng chưa có API key, nên vẫn sẽ rơi xuống nhánh dự phòng.')
     : 'Đang tắt. TruyenForge sẽ bỏ qua nhánh AI sinh ảnh riêng khi tạo bìa.';
 
+  const apiHydrationSignature = React.useMemo(() => JSON.stringify({
+    apiMode,
+    currentProviderLabel: apiMode === 'relay' ? 'Trạm trung chuyển' : PROVIDER_LABELS[currentApiEntry?.provider || selectedProvider || 'gemini'],
+    currentModelLabel: apiMode === 'relay' ? (selectedModel || getProfileModel('quality', 'gemini')) : (currentApiEntry?.model || selectedModel || 'Chưa chọn'),
+    vaultCount: apiVault.length,
+    currentStatusLabel: apiMode === 'relay' ? relayStatusText : (currentApiEntry ? currentApiEntry.name : 'Chưa cấu hình'),
+    apiEntryName,
+    apiEntryText,
+    displayedDraftProvider,
+    effectiveDraftProvider,
+    availableDraftModels: availableDraftModels.map((item) => ({ value: item.value, label: item.label, description: item.description })),
+    apiEntryModel,
+    apiEntryBaseUrl,
+    aiProfile,
+    apiVault: apiVault.map((item) => ({
+      id: item.id,
+      name: item.name,
+      key: item.key,
+      provider: item.provider,
+      model: item.model,
+      baseUrl: item.baseUrl,
+      isActive: item.isActive,
+      createdAt: item.createdAt,
+      lastTested: item.lastTested,
+      status: item.status,
+      usage: item.usage,
+    })),
+    currentApiEntryId: currentApiEntry?.id || '',
+    testingApiId,
+    relayStatus,
+    relayStatusText,
+    relayUrl,
+    relayMatchedLong,
+    relayMaskedToken,
+    relayModel: selectedModel || getProfileModel('quality', 'gemini'),
+    relayModelOptions: PROVIDER_MODEL_OPTIONS.gemini.map((item) => ({ value: item.value, label: item.label, description: item.description })),
+    relayWebBase: RELAY_WEB_BASE,
+    relaySocketBase: RELAY_SOCKET_BASE,
+    manualRelayTokenInput,
+    isCheckingAi,
+    aiCheckStatus,
+    aiUsageRequests: aiUsageStats.requests,
+    aiUsageTokens: aiUsageStats.estTokens,
+    quickImportText,
+    quickImportResult,
+    generationConfig,
+    imageAiEnabled,
+    imageAiApiKey,
+    imageAiStatusLabel,
+    imageAiProvider,
+    imageAiModel,
+  }), [
+    apiMode,
+    currentApiEntry,
+    selectedProvider,
+    selectedModel,
+    apiVault,
+    relayStatusText,
+    apiEntryName,
+    apiEntryText,
+    displayedDraftProvider,
+    effectiveDraftProvider,
+    availableDraftModels,
+    apiEntryModel,
+    apiEntryBaseUrl,
+    aiProfile,
+    testingApiId,
+    relayStatus,
+    relayUrl,
+    relayMatchedLong,
+    relayMaskedToken,
+    manualRelayTokenInput,
+    isCheckingAi,
+    aiCheckStatus,
+    aiUsageStats.requests,
+    aiUsageStats.estTokens,
+    quickImportText,
+    quickImportResult,
+    generationConfig,
+    imageAiEnabled,
+    imageAiApiKey,
+    imageAiStatusLabel,
+    imageAiProvider,
+    imageAiModel,
+  ]);
+
   useEffect(() => {
+    if (apiHydrationSignatureRef.current === apiHydrationSignature) {
+      return;
+    }
+    apiHydrationSignatureRef.current = apiHydrationSignature;
+
     const payload: ApiPanelExternalState = {
       apiMode,
       currentProviderLabel: apiMode === 'relay' ? 'Trạm trung chuyển' : PROVIDER_LABELS[currentApiEntry?.provider || selectedProvider || 'gemini'],
@@ -8967,38 +9347,7 @@ const ToolsManager = ({
     };
     hydrateApiStore(payload);
   }, [
-    apiMode,
-    currentApiEntry,
-    selectedProvider,
-    selectedModel,
-    apiVault,
-    relayStatusText,
-    apiEntryName,
-    apiEntryText,
-    displayedDraftProvider,
-    effectiveDraftProvider,
-    availableDraftModels,
-    apiEntryModel,
-    apiEntryBaseUrl,
-    aiProfile,
-    testingApiId,
-    relayStatus,
-    relayUrl,
-    relayMatchedLong,
-    relayMaskedToken,
-    manualRelayTokenInput,
-    isCheckingAi,
-    aiCheckStatus,
-    aiUsageStats.requests,
-    aiUsageStats.estTokens,
-    quickImportText,
-    quickImportResult,
-    generationConfig,
-    imageAiEnabled,
-    imageAiApiKey,
-    imageAiStatusLabel,
-    imageAiProvider,
-    imageAiModel,
+    apiHydrationSignature,
     hydrateApiStore,
   ]);
 
@@ -9205,14 +9554,23 @@ const StyleReferenceLibrary = ({
   const { user } = useAuth();
   const [references, setReferences] = useState<StyleReference[]>([]);
   const [isAdding, setIsAdding] = useState(false);
+  const [createMode, setCreateMode] = useState<'manual' | 'learned'>('manual');
   const [newName, setNewName] = useState('');
   const [newContent, setNewContent] = useState('');
   const [isExtracting, setIsExtracting] = useState(false);
+  const [learningSourceText, setLearningSourceText] = useState('');
+  const [learningSourceFileName, setLearningSourceFileName] = useState('');
+  const [isLearningStyle, setIsLearningStyle] = useState(false);
+  const [learningStatus, setLearningStatus] = useState('');
   const [viewingRef, setViewingRef] = useState<StyleReference | null>(null);
 
   useEffect(() => {
-    setReferences(storage.getStyleReferences());
-  }, []);
+    const nextRefs = storage
+      .getStyleReferences()
+      .filter((reference: StyleReference) => !user || !reference.authorId || reference.authorId === user.uid)
+      .sort((a: StyleReference, b: StyleReference) => new Date(String(b.updatedAt || b.createdAt || 0)).getTime() - new Date(String(a.updatedAt || a.createdAt || 0)).getTime());
+    setReferences(nextRefs);
+  }, [user]);
 
   const handleAdd = async () => {
     if (!user || !newName || !newContent) return;
@@ -9221,7 +9579,9 @@ const StyleReferenceLibrary = ({
       authorId: user.uid,
       name: newName,
       content: newContent,
-      createdAt: new Date().toISOString()
+      kind: 'manual',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     };
     const newList = [newRef, ...references];
     setReferences(newList);
@@ -9244,32 +9604,100 @@ const StyleReferenceLibrary = ({
     if (!file) return;
     setIsExtracting(true);
     try {
-      let content = '';
-      if (file.name.endsWith('.docx')) {
-        const arrayBuffer = await file.arrayBuffer();
-        content = await extractDocxText(arrayBuffer);
-      } else {
-        content = await file.text();
-      }
+      const content = await readTextFromSupportedFile(file);
       setNewContent(content);
       if (!newName) setNewName(file.name.replace(/\.[^/.]+$/, ""));
     } catch (error) {
       notifyApp({ tone: 'error', message: 'Lỗi khi đọc file: ' + error });
     } finally {
       setIsExtracting(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleLearningFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsExtracting(true);
+    try {
+      const content = await readTextFromSupportedFile(file);
+      setLearningSourceText(content);
+      setLearningSourceFileName(file.name);
+      if (!newName) setNewName(file.name.replace(/\.[^/.]+$/, ""));
+    } catch (error) {
+      notifyApp({ tone: 'error', message: 'Lỗi khi đọc file học văn phong: ' + error });
+    } finally {
+      setIsExtracting(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleLearnStyle = async () => {
+    if (!user || !newName.trim() || !learningSourceText.trim()) return;
+    setIsLearningStyle(true);
+    try {
+      const ai = createGeminiClient('auxiliary');
+      const learned = await learnStyleProfileFromText({
+        ai,
+        sourceText: learningSourceText,
+        styleName: newName.trim(),
+        onProgress: (step, detail) => setLearningStatus(`${step}: ${detail}`),
+      });
+      const styleReference: StyleReference = {
+        id: `style-learned-${Date.now()}`,
+        authorId: user.uid,
+        name: learned.profile.style_name || newName.trim(),
+        content: buildLearnedStyleReferenceContent(learned.profile),
+        kind: 'learned',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        sourceFileName: learningSourceFileName,
+        sourceFormat: learningSourceFileName.split('.').pop()?.toLowerCase() || 'txt',
+        chunkCount: learned.chunkCount,
+        styleMemory: learned.memory,
+        learnedProfile: learned.profile,
+      };
+      const nextList = [styleReference, ...references];
+      setReferences(nextList);
+      storage.saveStyleReferences(nextList);
+      setNewName('');
+      setLearningSourceText('');
+      setLearningSourceFileName('');
+      setLearningStatus('');
+      setIsAdding(false);
+      setCreateMode('manual');
+      notifyApp({ tone: 'success', message: 'Đã học và lưu DNA văn phong vào kho.' });
+    } catch (error) {
+      console.error('Style learning failed', error);
+      notifyApp({ tone: 'error', message: error instanceof Error ? error.message : 'Không thể học văn phong từ file.' });
+    } finally {
+      setIsLearningStyle(false);
     }
   };
 
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <h3 className="text-xl font-serif font-bold">Kho văn mẫu tham khảo</h3>
-        <button 
-          onClick={() => setIsAdding(!isAdding)}
-          className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 transition-all"
-        >
-          {isAdding ? 'Hủy' : <><Plus className="w-4 h-4" /> Thêm mới</>}
-        </button>
+        <div>
+          <h3 className="text-xl font-serif font-bold">Kho văn phong</h3>
+          <p className="text-xs text-slate-500 mt-1">Lưu văn mẫu thủ công hoặc hồ sơ DNA văn phong đã học từ file.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          {onClose ? (
+            <button
+              onClick={onClose}
+              className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-bold text-slate-500 hover:bg-slate-50 transition-all"
+            >
+              Đóng
+            </button>
+          ) : null}
+          <button 
+            onClick={() => setIsAdding(!isAdding)}
+            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 transition-all"
+          >
+            {isAdding ? 'Hủy' : <><Plus className="w-4 h-4" /> Thêm mới</>}
+          </button>
+        </div>
       </div>
 
       {isAdding && (
@@ -9278,49 +9706,128 @@ const StyleReferenceLibrary = ({
           animate={{ opacity: 1, y: 0 }}
           className="p-6 bg-slate-50 rounded-2xl border border-slate-200 space-y-4"
         >
+          <div className="flex gap-2 rounded-2xl border border-slate-200 bg-white p-1">
+            <button
+              onClick={() => setCreateMode('manual')}
+              className={cn(
+                'flex-1 rounded-xl px-3 py-2 text-sm font-bold transition-all',
+                createMode === 'manual' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-50',
+              )}
+            >
+              Văn mẫu thủ công
+            </button>
+            <button
+              onClick={() => setCreateMode('learned')}
+              className={cn(
+                'flex-1 rounded-xl px-3 py-2 text-sm font-bold transition-all',
+                createMode === 'learned' ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:bg-slate-50',
+              )}
+            >
+              Học văn phong từ file
+            </button>
+          </div>
           <input 
             type="text" 
-            placeholder="Tên văn mẫu (ví dụ: Phong cách Kim Dung...)"
+            placeholder={createMode === 'learned' ? 'Tên hồ sơ văn phong (ví dụ: Tiên hiệp bi tráng)' : 'Tên văn mẫu (ví dụ: Phong cách Kim Dung...)'}
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             className="w-full px-4 py-2 rounded-xl border border-slate-200 focus:ring-indigo-500"
           />
-          <div className="space-y-2">
-            <div className="flex justify-between items-center">
-              <label className="text-xs font-bold text-slate-400 uppercase">Nội dung văn mẫu</label>
-              <label className="text-xs font-bold text-indigo-600 cursor-pointer hover:underline">
-                {isExtracting ? 'Đang trích xuất...' : 'Tải file (.docx, .txt)'}
-                <input type="file" accept=".docx,.txt" onChange={handleFileUpload} className="hidden" />
-              </label>
-            </div>
-            <textarea 
-              placeholder="Dán nội dung văn mẫu vào đây..."
-              value={newContent}
-              onChange={(e) => setNewContent(e.target.value)}
-              className="w-full h-40 px-4 py-2 rounded-xl border border-slate-200 focus:ring-indigo-500 resize-none"
-            />
-          </div>
-          <button 
-            onClick={handleAdd}
-            disabled={!newName || !newContent}
-            className="w-full py-3 bg-slate-900 text-white rounded-xl font-bold hover:bg-slate-800 transition-all disabled:opacity-50"
-          >
-            Lưu vào kho
-          </button>
+          {createMode === 'manual' ? (
+            <>
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <label className="text-xs font-bold text-slate-400 uppercase">Nội dung văn mẫu</label>
+                  <label className="text-xs font-bold text-indigo-600 cursor-pointer hover:underline">
+                    {isExtracting ? 'Đang trích xuất...' : 'Tải file (.docx, .txt, .pdf, .epub)'}
+                    <input type="file" accept=".docx,.txt,.pdf,.epub" onChange={handleFileUpload} className="hidden" />
+                  </label>
+                </div>
+                <textarea 
+                  placeholder="Dán nội dung văn mẫu vào đây..."
+                  value={newContent}
+                  onChange={(e) => setNewContent(e.target.value)}
+                  className="w-full h-40 px-4 py-2 rounded-xl border border-slate-200 focus:ring-indigo-500 resize-none"
+                />
+              </div>
+              <button 
+                onClick={handleAdd}
+                disabled={!newName || !newContent}
+                className="w-full py-3 bg-slate-900 text-white rounded-xl font-bold hover:bg-slate-800 transition-all disabled:opacity-50"
+              >
+                Lưu vào kho
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="rounded-2xl border border-indigo-100 bg-indigo-50/70 p-4 text-sm text-slate-600 space-y-3">
+                <p className="font-semibold text-slate-800">Luồng học văn phong</p>
+                <p>Hệ thống sẽ đọc file theo từng đợt, rút ra style memory, rồi đóng gói thành hồ sơ văn phong có thể tái sử dụng khi viết truyện hoặc tạo chương mới.</p>
+              </div>
+              <div className="space-y-3">
+                <label className="text-xs font-bold text-slate-400 uppercase">Nguồn học văn phong</label>
+                <label className="flex items-center justify-between gap-3 rounded-2xl border border-dashed border-indigo-200 bg-white px-4 py-4 text-sm cursor-pointer hover:border-indigo-300 transition-all">
+                  <span className="min-w-0">
+                    <span className="block font-semibold text-slate-800">
+                      {learningSourceFileName || 'Chọn file truyện để AI học văn phong'}
+                    </span>
+                    <span className="block text-xs text-slate-500 mt-1">
+                      Hỗ trợ `.docx`, `.txt`, `.pdf`, `.epub`
+                    </span>
+                  </span>
+                  <span className="shrink-0 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white">
+                    {isExtracting ? 'Đang đọc...' : 'Tải file'}
+                  </span>
+                  <input type="file" accept=".docx,.txt,.pdf,.epub" onChange={handleLearningFileUpload} className="hidden" />
+                </label>
+                <textarea
+                  value={learningSourceText}
+                  onChange={(e) => setLearningSourceText(e.target.value)}
+                  placeholder="Hoặc dán nội dung truyện/đoạn truyện vào đây..."
+                  className="w-full h-40 px-4 py-3 rounded-xl border border-slate-200 focus:ring-indigo-500 resize-none text-sm"
+                />
+                <div className="flex items-center justify-between text-xs text-slate-500">
+                  <span>{learningSourceText.trim().length.toLocaleString('vi-VN')} ký tự nguồn</span>
+                  <span>Khuyến nghị: vài chương hoặc các đoạn văn đặc trưng nhất</span>
+                </div>
+              </div>
+              {learningStatus ? (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+                  {learningStatus}
+                </div>
+              ) : null}
+              <button 
+                onClick={handleLearnStyle}
+                disabled={!newName || !learningSourceText || isLearningStyle}
+                className="w-full py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {isLearningStyle ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                Học và lưu DNA văn phong
+              </button>
+            </>
+          )}
         </motion.div>
       )}
 
       <div className="grid grid-cols-1 gap-4">
         {references.length === 0 ? (
           <div className="text-center py-12 text-slate-400 border-2 border-dashed border-slate-100 rounded-3xl">
-            Chưa có văn mẫu nào trong kho.
+            Chưa có văn mẫu hay DNA văn phong nào trong kho.
           </div>
         ) : (
           references.map(ref => (
             <div key={ref.id} className="p-4 bg-white border border-slate-100 rounded-2xl flex justify-between items-center group hover:border-indigo-200 transition-all">
               <div className="flex-grow">
-                <h4 className="font-bold text-slate-800">{ref.name}</h4>
-                <p className="text-xs text-slate-400 line-clamp-1">{ref.content}</p>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h4 className="font-bold text-slate-800">{ref.name}</h4>
+                  <span className={cn(
+                    'px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-[0.14em]',
+                    ref.kind === 'learned' ? 'bg-indigo-50 text-indigo-600' : 'bg-slate-100 text-slate-500',
+                  )}>
+                    {ref.kind === 'learned' ? 'DNA văn phong' : 'Văn mẫu'}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400 line-clamp-2">{getStyleReferencePreview(ref)}</p>
               </div>
               <div className="flex items-center gap-2">
                 <button 
@@ -9332,7 +9839,7 @@ const StyleReferenceLibrary = ({
                 </button>
                 {onSelect && (
                   <button 
-                    onClick={() => onSelect(ref.content)}
+                    onClick={() => onSelect(getStyleReferenceDisplayContent(ref))}
                     className="px-3 py-1.5 bg-indigo-50 text-indigo-600 rounded-lg text-xs font-bold hover:bg-indigo-100"
                   >
                     Sử dụng
@@ -9363,8 +9870,47 @@ const StyleReferenceLibrary = ({
                 <Plus className="w-6 h-6 rotate-45 text-slate-400" />
               </button>
             </div>
-            <div className="tf-modal-content p-6 md:p-8 overflow-y-auto whitespace-pre-wrap text-slate-600 text-sm leading-relaxed tf-break-long">
-              {viewingRef.content}
+            <div className="tf-modal-content p-6 md:p-8 overflow-y-auto text-slate-600 text-sm leading-relaxed tf-break-long space-y-6">
+              {viewingRef.kind === 'learned' && viewingRef.learnedProfile ? (
+                <>
+                  <div className="rounded-2xl border border-indigo-100 bg-indigo-50/60 p-4">
+                    <p className="text-xs font-bold uppercase tracking-[0.18em] text-indigo-500">System Instruction</p>
+                    <p className="mt-3 whitespace-pre-wrap">{viewingRef.learnedProfile.writing_instruction}</p>
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="rounded-2xl border border-slate-200 p-4">
+                      <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">Đối tượng độc giả</p>
+                      <p className="mt-2">{viewingRef.learnedProfile.target_audience || 'Chưa xác định rõ'}</p>
+                    </div>
+                    <div className="rounded-2xl border border-slate-200 p-4">
+                      <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">Nguồn học</p>
+                      <p className="mt-2">{viewingRef.sourceFileName || 'Dán tay'} • {viewingRef.chunkCount || 0} đợt phân tích</p>
+                    </div>
+                  </div>
+                  {[
+                    { label: 'Từ vựng', items: viewingRef.learnedProfile.vocabulary_traits },
+                    { label: 'Cấu trúc câu', items: viewingRef.learnedProfile.sentence_structure },
+                    { label: 'Tông giọng', items: viewingRef.learnedProfile.tone_and_mood },
+                    { label: 'Giọng kể', items: viewingRef.learnedProfile.narration_style },
+                    { label: 'Đối thoại', items: viewingRef.learnedProfile.dialogue_style },
+                    { label: 'Dấu hiệu nhận diện', items: viewingRef.learnedProfile.signature_patterns },
+                    { label: 'Câu mẫu', items: viewingRef.learnedProfile.sample_lines },
+                  ].map((section) => (
+                    <div key={section.label} className="rounded-2xl border border-slate-200 p-4">
+                      <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">{section.label}</p>
+                      <div className="mt-3 space-y-2">
+                        {section.items.length ? section.items.map((item, index) => (
+                          <p key={`${section.label}-${index}`} className="whitespace-pre-wrap">- {item}</p>
+                        )) : (
+                          <p className="text-slate-400">Chưa có dữ liệu.</p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </>
+              ) : (
+                <div className="whitespace-pre-wrap">{viewingRef.content}</div>
+              )}
             </div>
           </motion.div>
         </div>
@@ -12309,6 +12855,7 @@ const AIStoryCreationModal = ({
   }) => void,
   fileName: string
 }) => {
+  const { user } = useAuth();
   const [genre, setGenre] = useState('');
   const [pacing, setPacing] = useState('normal');
   const [tone, setTone] = useState('dramatic');
@@ -12318,22 +12865,28 @@ const AIStoryCreationModal = ({
   const [perspective, setPerspective] = useState('third-person');
   const [audience, setAudience] = useState('general');
   const [styleReference, setStyleReference] = useState('');
+  const [styleReferences, setStyleReferences] = useState<StyleReference[]>([]);
+  const [selectedStyleReferenceId, setSelectedStyleReferenceId] = useState('');
   const [showStyleLibrary, setShowStyleLibrary] = useState(false);
   const [isExtractingStyle, setIsExtractingStyle] = useState(false);
   const [showPromptLibrary, setShowPromptLibrary] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const nextReferences = storage
+      .getStyleReferences()
+      .filter((reference: StyleReference) => !user || !reference.authorId || reference.authorId === user.uid)
+      .sort((a: StyleReference, b: StyleReference) => new Date(String(b.updatedAt || b.createdAt || 0)).getTime() - new Date(String(a.updatedAt || a.createdAt || 0)).getTime());
+    setStyleReferences(nextReferences);
+  }, [isOpen, user]);
 
   const handleStyleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setIsExtractingStyle(true);
     try {
-      let content = '';
-      if (file.name.endsWith('.docx')) {
-        const arrayBuffer = await file.arrayBuffer();
-        content = await extractDocxText(arrayBuffer);
-      } else {
-        content = await file.text();
-      }
+      const content = await readTextFromSupportedFile(file);
+      setSelectedStyleReferenceId('');
       setStyleReference(content);
     } catch (error) {
       notifyApp({ tone: 'error', message: 'Lỗi khi đọc file: ' + error });
@@ -12510,6 +13063,27 @@ const AIStoryCreationModal = ({
                 </button>
               </div>
             </div>
+            <div className="mb-3">
+              <select
+                value={selectedStyleReferenceId}
+                onChange={(e) => {
+                  const nextId = e.target.value;
+                  setSelectedStyleReferenceId(nextId);
+                  const selected = styleReferences.find((reference) => reference.id === nextId);
+                  if (selected) {
+                    setStyleReference(getStyleReferenceDisplayContent(selected));
+                  }
+                }}
+                className="w-full p-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 text-sm"
+              >
+                <option value="">Chọn nhanh từ kho văn phong...</option>
+                {styleReferences.map((reference) => (
+                  <option key={reference.id} value={reference.id}>
+                    {reference.name}{reference.kind === 'learned' ? ' • DNA văn phong' : ' • Văn mẫu'}
+                  </option>
+                ))}
+              </select>
+            </div>
             <textarea 
               value={styleReference}
               onChange={(e) => setStyleReference(e.target.value)}
@@ -12534,6 +13108,7 @@ const AIStoryCreationModal = ({
                 <div className="tf-modal-content p-6 overflow-y-auto">
                   <StyleReferenceLibrary 
                     onSelect={(content) => {
+                      setSelectedStyleReferenceId('');
                       setStyleReference(content);
                       setShowStyleLibrary(false);
                     }} 
@@ -12616,6 +13191,8 @@ const AIGenerationModal = ({
   const [perspective, setPerspective] = useState('third-person');
   const [audience, setAudience] = useState('general');
   const [styleReference, setStyleReference] = useState('');
+  const [styleReferences, setStyleReferences] = useState<StyleReference[]>([]);
+  const [selectedStyleReferenceId, setSelectedStyleReferenceId] = useState('');
   const [aiInstructions, setAiInstructions] = useState('');
   const [chapterScript, setChapterScript] = useState('');
   const [bannedPhrases, setBannedPhrases] = useState(DEFAULT_FORBIDDEN_CLICHE_PHRASES.join('\n'));
@@ -12737,13 +13314,8 @@ const AIGenerationModal = ({
     if (!file) return;
     setIsExtractingStyle(true);
     try {
-      let content = '';
-      if (file.name.endsWith('.docx')) {
-        const arrayBuffer = await file.arrayBuffer();
-        content = await extractDocxText(arrayBuffer);
-      } else {
-        content = await file.text();
-      }
+      const content = await readTextFromSupportedFile(file);
+      setSelectedStyleReferenceId('');
       setStyleReference(content);
     } catch (error) {
       notifyApp({ tone: 'error', message: 'Lỗi khi đọc file: ' + error });
@@ -12761,8 +13333,13 @@ const AIGenerationModal = ({
         .getAIRules()
         .filter((rule: AIRule) => rule.authorId === user.uid)
         .sort((a: AIRule, b: AIRule) => new Date(String(b.createdAt || 0)).getTime() - new Date(String(a.createdAt || 0)).getTime());
+      const nextStyleReferences = storage
+        .getStyleReferences()
+        .filter((reference: StyleReference) => !reference.authorId || reference.authorId === user.uid)
+        .sort((a: StyleReference, b: StyleReference) => new Date(String(b.updatedAt || b.createdAt || 0)).getTime() - new Date(String(a.updatedAt || a.createdAt || 0)).getTime());
       setCharacters(nextCharacters);
       setAiRules(nextRules);
+      setStyleReferences(nextStyleReferences);
     }
   }, [isOpen, user]);
 
@@ -13201,6 +13778,25 @@ const AIGenerationModal = ({
                       </button>
                     </div>
                   </div>
+                  <select
+                    value={selectedStyleReferenceId}
+                    onChange={(e) => {
+                      const nextId = e.target.value;
+                      setSelectedStyleReferenceId(nextId);
+                      const selected = styleReferences.find((reference) => reference.id === nextId);
+                      if (selected) {
+                        setStyleReference(getStyleReferenceDisplayContent(selected));
+                      }
+                    }}
+                    className="w-full p-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 text-sm"
+                  >
+                    <option value="">Chọn nhanh từ kho văn phong...</option>
+                    {styleReferences.map((reference) => (
+                      <option key={reference.id} value={reference.id}>
+                        {reference.name}{reference.kind === 'learned' ? ' • DNA văn phong' : ' • Văn mẫu'}
+                      </option>
+                    ))}
+                  </select>
                   <textarea 
                     value={styleReference}
                     onChange={(e) => setStyleReference(e.target.value)}
@@ -13225,6 +13821,7 @@ const AIGenerationModal = ({
                       <div className="tf-modal-content p-6 overflow-y-auto">
                         <StyleReferenceLibrary 
                           onSelect={(content) => {
+                            setSelectedStyleReferenceId('');
                             setStyleReference(content);
                             setShowStyleLibrary(false);
                           }} 

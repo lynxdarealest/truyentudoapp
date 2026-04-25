@@ -262,8 +262,8 @@ export const ToolsPage: React.FC<ToolsPageProps> = ({ onBack, onRequireAuth }) =
             </div>
           </div>
           <div className="tf-card p-4 space-y-3">
-            <h3 className="text-lg font-semibold">Giữ giọng văn</h3>
-            <TFTextarea value={styleDraft} onChange={(e) => setStyleDraft(e.target.value)} placeholder="Dán mẫu giọng văn..." />
+            <h3 className="text-lg font-semibold">Kho văn phong nhanh</h3>
+            <TFTextarea value={styleDraft} onChange={(e) => setStyleDraft(e.target.value)} placeholder="Dán văn mẫu thủ công để lưu nhanh..." />
             <div className="flex justify-end">
               <TFButton
                 variant="primary"
@@ -274,7 +274,14 @@ export const ToolsPage: React.FC<ToolsPageProps> = ({ onBack, onRequireAuth }) =
                     return;
                   }
                   const next = [
-                    { id: `style-${Date.now()}`, title: `Văn mẫu ${new Date().toLocaleTimeString('vi-VN')}`, content, createdAt: new Date().toISOString() },
+                    {
+                      id: `style-${Date.now()}`,
+                      name: `Văn mẫu ${new Date().toLocaleTimeString('vi-VN')}`,
+                      content,
+                      kind: "manual",
+                      createdAt: new Date().toISOString(),
+                      updatedAt: new Date().toISOString(),
+                    },
                     ...storage.getStyleReferences(),
                   ];
                   storage.saveStyleReferences(next);
@@ -284,7 +291,7 @@ export const ToolsPage: React.FC<ToolsPageProps> = ({ onBack, onRequireAuth }) =
                 Lưu văn mẫu
               </TFButton>
             </div>
-            <TFAlert tone="success">Mục này giờ đã lưu thật vào bộ nhớ cục bộ thay vì là nút placeholder.</TFAlert>
+            <TFAlert tone="success">DNA văn phong học từ file nằm trong luồng AI viết truyện. Mục này dùng để lưu nhanh các đoạn văn mẫu thủ công.</TFAlert>
           </div>
         </section>
       )}
