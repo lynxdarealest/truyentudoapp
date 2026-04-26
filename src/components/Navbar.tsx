@@ -189,12 +189,34 @@ export function Navbar({
       const leftWidth = leftRef.current.scrollWidth;
       const rightWidth = rightRef.current.scrollWidth;
       const slack = navWidth - (leftWidth + rightWidth + 24);
-      let next: 'normal' | 'compact' | 'tiny' = 'normal';
-      if (navWidth < 720 || slack < 40) next = 'compact';
-      if (navWidth < 600 || slack < -40) next = 'tiny';
-      setNavDensity(next);
-      navRef.current.dataset.density = next;
-      navRef.current.dataset.aspect = computeAspectTag();
+      setNavDensity((prev) => {
+        let next = prev;
+
+        if (prev === 'normal') {
+          if (navWidth < 600 || slack < -40) {
+            next = 'tiny';
+          } else if (navWidth < 720 || slack < 24) {
+            next = 'compact';
+          }
+        } else if (prev === 'compact') {
+          if (navWidth < 580 || slack < -56) {
+            next = 'tiny';
+          } else if (navWidth > 780 && slack > 110) {
+            next = 'normal';
+          }
+        } else {
+          if (navWidth > 660 && slack > 12) {
+            next = 'compact';
+          }
+          if (navWidth > 820 && slack > 140) {
+            next = 'normal';
+          }
+        }
+
+        navRef.current!.dataset.density = next;
+        navRef.current!.dataset.aspect = computeAspectTag();
+        return next;
+      });
     };
 
     updateDensity();
